@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Air — 地図と写真でエア旅行</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header" id="appHeader">
+      <div class="header-logo" id="headerLogo" role="button" tabindex="0" aria-label="トリップ一覧に戻る">Air</div>
+      <div class="header-right">
+        <div class="header-info">
+          <div class="header-line1" id="headerLine1"></div>
+          <div class="header-line2" id="headerLine2"></div>
+        </div>
+        <div class="header-controls" id="headerControls">
+          <button type="button" class="btn btn-secondary btn-sm" id="photoPrevBtn">前</button>
+          <button type="button" class="btn btn-primary btn-sm" id="playBtn">▶ 再生</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="photoNextBtn">次</button>
+          <button type="button" id="headerTravelogueBtn" class="btn btn-secondary btn-sm header-travelogue-btn" style="display:none">📝 旅行記</button>
+          <button type="button" id="headerVideoBtn" class="btn btn-primary btn-sm header-video-btn" style="display:none">🎬 動画</button>
+        </div>
+        <button type="button" class="hamburger-btn" id="hamburgerBtn" aria-label="メニュー">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="map-container">
+        <div id="map3d" class="map-3d-layer" aria-hidden="true"></div>
+        <div id="map"></div>
+        <div class="map-search">
+          <input type="text" id="mapSearchInput" placeholder="地名を検索" class="map-search-input">
+        </div>
+        <div class="video-overlay hidden" id="videoOverlay">
+          <button type="button" class="video-back-btn" id="videoBackBtn" aria-label="戻る">← 戻る</button>
+          <div class="video-player-wrap" id="videoPlayerWrap"></div>
+        </div>
+        <div class="playback-photo-overlay hidden" id="playbackPhotoOverlay">
+          <div class="playback-photo-card" id="playbackPhotoCard"></div>
+        </div>
+      </div>
+
+      <aside class="trip-panel" id="tripPanel">
+        <div class="trip-list-header">
+          <h3 class="trip-list-title" id="tripListTitle" role="button" tabindex="0" title="全トリップのGPSを地図に表示"></h3>
+          <button type="button" class="trip-order-reset editor-only" id="tripOrderResetBtn" title="並び順を更新日時順に戻す">並び順リセット</button>
+        </div>
+        <div class="trip-list" id="tripList"></div>
+      </aside>
+    </div>
+
+    <div class="thumbnail-strip-container">
+      <button type="button" class="add-gps-point-btn editor-only" id="addGpsPointBtn" title="地図上でクリックしてGPSポイントを追加">
+        <span>+</span>
+        <span class="add-gps-point-label">GPS</span>
+      </button>
+      <div class="thumbnail-strip" id="thumbnailStrip"></div>
+    </div>
+
+    <button type="button" class="trip-sheet-trigger" id="tripSheetTrigger" aria-label="トリップ一覧を開く">
+      <span class="trip-sheet-trigger-handle"></span>
+      <span class="trip-sheet-trigger-label"></span>
+    </button>
+    <button type="button" class="play-stop-btn-mobile" id="playStopBtnMobile" aria-label="停止" title="停止" style="display:none"></button>
+  </div>
+
+  <div class="trip-sheet-overlay" id="tripSheetOverlay"></div>
+
+  <div class="menu-overlay" id="menuOverlay"></div>
+  <aside class="menu-panel" id="menuPanel">
+    <div class="menu-header">
+      <button type="button" class="btn btn-primary btn-sm menu-header-auth" id="authBtn">Googleでログイン</button>
+      <button type="button" class="menu-close" id="menuClose">&times;</button>
+    </div>
+    <div class="menu-body">
+      <p class="menu-desc">Air — 地図と写真でエア旅行した気分になる</p>
+      <section class="menu-section editor-only" id="tripActionsSection">
+        <div class="menu-row">
+          <button type="button" class="btn btn-secondary btn-sm" id="newTripBtn">新規</button>
+        </div>
+      </section>
+      <section class="menu-section editor-only" id="tripSection">
+        <div class="menu-field">
+          <input type="text" id="tripNameInput" class="menu-input" placeholder="トリップ名">
+        </div>
+        <div class="menu-field">
+          <textarea id="tripDescInput" class="menu-input" rows="2" placeholder="説明（任意）"></textarea>
+        </div>
+        <div class="menu-field">
+          <input type="url" id="tripUrlInput" class="menu-input" placeholder="ブログURL（任意）">
+        </div>
+        <div class="menu-field">
+          <input type="url" id="tripVideoUrlInput" class="menu-input" placeholder="動画URL（任意）">
+        </div>
+        <div class="menu-field">
+          <label class="menu-checkbox">
+            <input type="checkbox" id="tripParentInput" title="親トリップは写真・GPS不要。子トリップをまとめるフォルダ">
+            <span>親トリップ（写真・GPS不要）</span>
+          </label>
+        </div>
+        <div class="menu-field" id="tripParentSelectWrap">
+          <label for="tripParentSelect">親トリップ</label>
+          <select id="tripParentSelect" class="menu-select">
+            <option value="">— なし —</option>
+          </select>
+        </div>
+        <div class="menu-field" id="tripParentChildrenWrap" style="display:none">
+          <label class="trip-children-label">子トリップ</label>
+          <div class="trip-children-list" id="tripParentChildrenList"></div>
+          <button type="button" class="btn btn-secondary btn-sm" id="addChildTripBtn">＋ 子トリップを追加</button>
+        </div>
+        <div class="menu-field">
+          <label>ルート・マーカーの色</label>
+          <div class="trip-color-picker">
+            <input type="color" id="tripColorInput" value="#e1306c" title="色を選択">
+            <div class="trip-color-swatches" id="tripColorSwatches"></div>
+          </div>
+        </div>
+        <div class="menu-field">
+          <label class="menu-checkbox">
+            <input type="checkbox" id="tripPublicInput">
+            <span>公開する</span>
+          </label>
+        </div>
+        <div class="menu-row">
+          <button type="button" class="btn btn-primary" id="saveTripBtn">保存</button>
+        </div>
+        <div class="menu-field menu-field-row">
+          <label for="tripSelect">トリップを選択</label>
+          <div class="menu-select-load-row">
+            <select id="tripSelect" class="menu-select"></select>
+            <button type="button" class="btn btn-secondary btn-sm" id="loadTripBtn">読み込み</button>
+          </div>
+        </div>
+        <div class="menu-row">
+          <button type="button" class="btn btn-delete-muted btn-sm" id="deleteTripBtn">削除</button>
+        </div>
+      </section>
+      <section class="menu-section editor-only" id="aiMenuSection">
+        <div class="menu-row menu-row-label-btn">
+          <span class="menu-label">AI生成</span>
+          <button type="button" class="btn btn-secondary" id="aiSettingsBtn" title="AI API キーを設定">AI設定</button>
+        </div>
+        <div class="menu-row" style="display:flex;align-items:center;gap:8px;padding-left:1rem;">
+          <button type="button" class="btn btn-travelogue" id="generateTravelogueBtn" title="写真・説明・URL・動画・GPSから旅行記をAI生成">旅行記生成</button>
+          <label style="display:inline-flex;align-items:center;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="generateCoverImageCheckbox" style="margin-right:4px;">
+            <span>表紙生成</span>
+          </label>
+          <div id="generatedImagesPreview" style="display:flex;gap:8px;align-items:center;"></div>
+          <div id="travelogueActionButtons" style="display:flex;gap:6px;align-items:center;margin-left:8px;"></div>
+        </div>
+        <div class="menu-row" style="display:flex;gap:8px;align-items:center;padding-left:1rem;">
+          <button type="button" class="btn btn-secondary btn-xs" id="uploadCharacterBtn" title="キャラクター画像をアップロード">キャラ</button>
+          <div id="characterPreview" style="display:none;position:relative;">
+            <img id="characterPreviewImg" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid var(--accent);">
+            <button type="button" id="removeCharacterBtn" style="position:absolute;top:-5px;right:-5px;width:18px;height:18px;border-radius:50%;background:#dc3545;color:white;border:none;font-size:10px;line-height:1;cursor:pointer;padding:0;">×</button>
+          </div>
+          <input type="file" id="characterImageInput" accept="image/*" style="display:none;">
+        </div>
+        <div class="menu-row menu-row-select-btn">
+          <select id="animeStyleSelect" class="menu-select menu-select-inline">
+            <option value="chikyu-cover">地球の歩き方表紙風</option>
+            <option value="chikyu-spot">地球の歩き方おすすめスポット風</option>
+            <option value="jump">少年ジャンプの表紙風</option>
+            <option value="travel-magazine">旅行雑誌の表紙風</option>
+            <option value="page1">個別ページ1/4</option>
+            <option value="page2">個別ページ2/4</option>
+            <option value="page3">個別ページ3/4</option>
+            <option value="page4">個別ページ4/4</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="generateAnimeBtnViewer" title="選択したスタイルでアニメを生成">アニメ生成</button>
+        </div>
+        <div id="generatedAnimesList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;padding-left:1rem;"></div>
+      </section>
+      <section class="menu-section" id="uploadSection" style="display:none;">
+        <h3>写真・GPX</h3>
+        <div class="upload-zone" id="uploadZone">
+          <span class="upload-icon">📷</span>
+          <span>写真をドラッグ＆ドロップまたはタップ</span>
+          <input type="file" id="photoInput" accept="image/*" multiple hidden>
+        </div>
+        <div class="upload-zone" id="gpxZone">
+          <span class="upload-icon">📍</span>
+          <span>GPXファイル</span>
+          <input type="file" id="gpxInput" accept=".gpx,application/gpx+xml" hidden>
+        </div>
+      </section>
+      <section class="menu-section menu-section-bottom">
+        <button type="button" class="btn btn-secondary menu-full" id="helpBtn">❓ ヘルプ</button>
+      </section>
+    </div>
+  </aside>
+
+  <div class="modal-overlay" id="blogModal">
+    <div class="modal modal-blog">
+      <div class="modal-header">
+        <h2 class="modal-blog-title" id="blogModalTitle">ブログ</h2>
+        <div class="modal-header-actions">
+          <a class="modal-blog-external" id="blogModalExternal" target="_blank" rel="noopener">新しいタブで開く</a>
+          <button type="button" class="modal-close" id="blogModalClose">&times;</button>
+        </div>
+      </div>
+      <div class="modal-blog-body">
+        <iframe id="blogModalIframe" title="ブログ"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="animeModal">
+    <div class="modal modal-anime">
+      <div class="modal-header">
+        <h2>旅行アニメ</h2>
+        <div class="modal-header-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="animePlayBtn">再生</button>
+          <button type="button" class="modal-close" id="animeModalClose">&times;</button>
+        </div>
+      </div>
+      <div class="anime-loading" id="animeLoading">
+        <div class="anime-loading-spinner"></div>
+        <p id="animeLoadingText">生成中...</p>
+      </div>
+      <div class="anime-viewer" id="animeViewer">
+        <div class="anime-frame" id="animeFrame">
+          <div class="anime-cover">
+            <div class="anime-cover-photo" id="animeCoverPhoto"></div>
+            <div class="anime-cover-overlay">
+              <div class="anime-cover-brand" id="animeCoverBrand">地球の歩き方</div>
+              <div class="anime-cover-title" id="animeCoverTitle"></div>
+              <div class="anime-cover-subtitle" id="animeCoverSubtitle"></div>
+              <div class="anime-cover-meta" id="animeCoverMeta"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="travelogueModal">
+    <div class="modal modal-blog">
+      <div class="modal-header">
+        <h2 class="modal-blog-title">旅行記</h2>
+        <div class="modal-header-actions">
+          <button type="button" class="modal-close" id="travelogueModalClose">&times;</button>
+        </div>
+      </div>
+      <div class="modal-blog-body modal-travelogue-body">
+        <div id="travelogueMap" class="travelogue-map-wrap"></div>
+        <div id="travelogueContent" class="travelogue-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="stampRallyModal">
+    <div class="modal modal-stamp-rally">
+      <div class="modal-header">
+        <h2>スタンプ</h2>
+        <button type="button" class="modal-close" id="stampRallyModalClose">&times;</button>
+      </div>
+      <div class="modal-body stamp-rally-body">
+        <div id="stampRallyContent" class="stamp-rally-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="aiSettingsModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>AI設定</h2>
+        <button type="button" class="modal-close" id="aiSettingsModalClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">AI機能で使用するプロバイダーとAPIキーを設定します。旅行記はリーズナブルなモデル、アニメは高性能モデルを使用します。</p>
+        <div class="menu-field">
+          <label for="aiProviderSelect">AIプロバイダー</label>
+          <select id="aiProviderSelect" class="menu-select">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+          </select>
+        </div>
+        <div class="menu-field">
+          <label for="aiApiKeyInput">API キー</label>
+          <input type="password" id="aiApiKeyInput" class="menu-input" placeholder="選択したプロバイダーのAPIキー" autocomplete="off">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-primary" id="aiSettingsSaveBtn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="helpModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Air ヘルプ</h2>
+        <button type="button" class="modal-close" id="helpModalClose">&times;</button>
+      </div>
+      <div class="modal-body">
+        <h4>閲覧</h4>
+        <ul>
+          <li>ログイン後、右側パネルのトリップ一覧から選択</li>
+          <li>写真サムネイルクリックで拡大</li>
+          <li>「▶ 再生」「前」「次」でスライドショー</li>
+        </ul>
+        <h4>編集（ログイン必要）</h4>
+        <ul>
+          <li>Googleでログイン</li>
+          <li>写真をドラッグ＆ドロップ（GPS付き推奨）</li>
+          <li>GPXでルート表示</li>
+          <li>トリップ名・説明を入力して保存</li>
+          <li>「親トリップ」でフォルダ作成（写真・GPS不要）。親選択で親を指定し「＋ 子トリップを追加」で子を追加</li>
+          <li>色ピッカーでルート・マーカーの色を選択（12色）</li>
+          <li>「公開する」で誰でも閲覧可能に</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-storage-compat.js"></script>
+  <script src="firebase-config.js" onerror="window.FIREBASE_CONFIG_LOAD_FAILED=true"></script>
+  <script src="firebase-init.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

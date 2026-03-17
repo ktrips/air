@@ -1,0 +1,12 @@
+{
+  "name": "air",
+  "version": "1.0.0",
+  "description": "地図と写真でエア旅行",
+  "scripts": {
+    "backup-and-clear": "node scripts/backup-and-clear.js",
+    "backup-and-clear:dry": "node scripts/backup-and-clear.js --dry-run"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
