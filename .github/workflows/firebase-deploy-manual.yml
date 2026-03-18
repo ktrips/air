@@ -23,4 +23,4 @@ jobs:
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          firebase deploy --only hosting,firestore:rules,storage:rules --token "$FIREBASE_TOKEN" --project airgo-trip
+          firebase deploy --only hosting,firestore:rules,storage --token "$FIREBASE_TOKEN" --project airgo-trip

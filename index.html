@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="map-trip-name.css">
 </head>
 <body>
   <div class="app">
@@ -26,6 +27,7 @@
           <button type="button" class="btn btn-secondary btn-sm" id="photoNextBtn">次</button>
           <button type="button" id="headerTravelogueBtn" class="btn btn-secondary btn-sm header-travelogue-btn" style="display:none">📝 旅行記</button>
           <button type="button" id="headerVideoBtn" class="btn btn-primary btn-sm header-video-btn" style="display:none">🎬 動画</button>
+          <button type="button" id="headerStampBtn" class="btn btn-stamp btn-sm header-stamp-btn" style="display:none">🎫 スタンプ</button>
         </div>
         <button type="button" class="hamburger-btn" id="hamburgerBtn" aria-label="メニュー">
           <span></span><span></span><span></span>
@@ -37,6 +39,8 @@
       <div class="map-container">
         <div id="map3d" class="map-3d-layer" aria-hidden="true"></div>
         <div id="map"></div>
+        <div class="map-trip-name-overlay" id="mapTripNameOverlay"></div>
+        <button type="button" class="play-stop-btn-mobile" id="playStopBtnMobile" aria-label="再生/停止" title="再生/停止"></button>
         <div class="map-search">
           <input type="text" id="mapSearchInput" placeholder="地名を検索" class="map-search-input">
         </div>
@@ -66,11 +70,14 @@
       <div class="thumbnail-strip" id="thumbnailStrip"></div>
     </div>
 
-    <button type="button" class="trip-sheet-trigger" id="tripSheetTrigger" aria-label="トリップ一覧を開く">
-      <span class="trip-sheet-trigger-handle"></span>
-      <span class="trip-sheet-trigger-label"></span>
-    </button>
-    <button type="button" class="play-stop-btn-mobile" id="playStopBtnMobile" aria-label="停止" title="停止" style="display:none"></button>
+    <div class="trip-sheet-trigger-container">
+      <button type="button" class="trip-nav-btn trip-nav-prev" id="tripNavPrev" aria-label="前のトリップ">‹</button>
+      <button type="button" class="trip-sheet-trigger" id="tripSheetTrigger" aria-label="トリップ一覧を開く">
+        <span class="trip-sheet-trigger-handle"></span>
+        <span class="trip-sheet-trigger-label"></span>
+      </button>
+      <button type="button" class="trip-nav-btn trip-nav-next" id="tripNavNext" aria-label="次のトリップ">›</button>
+    </div>
   </div>
 
   <div class="trip-sheet-overlay" id="tripSheetOverlay"></div>

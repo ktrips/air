@@ -424,7 +424,7 @@ body {
 body.app-playing .map-search,
 body.app-playing .leaflet-control-zoom,
 body.app-playing .leaflet-control-layers,
-body.app-playing .trip-sheet-trigger {
+body.app-playing .trip-sheet-trigger-container {
   display: none !important;
 }
 
@@ -2173,12 +2173,68 @@ body.editor .editor-only { display: block; }
 }
 
 /* モバイル用トリップシート */
+.trip-sheet-trigger-container {
+  display: none;
+}
+
 .trip-sheet-trigger {
   display: none;
 }
 
 .trip-sheet-overlay {
   display: none;
+}
+
+.play-stop-btn-mobile {
+  display: flex;
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(12px);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--trip-color, var(--accent));
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
+}
+
+.play-stop-btn-mobile:hover {
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15), 0 3px 8px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.play-stop-btn-mobile:active {
+  transform: translateX(-50%) translateY(0);
+}
+
+.play-stop-btn-mobile::before {
+  content: '▶';
+  font-size: 1.3rem;
+  display: block;
+  line-height: 1;
+  margin-left: 3px;
+  filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.8));
+}
+
+body.app-playing .play-stop-btn-mobile {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+body.app-playing .play-stop-btn-mobile::before {
+  content: '⏹';
+  margin-left: 0;
 }
 
 @media (max-width: 768px) {
@@ -2196,6 +2252,32 @@ body.editor .editor-only { display: block; }
   }
   .header-controls {
     gap: 0.35rem;
+  }
+
+  /* モバイルではアイコンのみの小さいボタンに */
+  .header-travelogue-btn,
+  .header-video-btn,
+  .header-stamp-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0 !important;
+    font-size: 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: auto;
+  }
+  .header-travelogue-btn::before {
+    content: '📝';
+    font-size: 1.1rem;
+  }
+  .header-video-btn::before {
+    content: '🎬';
+    font-size: 1.1rem;
+  }
+  .header-stamp-btn::before {
+    content: '🎫';
+    font-size: 1.1rem;
   }
   .hamburger-btn {
     width: 36px;
@@ -2228,67 +2310,73 @@ body.editor .editor-only { display: block; }
   .thumbnail-strip {
     display: none;
   }
-  .trip-sheet-trigger {
+  .trip-sheet-trigger-container {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
+    align-items: stretch;
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
     height: 60px;
     height: calc(60px + env(safe-area-inset-bottom, 0px));
-    padding: 0.5rem 1rem;
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
     background: var(--bg-card);
     border-top: 1px solid var(--border);
     box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
     z-index: 900;
+  }
+  .trip-nav-btn {
+    flex-shrink: 0;
+    width: 50px;
+    background: var(--bg-card);
+    border: none;
+    font-size: 2rem;
+    font-weight: 300;
+    color: var(--text-secondary);
     cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .trip-nav-btn:active {
+    background: var(--bg);
+    color: var(--accent);
+  }
+  .trip-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+  .trip-sheet-trigger {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    padding: 0.5rem 1rem;
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    background: var(--bg-card);
     border: none;
     font-family: inherit;
     font-size: 0.9rem;
     font-weight: 500;
     color: var(--text);
+    cursor: pointer;
     transition: background 0.2s;
   }
-  .trip-sheet-trigger:hover {
+  .trip-sheet-trigger:active {
     background: var(--bg);
   }
   .play-stop-btn-mobile {
     position: fixed;
-    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: calc(75px + env(safe-area-inset-bottom, 0px));
+    width: 48px;
+    height: 48px;
     z-index: 1100;
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: rgba(193, 39, 45, 0.9);
-    border: 3px solid rgba(255, 255, 255, 0.3);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    transition: transform 0.2s, background 0.2s;
-    backdrop-filter: blur(8px);
-  }
-  .play-stop-btn-mobile:active {
-    transform: translateX(-50%) scale(0.92);
-    background: rgba(160, 30, 35, 0.95);
   }
   .play-stop-btn-mobile::before {
-    content: '⏹';
-    font-size: 1.5rem;
-    display: block;
-    line-height: 1;
+    font-size: 1.2rem;
   }
   .trip-sheet-trigger-handle {
     width: 40px;
