@@ -3452,6 +3452,8 @@ async function generateTravelogueWithAI() {
         parts.push(`  📍 ${pi.landmarkNo}${pi.pointName ? ': ' + pi.pointName : ''}（写真${pi.index}）`);
       });
       parts.push('');
+      parts.push('⚠️ これらのランドマークスポットを、旅行記の最後に御朱印帳風の一覧として必ず表示してください。');
+      parts.push('');
     }
     parts.push('写真情報（順番に、各写真ごとに左右レイアウトで旅行記を生成してください）:');
     photoInfos.forEach((pi) => {
@@ -3512,21 +3514,26 @@ async function generateTravelogueWithAI() {
 
 4. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）
 
-5. 最後にスタンプラリー達成状況（御朱印帳風）:
-<h3 style="border-top:2px solid #ddd;padding-top:2rem;margin-top:3rem;color:#c1272d;">🎯 スタンプラリー達成状況</h3>
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:1.5rem;padding:2rem;background:linear-gradient(to bottom,#f9f5e8 0%,#f5f0e0 100%);border-radius:8px;margin:1rem 0;">
-  <div style="background:#fffef8;border:3px double #c1272d;border-radius:8px;padding:1rem;text-align:center;box-shadow:0 4px 8px rgba(193,39,45,0.15);">
-    <div style="font-size:1.5rem;font-weight:700;color:#c1272d;margin-bottom:0.5rem;">📍 1</div>
-    <div style="font-size:0.85rem;color:#2d1810;">ポイント名</div>
-    <div style="margin-top:0.5rem;padding:0.3rem 0.5rem;background:#c1272d;color:#fff;font-size:0.7rem;border-radius:4px;">スタンプ済み</div>
+5. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
+
+<div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
+  <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
+  <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1.5rem;padding:2.5rem;background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">
+    <!-- ランドマーク写真があるポイントごとに以下のカードを生成 -->
+    <div style="background:#fffef8;border:3px double #c1272d;border-radius:10px;padding:1.2rem;text-align:center;box-shadow:0 6px 12px rgba(193,39,45,0.18),inset 0 1px 0 rgba(255,255,255,0.5);position:relative;">
+      <div style="position:absolute;top:-10px;right:-10px;width:32px;height:32px;background:#c1272d;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.2rem;box-shadow:0 2px 6px rgba(193,39,45,0.3);">✓</div>
+      <div style="font-size:2rem;font-weight:700;color:#c1272d;margin-bottom:0.6rem;text-shadow:1px 1px 2px rgba(193,39,45,0.2);">📍 ランドマーク番号</div>
+      <div style="font-size:0.95rem;font-weight:600;color:#2d1810;line-height:1.3;min-height:2.6em;display:flex;align-items:center;justify-content:center;">ポイント名</div>
+      <div style="margin-top:0.8rem;padding:0.4rem 0.6rem;background:#c1272d;color:#fff;font-size:0.75rem;font-weight:700;border-radius:6px;box-shadow:0 2px 4px rgba(193,39,45,0.3);letter-spacing:0.05em;">スタンプ済み</div>
+    </div>
   </div>
-  <!-- 未スタンプの例 -->
-  <div style="background:#fffef8;border:3px double #d4c5a9;border-radius:8px;padding:1rem;text-align:center;box-shadow:0 2px 4px rgba(193,39,45,0.1);">
-    <div style="font-size:1.5rem;font-weight:700;color:#d4c5a9;margin-bottom:0.5rem;">📍 2</div>
-    <div style="font-size:0.85rem;color:#8b7355;">ポイント名</div>
-    <div style="margin-top:0.5rem;padding:0.3rem 0.5rem;background:#f5f0e0;color:#8b7355;font-size:0.7rem;border-radius:4px;">未スタンプ</div>
-  </div>
+
+  <p style="text-align:center;color:#8b7355;font-size:0.85rem;margin-top:1.5rem;font-style:italic;">訪れた全てのスポットを記録しました ✨</p>
 </div>
+
+重要: ランドマーク番号（📍1、📍2など）が設定されている写真が1つでもある場合は、必ずこの御朱印帳セクションを旅行記の最後に含めてください。各ランドマークごとに上記のカードスタイルで表示してください。
 
 重要事項:
 - トリップカラーは${tripColor}です
@@ -3541,7 +3548,8 @@ async function generateTravelogueWithAI() {
 - Wikipedia情報は同じ内容を重複して書かないでください（ランドマークごとに1回のみ）
 - Wikipedia情報のタイトルは、実際に参照した地域名や観光名所の名前を使用してください（例：「観音寺について」「しまなみ海道について」など）
 - Wikipedia情報は、その場所の歴史、特徴、見どころなど、旅行者に役立つ情報を含めてください
-- GPSルート地図は自動表示されるのでHTMLに含めない`;
+- GPSルート地図は自動表示されるのでHTMLに含めない
+- ⚠️重要：ランドマーク写真が1つでもある場合は、必ず旅行記の最後に御朱印帳セクションを含めてください。御朱印帳は和の趣を感じる特別なセクションです。`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
   try {
     setStatus('旅行記を生成中...');
@@ -4740,11 +4748,11 @@ async function updateHeaderInfo() {
 
     let line2Html = '';
     if (currentTrip.description) {
-      // 旅行記がある場合は旅行記へのリンク、ない場合はブログURLへのリンク
+      // 旅行記がある場合は説明の後ろに[旅行記]リンクを追加
       const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
       if (hasTravelogue) {
-        const traveloguePrefix = '[旅行記] ';
-        line2Html += `<a href="#" class="header-trip-link header-travelogue-link">${traveloguePrefix}${escapeHtml(currentTrip.description)}</a>`;
+        line2Html += escapeHtml(currentTrip.description);
+        line2Html += ' <a href="#" class="header-trip-link header-travelogue-link">[旅行記]</a>';
       } else if (currentTrip.url) {
         line2Html += `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(currentTrip.description)}</a>`;
       } else {
@@ -4758,7 +4766,7 @@ async function updateHeaderInfo() {
     if (travelogueLink) {
       travelogueLink.addEventListener('click', (e) => {
         e.preventDefault();
-        openTravelogue();
+        showTravelogueModal();
       });
     }
 
