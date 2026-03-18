@@ -48,7 +48,7 @@
 }
 
 .map-trip-name-text {
-  font-size: 0.95rem;
+  font-size: 0.855rem;
   font-weight: 700;
   color: var(--trip-color, var(--accent));
   text-align: center;
@@ -68,7 +68,7 @@
   }
 
   .map-trip-name-text {
-    font-size: 0.85rem;
+    font-size: 0.765rem;
   }
 }
 

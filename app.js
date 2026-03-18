@@ -490,7 +490,7 @@ async function add3dMapRouteAndMarkers() {
       source: 'route',
       paint: {
         'line-color': color,
-        'line-width': 4,
+        'line-width': 5,
         'line-opacity': 0.8
       }
     });
@@ -1636,7 +1636,7 @@ function showPlaybackPhotoOverlay(p) {
   }
   let overlayHTML = '';
   if (p.landmarkNo) {
-    overlayHTML += `<span class="playback-photo-landmark">📍 ${escapeHtml(String(p.landmarkNo))}</span>`;
+    overlayHTML += `<span class="playback-photo-landmark">${escapeHtml(String(p.landmarkNo))}</span>`;
   }
   // ポイント名を表示
   const pointName = p.name || '';
@@ -1689,14 +1689,18 @@ function showPhotoViewMode(p, lat, lng) {
   if (p.landmarkNo || p.name) {
     const overlayTop = document.createElement('div');
     overlayTop.className = 'photo-popup-overlay-top';
-    const parts = [];
-    if (p.landmarkNo) parts.push(`<span class="photo-popup-landmark">📍 ${escapeHtml(p.landmarkNo)}</span>`);
-    if (p.name) {
-      const tripColor = currentTrip && currentTrip.color ? currentTrip.color : '';
-      const nameHtml = tripColor ? `<span style="color:${tripColor}">${escapeHtml(p.name)}</span>` : escapeHtml(p.name);
-      parts.push(nameHtml);
+    if (p.landmarkNo) {
+      const landmarkEl = document.createElement('span');
+      landmarkEl.className = 'photo-popup-landmark';
+      landmarkEl.textContent = p.landmarkNo;
+      overlayTop.appendChild(landmarkEl);
     }
-    overlayTop.innerHTML = parts.join(' ');
+    if (p.name) {
+      const nameEl = document.createElement('span');
+      nameEl.className = 'photo-popup-name';
+      nameEl.textContent = p.name;
+      overlayTop.appendChild(nameEl);
+    }
     photoWrap.appendChild(overlayTop);
   }
   if (p.placeName) {
@@ -1761,14 +1765,18 @@ function showPhotoPopupEditMode(lat, lng) {
   if (p.landmarkNo || p.name) {
     const overlayTop = document.createElement('div');
     overlayTop.className = 'photo-popup-overlay-top';
-    const parts = [];
-    if (p.landmarkNo) parts.push(`<span class="photo-popup-landmark">📍 ${escapeHtml(p.landmarkNo)}</span>`);
-    if (p.name) {
-      const tripColor = currentTrip && currentTrip.color ? currentTrip.color : '';
-      const nameHtml = tripColor ? `<span style="color:${tripColor}">${escapeHtml(p.name)}</span>` : escapeHtml(p.name);
-      parts.push(nameHtml);
+    if (p.landmarkNo) {
+      const landmarkEl = document.createElement('span');
+      landmarkEl.className = 'photo-popup-landmark';
+      landmarkEl.textContent = p.landmarkNo;
+      overlayTop.appendChild(landmarkEl);
     }
-    overlayTop.innerHTML = parts.join(' ');
+    if (p.name) {
+      const nameEl = document.createElement('span');
+      nameEl.className = 'photo-popup-name';
+      nameEl.textContent = p.name;
+      overlayTop.appendChild(nameEl);
+    }
     photoWrap.appendChild(overlayTop);
   }
   if (p.placeName) {
@@ -4732,14 +4740,27 @@ async function updateHeaderInfo() {
 
     let line2Html = '';
     if (currentTrip.description) {
-      // 説明にブログリンクをつける
-      if (currentTrip.url) {
+      // 旅行記がある場合は旅行記へのリンク、ない場合はブログURLへのリンク
+      const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
+      if (hasTravelogue) {
+        const traveloguePrefix = '[旅行記] ';
+        line2Html += `<a href="#" class="header-trip-link header-travelogue-link">${traveloguePrefix}${escapeHtml(currentTrip.description)}</a>`;
+      } else if (currentTrip.url) {
         line2Html += `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(currentTrip.description)}</a>`;
       } else {
         line2Html += escapeHtml(currentTrip.description);
       }
     }
     line2.innerHTML = line2Html;
+
+    // 旅行記リンクにクリックイベントを追加
+    const travelogueLink = line2.querySelector('.header-travelogue-link');
+    if (travelogueLink) {
+      travelogueLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        openTravelogue();
+      });
+    }
 
     // ヘッダーの写真枚数にクリックイベントを追加
     const headerPhotoCount = line1.querySelector('.header-photo-count-toggle');

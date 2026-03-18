@@ -1118,23 +1118,39 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-overlay-top {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 0.5rem 0.6rem;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.3) 60%, transparent 100%);
-  color: #fff;
-  font-weight: 600;
-  font-size: 0.95rem;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3), 0 0 8px rgba(0,0,0,0.2);
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
   z-index: 2;
   pointer-events: none;
 }
 
 .photo-popup-overlay-top .photo-popup-landmark {
-  font-size: 1rem;
-  margin-right: 0.35rem;
-  text-shadow: 0 2px 4px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.3);
+  background: var(--accent);
+  color: white;
+  padding: 4px 9px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 900;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.5px;
+  margin-right: 0;
+}
+
+.photo-popup-overlay-top .photo-popup-name {
+  color: white;
+  font-size: 15px;
+  font-weight: 700;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.4px;
 }
 
 .photo-popup-overlay-bottom-right {
@@ -2229,12 +2245,19 @@ body.editor .editor-only { display: block; }
 }
 
 body.app-playing .play-stop-btn-mobile {
-  background: rgba(255, 255, 255, 0.6);
+  width: 36px;
+  height: 36px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 body.app-playing .play-stop-btn-mobile::before {
-  content: '⏹';
+  content: '■';
+  font-size: 0.9rem;
   margin-left: 0;
+  color: white;
+  filter: none;
 }
 
 @media (max-width: 768px) {
@@ -2377,6 +2400,18 @@ body.app-playing .play-stop-btn-mobile::before {
   }
   .play-stop-btn-mobile::before {
     font-size: 1.2rem;
+  }
+  /* モバイルの自動再生時は停止ボタンをシンプルに */
+  body.app-playing .play-stop-btn-mobile {
+    width: 32px;
+    height: 32px;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+  body.app-playing .play-stop-btn-mobile::before {
+    font-size: 0.8rem;
   }
   .trip-sheet-trigger-handle {
     width: 40px;
