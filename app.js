@@ -11,6 +11,7 @@ let markers = [];
 let gpxLayers = [];
 let playTimer = null;
 let playIntervalMs = 3000;
+let playbackPhotos = []; // 再生中の写真配列
 let map3d = null;
 let photoPopup = null;
 let myTrips = [];
@@ -2107,6 +2108,7 @@ function stopPlay() {
     clearInterval(playTimer); // 念のため両方
     playTimer = null;
   }
+  playbackPhotos = []; // 再生用配列をクリア
   const playBtn = document.getElementById('playBtn');
   const mobileBtn = document.getElementById('playStopBtnMobile');
   if (playBtn) playBtn.textContent = '▶ 再生';
@@ -2228,8 +2230,13 @@ async function startPlay() {
     return;
   }
 
-  const photos = getDisplayPhotos();
-  if (!photos.length) return;
+  const allPhotos = getDisplayPhotos();
+  // 写真があるポイントのみを再生対象にする
+  playbackPhotos = allPhotos.filter(p => p.url && p.url.trim());
+  if (!playbackPhotos.length) {
+    alert('再生できる写真がありません。写真を追加してください。');
+    return;
+  }
 
   // 処理中であることを示すため、先に playTimer をセット（二重実行防止）
   const startingPlay = true; // 開始中フラグ
@@ -2238,11 +2245,20 @@ async function startPlay() {
     // 必ず1枚目の写真から再生開始
     currentPhotoIndex = 0;
 
+    // 前回の再生状態をリセット
+    lastPlaybackPhotoUrl = null;
+
     const intervalSec = 3;
     playIntervalMs = intervalSec * 1000;
     document.getElementById('playBtn').textContent = '■ 停止';
     document.querySelector('.map-container')?.classList.add('map-playback-cinematic');
     document.body.classList.add('app-playing');
+
+    // モバイルの場合は停止ボタンを表示
+    const mobileBtn = document.getElementById('playStopBtnMobile');
+    if (mobileBtn && isMobileView()) {
+      mobileBtn.style.display = 'flex';
+    }
 
     // 自動再生時はサムネイルを非表示
     thumbnailsVisible = false;
@@ -2254,47 +2270,40 @@ async function startPlay() {
     // 3D地図にルートとマーカーを表示
     await add3dMapRouteAndMarkers();
 
-    const p0 = photos[0];
+    const p0 = playbackPhotos[0];
     if (p0?.lat != null && p0?.lng != null) {
       map.setView([p0.lat, p0.lng], 17);
       setMap3dView(p0.lat, p0.lng, 17);
     }
 
-    // playTimerを設定して自動再生モードに
-    playTimer = true;
-
-    // 1枚目の写真を表示
-    showPhotoAtIndex(0);
-
     const tick = async () => {
-      if (!playTimer || currentPhotoIndex >= photos.length - 1) {
+      if (!playTimer || currentPhotoIndex >= playbackPhotos.length - 1) {
         stopPlay();
         return;
       }
 
-      const fromIdx = currentPhotoIndex;
       currentPhotoIndex++;
-      const nextP = photos[currentPhotoIndex];
+      const nextP = playbackPhotos[currentPhotoIndex];
 
       // 次の写真を表示
-      showPhotoAtIndex(currentPhotoIndex, true, { flyDuration: 0, flyZoom: 17 });
+      showPlaybackPhotoOverlay(nextP);
 
       // カメラアニメーションを実行して完了を待つ
       if (nextP?.lat != null && nextP?.lng != null) {
-        const segment = await getRouteSegmentBetweenPhotos(fromIdx, currentPhotoIndex);
-        const moveDuration = 1500; // 移動時間を短縮（パフォーマンス向上）
-
-        if (segment && segment.length >= 2) {
-          await animateCameraAlongRoute(segment, moveDuration);
-        } else {
-          await flyMap3dTo(nextP.lat, nextP.lng, 17, moveDuration);
-        }
+        // 3D地図を移動
+        await flyMap3dTo(nextP.lat, nextP.lng, 17, 1500);
       }
 
       // カメラアニメーション完了後、写真を表示する時間を設定
       const displayDuration = 2500; // 写真表示時間
       playTimer = setTimeout(tick, displayDuration);
     };
+
+    // playTimerを設定して自動再生モードに（ダミー値で先に設定）
+    playTimer = true;
+
+    // 1枚目の写真を表示
+    showPlaybackPhotoOverlay(p0);
 
     // 初期化完了後、最初の写真の表示時間後に次へ
     playTimer = setTimeout(tick, 2500);

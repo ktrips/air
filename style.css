@@ -251,32 +251,32 @@ body {
   position: absolute;
   top: 8px;
   left: 8px;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.75);
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
-  border-radius: 8px;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 .playback-photo-overlay-top .playback-photo-landmark {
   background: var(--accent);
   color: white;
-  padding: 5px 11px;
-  border-radius: 5px;
-  font-size: 17px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  font-size: 14px;
   font-weight: 900;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.6);
-  letter-spacing: 0.6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.5px;
 }
 .playback-photo-overlay-top .playback-photo-name {
   color: white;
-  font-size: 18px;
-  font-weight: 900;
-  text-shadow: 0 3px 8px rgba(0, 0, 0, 1), 0 1px 3px rgba(0, 0, 0, 0.8);
-  letter-spacing: 0.6px;
+  font-size: 15px;
+  font-weight: 700;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.4px;
 }
 .playback-photo-info {
   padding: 10px 14px;
@@ -307,20 +307,20 @@ body {
 }
 @media (max-width: 768px) {
   .playback-photo-overlay {
-    bottom: 150px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     right: 12px;
     left: auto;
   }
   .playback-photo-card {
-    width: 60vw;
-    max-width: 60vw;
+    width: 50vw;
+    max-width: 50vw;
     border-radius: 10px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   }
   .playback-photo-card img {
     width: 100%;
     height: auto;
-    max-height: 50vh;
+    max-height: 35vh;
     object-fit: cover;
     display: block;
   }
@@ -330,37 +330,37 @@ body {
   .playback-photo-overlay-top {
     top: 6px;
     left: 6px;
-    padding: 6px 10px;
-    background: rgba(0, 0, 0, 0.75);
+    padding: 5px 8px;
+    background: rgba(0, 0, 0, 0.7);
     backdrop-filter: blur(6px);
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    border-radius: 5px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
   }
   .playback-photo-overlay-top .playback-photo-landmark {
-    font-size: 15px;
-    padding: 4px 9px;
+    font-size: 13px;
+    padding: 3px 8px;
     font-weight: 900;
     background: var(--accent);
     color: white;
     border-radius: 4px;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.6);
-    letter-spacing: 0.5px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
+    letter-spacing: 0.4px;
   }
   .playback-photo-overlay-top .playback-photo-name {
-    font-size: 16px;
-    font-weight: 900;
+    font-size: 14px;
+    font-weight: 700;
     color: white;
-    text-shadow: 0 3px 8px rgba(0, 0, 0, 1), 0 1px 3px rgba(0, 0, 0, 0.8);
-    letter-spacing: 0.5px;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
+    letter-spacing: 0.4px;
   }
   .playback-photo-info {
-    padding: 8px 10px;
+    padding: 6px 8px;
     background: rgba(255, 255, 255, 0.97);
     border-top: 1px solid rgba(0, 0, 0, 0.08);
   }
   .playback-photo-desc {
-    font-size: 11px;
-    line-height: 1.5;
+    font-size: 10px;
+    line-height: 1.4;
     color: var(--text);
     margin: 0;
   }
@@ -412,7 +412,11 @@ body {
 
 .map-container.map-showing-video .map-search,
 .map-container.map-showing-video .leaflet-control-zoom,
-.map-container.map-showing-video .leaflet-control-layers {
+.map-container.map-showing-video .leaflet-control-layers,
+.map-container.map-showing-video .leaflet-control-attribution,
+.map-container.map-showing-video .leaflet-control,
+.map-container.map-showing-video .leaflet-top,
+.map-container.map-showing-video .leaflet-bottom {
   display: none !important;
 }
 
@@ -437,7 +441,7 @@ body.app-playing .maplibregl-ctrl-logo {
   position: absolute;
   top: 12px;
   right: 12px;
-  z-index: 100;
+  z-index: 1000;
   padding: 0.6rem 1.2rem;
   background: rgba(255, 255, 255, 0.98);
   border: 2px solid rgba(0, 0, 0, 0.2);
@@ -1122,7 +1126,7 @@ body.app-playing .thumbnail-close-btn {
   color: #fff;
   font-weight: 600;
   font-size: 0.95rem;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  text-shadow: 0 2px 4px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3), 0 0 8px rgba(0,0,0,0.2);
   z-index: 2;
   pointer-events: none;
 }
@@ -1130,6 +1134,7 @@ body.app-playing .thumbnail-close-btn {
 .photo-popup-overlay-top .photo-popup-landmark {
   font-size: 1rem;
   margin-right: 0.35rem;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.3);
 }
 
 .photo-popup-overlay-bottom-right {
@@ -2040,15 +2045,15 @@ body.editor .editor-only { display: block; }
 /* スタンプラリーモーダル - 御朱印帳風デザイン */
 .modal-stamp-rally .stamp-rally-body {
   overflow-y: auto;
-  padding: 2rem;
+  padding: 1.5rem;
   background: linear-gradient(to bottom, #f9f5e8 0%, #f5f0e0 100%);
 }
 
 .stamp-rally-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1.5rem;
-  padding: 1rem;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  padding: 0;
 }
 
 .stamp-card {
@@ -2075,7 +2080,6 @@ body.editor .editor-only { display: block; }
 
 .stamp-card-inner {
   aspect-ratio: 1;
-  max-height: 180px;
   background: linear-gradient(135deg, #faf8f0 0%, #f5f2e8 100%);
   display: flex;
   align-items: center;
@@ -2108,14 +2112,14 @@ body.editor .editor-only { display: block; }
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: #fff;
   text-align: center;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.6) 70%, transparent 100%);
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
 .stamp-card-no {
@@ -2133,9 +2137,9 @@ body.editor .editor-only { display: block; }
 
 .stamp-card-badge {
   display: block;
-  padding: 0.4rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 700;
+  padding: 0.3rem 0.4rem;
+  font-size: 0.65rem;
+  font-weight: 600;
   text-align: center;
   background: #f5f0e0;
   color: #8b7355;
@@ -2152,6 +2156,12 @@ body.editor .editor-only { display: block; }
   color: var(--text-muted);
   font-style: italic;
   padding: 1rem;
+}
+
+@media (max-width: 768px) {
+  .stamp-rally-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .modal-blog-body iframe {
@@ -2211,6 +2221,10 @@ body.editor .editor-only { display: block; }
     right: 0;
     bottom: calc(60px + env(safe-area-inset-bottom, 0px));
   }
+  /* 自動再生時は地図を画面下まで拡大 */
+  body.app-playing .map-container {
+    bottom: 0;
+  }
   .thumbnail-strip {
     display: none;
   }
@@ -2245,18 +2259,19 @@ body.editor .editor-only { display: block; }
   }
   .play-stop-btn-mobile {
     position: fixed;
-    bottom: 16px;
-    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 1100;
-    width: 52px;
-    height: 52px;
-    border-radius: 8px;
-    background: rgba(80, 80, 80, 0.85);
-    border: 2px solid rgba(255, 255, 255, 0.25);
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(193, 39, 45, 0.9);
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     font-size: 1rem;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.95);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -2266,12 +2281,12 @@ body.editor .editor-only { display: block; }
     backdrop-filter: blur(8px);
   }
   .play-stop-btn-mobile:active {
-    transform: scale(0.94);
-    background: rgba(60, 60, 60, 0.9);
+    transform: translateX(-50%) scale(0.92);
+    background: rgba(160, 30, 35, 0.95);
   }
   .play-stop-btn-mobile::before {
-    content: '⏹️';
-    font-size: 1.2rem;
+    content: '⏹';
+    font-size: 1.5rem;
     display: block;
     line-height: 1;
   }
