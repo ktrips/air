@@ -3390,6 +3390,29 @@ async function generateTravelogueWithAI() {
     return;
   }
 
+  // 既存の旅行記がある場合は削除
+  if (trip.travelogueUrl || trip.travelogueHtml) {
+    try {
+      // StorageのURLがある場合は削除
+      if (trip.travelogueUrl) {
+        try {
+          const ref = window.firebaseStorage?.refFromURL(trip.travelogueUrl);
+          if (ref) await ref.delete();
+          console.log('既存の旅行記をStorageから削除しました');
+        } catch (err) {
+          console.warn('既存旅行記Storage削除エラー（無視）:', err);
+        }
+      }
+      // データをクリア
+      trip.travelogueHtml = '';
+      trip.travelogueUrl = null;
+      trip.travelogueGeneratedAt = null;
+      console.log('既存の旅行記データをクリアしました');
+    } catch (err) {
+      console.error('既存旅行記削除エラー:', err);
+    }
+  }
+
   const btn = document.getElementById('generateTravelogueBtn');
   const originalBtnText = btn?.textContent || '旅行記生成';
 
@@ -4689,8 +4712,6 @@ async function updateHeaderInfo() {
     line2.textContent = '';
     if (headerInfo) headerInfo.classList.remove('header-info-mobile');
     if (videoBtn) videoBtn.style.display = 'none';
-    const travelogueBtn = document.getElementById('headerTravelogueBtn');
-    if (travelogueBtn) travelogueBtn.style.display = 'none';
     const stampBtn = document.getElementById('headerStampBtn');
     if (stampBtn) stampBtn.style.display = 'none';
     return;
@@ -4700,15 +4721,6 @@ async function updateHeaderInfo() {
       videoBtn.style.display = '';
     } else {
       videoBtn.style.display = 'none';
-    }
-  }
-  const travelogueBtn = document.getElementById('headerTravelogueBtn');
-  if (travelogueBtn) {
-    // 旅行記HTMLまたはURLがある場合に表示（親トリップも含む）
-    if (currentTrip.travelogueHtml || currentTrip.travelogueUrl) {
-      travelogueBtn.style.display = '';
-    } else {
-      travelogueBtn.style.display = 'none';
     }
   }
   const stampBtn = document.getElementById('headerStampBtn');
@@ -4748,11 +4760,11 @@ async function updateHeaderInfo() {
 
     let line2Html = '';
     if (currentTrip.description) {
-      // 旅行記がある場合は説明の後ろに[旅行記]リンクを追加
+      // 旅行記がある場合は説明の後ろに小さい旅行記ボタンを追加
       const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
       if (hasTravelogue) {
         line2Html += escapeHtml(currentTrip.description);
-        line2Html += ' <a href="#" class="header-trip-link header-travelogue-link">[旅行記]</a>';
+        line2Html += ' <button type="button" class="header-travelogue-btn">📝 旅行記</button>';
       } else if (currentTrip.url) {
         line2Html += `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(currentTrip.description)}</a>`;
       } else {
@@ -4761,10 +4773,10 @@ async function updateHeaderInfo() {
     }
     line2.innerHTML = line2Html;
 
-    // 旅行記リンクにクリックイベントを追加
-    const travelogueLink = line2.querySelector('.header-travelogue-link');
-    if (travelogueLink) {
-      travelogueLink.addEventListener('click', (e) => {
+    // 旅行記ボタンにクリックイベントを追加
+    const travelogueBtn = line2.querySelector('.header-travelogue-btn');
+    if (travelogueBtn) {
+      travelogueBtn.addEventListener('click', (e) => {
         e.preventDefault();
         showTravelogueModal();
       });
@@ -4954,6 +4966,7 @@ function updateTravelogueActionButtons() {
       await saveTrip();
       updateTravelogueActionButtons();
       updateCoverPreview();
+      updateHeaderInfo();
       setStatus('旅行記を削除しました');
     } catch (err) {
       console.error('旅行記削除エラー:', err);
@@ -5227,11 +5240,6 @@ function initEventListeners() {
   if (headerVideoBtn) headerVideoBtn.onclick = () => {
     if (playTimer) stopPlay();
     if (currentTrip?.videoUrl) showVideoOverlay(currentTrip.videoUrl);
-  };
-  const headerTravelogueBtn = document.getElementById('headerTravelogueBtn');
-  if (headerTravelogueBtn) headerTravelogueBtn.onclick = () => {
-    if (playTimer) stopPlay();
-    showTravelogueModal();
   };
   const headerStampBtn = document.getElementById('headerStampBtn');
   if (headerStampBtn) headerStampBtn.onclick = () => {
