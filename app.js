@@ -4740,11 +4740,30 @@ async function updateHeaderInfo() {
     : escapeHtml(name);
   if (isMobileView()) {
     const short = Array.from(name).slice(0, 4).join('');
-    line1.innerHTML = url
-      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(short)}</a>`
-      : escapeHtml(short);
+    const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
+
+    if (hasTravelogue) {
+      // 旅行記がある場合は旅行記へのリンク
+      line1.innerHTML = `<a href="#" class="header-trip-link header-travelogue-link-mobile">${escapeHtml(short)}</a>`;
+    } else if (url) {
+      // 旅行記がなくブログURLがある場合はブログへのリンク
+      line1.innerHTML = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(short)}</a>`;
+    } else {
+      // リンクなし
+      line1.innerHTML = escapeHtml(short);
+    }
+
     line2.textContent = '';
     if (headerInfo) headerInfo.classList.add('header-info-mobile');
+
+    // 旅行記リンクにクリックイベントを追加
+    const travelogueLinkMobile = line1.querySelector('.header-travelogue-link-mobile');
+    if (travelogueLinkMobile) {
+      travelogueLinkMobile.addEventListener('click', (e) => {
+        e.preventDefault();
+        showTravelogueModal();
+      });
+    }
   } else {
     if (headerInfo) headerInfo.classList.remove('header-info-mobile');
     const gpxInfo = await getGpsInfo();

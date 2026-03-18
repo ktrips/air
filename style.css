@@ -2298,6 +2298,18 @@ body.app-playing .play-stop-btn-mobile::before {
   .header-info-mobile .header-line2 {
     display: none;
   }
+
+  .header-travelogue-link-mobile {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: rgba(241, 90, 34, 0.6);
+    text-underline-offset: 2px;
+  }
+
+  .header-travelogue-link-mobile:hover {
+    text-decoration-color: rgba(241, 90, 34, 1);
+  }
+
   .header-controls .btn {
     padding: 0.3rem 0.55rem;
     font-size: 0.8rem;
