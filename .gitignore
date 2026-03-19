@@ -3,3 +3,4 @@ backup/
 node_modules/
 .DS_Store
 *.log
+firebase-config.js
