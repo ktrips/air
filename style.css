@@ -445,7 +445,14 @@ body {
 .map-container.map-showing-video .leaflet-control-attribution,
 .map-container.map-showing-video .leaflet-control,
 .map-container.map-showing-video .leaflet-top,
-.map-container.map-showing-video .leaflet-bottom {
+.map-container.map-showing-video .leaflet-bottom,
+.map-container.map-showing-video .play-stop-btn-mobile {
+  display: none !important;
+}
+
+/* メニューが開いているときは再生ボタンを非表示 */
+body:has(.menu-panel.open) #playBtn,
+body:has(.menu-panel.open) .play-stop-btn-mobile {
   display: none !important;
 }
 
