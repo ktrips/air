@@ -419,12 +419,61 @@ body {
 }
 
 /* レイヤーコントロールのスタイル */
-.leaflet-control-layers-custom {
+/* Google Map風レイヤーコントロール */
+.gmap-layer-control {
+  display: flex;
+  gap: 0;
+  background: white;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
   font-family: var(--font);
 }
 
-.layer-option-btn:last-child {
-  margin-bottom: 0 !important;
+.gmap-layer-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  background: white;
+  border-right: 1px solid #e8e8e8;
+  transition: background-color 0.2s;
+  min-width: 52px;
+}
+
+.gmap-layer-btn:last-child {
+  border-right: none;
+}
+
+.gmap-layer-btn:hover {
+  background: #f5f5f5;
+}
+
+.gmap-layer-btn.active {
+  background: #e8f0fe;
+  color: #1967d2;
+}
+
+.gmap-layer-icon {
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.gmap-layer-label {
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  color: #5f6368;
+  line-height: 1.2;
+}
+
+.gmap-layer-btn.active .gmap-layer-label {
+  color: #1967d2;
+  font-weight: 600;
 }
 
 .video-overlay {
@@ -441,7 +490,7 @@ body {
 
 .map-container.map-showing-video .map-search,
 .map-container.map-showing-video .leaflet-control-zoom,
-.map-container.map-showing-video .leaflet-control-layers,
+.map-container.map-showing-video .gmap-layer-control,
 .map-container.map-showing-video .leaflet-control-attribution,
 .map-container.map-showing-video .leaflet-control,
 .map-container.map-showing-video .leaflet-top,
@@ -459,7 +508,7 @@ body:has(.menu-panel.open) .play-stop-btn-mobile {
 /* 自動再生時は地図コントロールとトリップメニューを非表示 */
 body.app-playing .map-search,
 body.app-playing .leaflet-control-zoom,
-body.app-playing .leaflet-control-layers,
+body.app-playing .gmap-layer-control,
 body.app-playing .trip-sheet-trigger-container {
   display: none !important;
 }
@@ -2430,6 +2479,21 @@ body.app-playing .play-stop-btn-mobile::before {
   }
   .header-controls {
     gap: 0.35rem;
+  }
+
+  /* モバイルでのレイヤーコントロール */
+  .gmap-layer-btn {
+    padding: 3px 6px;
+    min-width: 44px;
+  }
+
+  .gmap-layer-icon {
+    font-size: 18px;
+    margin-bottom: 1px;
+  }
+
+  .gmap-layer-label {
+    font-size: 9px;
   }
 
   /* モバイルではアイコンのみの小さいボタンに */

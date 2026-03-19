@@ -197,106 +197,46 @@ function addLayerControl() {
   const layerControl = L.control({ position: 'topright' });
 
   layerControl.onAdd = function() {
-    const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control leaflet-control-layers-custom');
-
-    // トグルボタン（レイヤーアイコン）
-    const toggleBtn = L.DomUtil.create('a', 'layer-toggle-btn', container);
-    toggleBtn.href = '#';
-    toggleBtn.title = 'マップレイヤー切り替え';
-    toggleBtn.innerHTML = '◉';
-    toggleBtn.style.width = '30px';
-    toggleBtn.style.height = '30px';
-    toggleBtn.style.lineHeight = '30px';
-    toggleBtn.style.textAlign = 'center';
-    toggleBtn.style.display = 'block';
-    toggleBtn.style.background = 'rgba(255,255,255,0.9)';
-    toggleBtn.style.color = '#666';
-    toggleBtn.style.fontSize = '18px';
-    toggleBtn.style.textDecoration = 'none';
-    toggleBtn.style.borderRadius = '4px';
-    toggleBtn.style.cursor = 'pointer';
-    toggleBtn.style.boxShadow = '0 1px 5px rgba(0,0,0,0.4)';
-    toggleBtn.style.transition = 'background 0.2s';
-
-    // レイヤー選択パネル（初期は非表示）
-    const panel = L.DomUtil.create('div', 'layer-select-panel', container);
-    panel.style.display = 'none';
-    panel.style.position = 'absolute';
-    panel.style.top = '35px';
-    panel.style.right = '0';
-    panel.style.background = 'rgba(255,255,255,0.95)';
-    panel.style.borderRadius = '4px';
-    panel.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
-    panel.style.padding = '6px';
-    panel.style.minWidth = '90px';
-    panel.style.zIndex = '1000';
+    const container = L.DomUtil.create('div', 'gmap-layer-control');
 
     const layers = [
-      { key: 'standard', label: '標準' },
-      { key: 'terrain', label: '地形' },
-      { key: 'satellite', label: '衛星' }
+      { key: 'standard', label: '地図', icon: '🗺️' },
+      { key: 'terrain', label: '地形', icon: '⛰️' },
+      { key: 'satellite', label: '航空写真', icon: '🛰️' }
     ];
 
-    layers.forEach(({ key, label }) => {
-      const btn = L.DomUtil.create('div', 'layer-option-btn', panel);
-      btn.textContent = label;
-      btn.style.padding = '5px 8px';
-      btn.style.cursor = 'pointer';
-      btn.style.fontSize = '12px';
-      btn.style.borderRadius = '3px';
-      btn.style.marginBottom = '2px';
-      btn.style.transition = 'background 0.2s';
-      btn.style.color = '#333';
+    layers.forEach(({ key, label, icon }) => {
+      const btn = L.DomUtil.create('div', 'gmap-layer-btn', container);
       btn.dataset.layer = key;
 
+      const iconEl = L.DomUtil.create('div', 'gmap-layer-icon', btn);
+      iconEl.textContent = icon;
+
+      const labelEl = L.DomUtil.create('div', 'gmap-layer-label', btn);
+      labelEl.textContent = label;
+
       if (key === currentMapLayer) {
-        btn.style.background = '#e1306c';
-        btn.style.color = '#fff';
-        btn.style.fontWeight = '600';
+        btn.classList.add('active');
       }
 
       L.DomEvent.on(btn, 'click', function(e) {
+        L.DomEvent.preventDefault(e);
         L.DomEvent.stopPropagation(e);
+
+        // すべてのボタンからactiveクラスを削除
+        container.querySelectorAll('.gmap-layer-btn').forEach(b => {
+          b.classList.remove('active');
+        });
+
+        // クリックされたボタンにactiveクラスを追加
+        btn.classList.add('active');
+
         switchMapLayer(key);
-        updateLayerControlButtons();
-        panel.style.display = 'none';
       });
-
-      btn.addEventListener('mouseenter', function() {
-        if (key !== currentMapLayer) {
-          this.style.background = '#f0f0f0';
-        }
-      });
-
-      btn.addEventListener('mouseleave', function() {
-        if (key !== currentMapLayer) {
-          this.style.background = 'transparent';
-        }
-      });
-    });
-
-    // トグルボタンのクリックイベント
-    L.DomEvent.on(toggleBtn, 'click', function(e) {
-      L.DomEvent.preventDefault(e);
-      L.DomEvent.stopPropagation(e);
-      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-    });
-
-    toggleBtn.addEventListener('mouseenter', function() {
-      this.style.background = 'rgba(255,255,255,1)';
-    });
-
-    toggleBtn.addEventListener('mouseleave', function() {
-      this.style.background = 'rgba(255,255,255,0.9)';
     });
 
     // クリックイベントがマップに伝播しないようにする
     L.DomEvent.disableClickPropagation(container);
-
-    // マップクリック時にパネルを閉じる
-    map.on('click', function() {
-      panel.style.display = 'none';
-    });
 
     return container;
   };
@@ -317,22 +257,6 @@ function switchMapLayer(layerKey) {
   currentMapLayer = layerKey;
 
   console.log(`マップレイヤー切り替え: ${layerKey}`);
-}
-
-function updateLayerControlButtons() {
-  const buttons = document.querySelectorAll('.layer-option-btn');
-  buttons.forEach(btn => {
-    const key = btn.dataset.layer;
-    if (key === currentMapLayer) {
-      btn.style.background = '#e1306c';
-      btn.style.color = '#fff';
-      btn.style.fontWeight = '600';
-    } else {
-      btn.style.background = 'transparent';
-      btn.style.color = '#333';
-      btn.style.fontWeight = '400';
-    }
-  });
 }
 
 function initMap3d() {
