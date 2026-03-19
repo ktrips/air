@@ -1210,6 +1210,30 @@ body.app-playing .thumbnail-close-btn {
   right: 2.5rem;
 }
 
+.photo-popup-video-btn {
+  position: absolute;
+  top: 0.25rem;
+  right: 5rem;
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid rgba(255,255,255,0.9);
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+  backdrop-filter: blur(4px);
+}
+
+.photo-popup-video-btn:hover {
+  background: rgba(241, 90, 34, 0.9);
+  transform: scale(1.1);
+}
+
 .photo-popup-photo-wrap {
   position: relative;
   line-height: 0;
@@ -2291,6 +2315,13 @@ body:not(.editor) .viewer-only { display: block; }
 
   .photo-popup-edit-inline {
     right: 3rem;
+  }
+
+  .photo-popup-video-btn {
+    right: 6rem;
+    width: 40px;
+    height: 40px;
+    font-size: 1.2rem;
   }
 
   .photo-popup-edit-mode {

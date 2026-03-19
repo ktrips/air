@@ -1665,7 +1665,13 @@ function showPhotoAtIndex(i, viewOnly = true, opts = {}) {
 
   // 自動再生中は専用オーバーレイに表示
   if (playTimer) {
-    showPlaybackPhotoOverlay(p);
+    // 動画URLがある場合は動画を再生
+    if (p.videoUrl) {
+      stopPlay();
+      showVideoOverlay(p.videoUrl);
+    } else {
+      showPlaybackPhotoOverlay(p);
+    }
     return;
   }
 
@@ -1817,6 +1823,25 @@ function showPhotoViewMode(p, lat, lng) {
     infoEl.textContent = '（説明なし）';
   }
   div.appendChild(infoEl);
+
+  // 動画ボタン（動画URLがある場合）
+  if (p.videoUrl) {
+    const videoBtn = document.createElement('button');
+    videoBtn.type = 'button';
+    videoBtn.className = 'photo-popup-video-btn';
+    videoBtn.title = '動画を見る';
+    videoBtn.innerHTML = '🎬';
+    videoBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (photoPopup) {
+        map.removeLayer(photoPopup);
+        photoPopup = null;
+      }
+      showVideoOverlay(p.videoUrl);
+    };
+    div.appendChild(videoBtn);
+  }
+
   if (isEditor()) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -1936,6 +1961,19 @@ function showPhotoPopupEditMode(lat, lng) {
   descWrap.appendChild(descInput);
   form.appendChild(descWrap);
 
+  const videoUrlWrap = document.createElement('div');
+  videoUrlWrap.className = 'photo-popup-field';
+  const videoUrlLabel = document.createElement('label');
+  videoUrlLabel.textContent = '動画URL（任意）';
+  const videoUrlInput = document.createElement('input');
+  videoUrlInput.type = 'url';
+  videoUrlInput.className = 'photo-popup-input';
+  videoUrlInput.placeholder = 'YouTube/VimeoのURL';
+  videoUrlInput.value = p.videoUrl || '';
+  videoUrlWrap.appendChild(videoUrlLabel);
+  videoUrlWrap.appendChild(videoUrlInput);
+  form.appendChild(videoUrlWrap);
+
   const saveDeleteRow = document.createElement('div');
   saveDeleteRow.className = 'photo-popup-save-delete-row';
   const saveBtn = document.createElement('button');
@@ -2047,6 +2085,7 @@ function showPhotoPopupEditMode(lat, lng) {
       photos[idx].description = descInput.value.trim();
       photos[idx].landmarkNo = landmarkCheck.checked ? landmarkNoInput.value.trim() : '';
       photos[idx].landmarkName = photos[idx].landmarkNo || '';
+      photos[idx].videoUrl = videoUrlInput.value.trim();
     }
     // フォームが空の場合（メニュー未表示時など）は currentTrip をフォームに反映してから保存
     const nameEl = document.getElementById('tripNameInput');
