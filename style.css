@@ -1718,6 +1718,46 @@ body:not(.editor) .viewer-only { display: block; }
   text-decoration: underline;
 }
 
+.viewer-parent-trip {
+  padding: 0.6rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+}
+
+.viewer-parent-trip:hover {
+  background: var(--bg-hover);
+}
+
+.viewer-child-trips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.viewer-child-trip-item {
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background-color 0.2s;
+}
+
+.viewer-child-trip-item:hover {
+  background: var(--bg-hover);
+}
+
+.viewer-child-trip-item.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
 .modal-overlay {
   display: none;
   position: fixed;

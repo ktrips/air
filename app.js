@@ -1129,29 +1129,79 @@ function updateViewerSection() {
 
   const nameEl = document.getElementById('viewerTripName');
   const descEl = document.getElementById('viewerTripDesc');
-  const urlWrap = document.getElementById('viewerTripUrlWrap');
-  const urlEl = document.getElementById('viewerTripUrl');
+  const descWrap = document.getElementById('viewerTripDescWrap');
+  const parentTripWrap = document.getElementById('viewerParentTripWrap');
+  const parentTripEl = document.getElementById('viewerParentTrip');
+  const childTripsWrap = document.getElementById('viewerChildTripsWrap');
+  const childTripsEl = document.getElementById('viewerChildTrips');
   const travelogueBtn = document.getElementById('viewerTravelogueBtn');
   const videoBtn = document.getElementById('viewerVideoBtn');
+  const stampBtn = document.getElementById('viewerStampBtn');
   const animeWrap = document.getElementById('viewerAnimeWrap');
   const animesList = document.getElementById('viewerAnimesList');
+
+  // 親トリップの表示
+  if (parentTripWrap && parentTripEl) {
+    if (currentTrip.parentId) {
+      const parentTrip = allTrips.find(t => t.id === currentTrip.parentId);
+      if (parentTrip) {
+        parentTripEl.textContent = `📁 ${parentTrip.name || '（無題）'}`;
+        parentTripEl.onclick = async () => {
+          await loadTripById(parentTrip.id);
+        };
+        parentTripWrap.style.display = '';
+      } else {
+        parentTripWrap.style.display = 'none';
+      }
+    } else {
+      parentTripWrap.style.display = 'none';
+    }
+  }
+
+  // 子トリップの表示（親トリップの場合）
+  if (childTripsWrap && childTripsEl) {
+    if (currentTrip.isParent) {
+      const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
+      if (childTrips.length > 0) {
+        childTripsEl.innerHTML = '';
+        childTrips.forEach(child => {
+          const item = document.createElement('div');
+          item.className = 'viewer-child-trip-item';
+          item.textContent = child.name || '（無題）';
+          item.onclick = async () => {
+            await loadTripById(child.id);
+          };
+          childTripsEl.appendChild(item);
+        });
+        childTripsWrap.style.display = '';
+      } else {
+        childTripsWrap.style.display = 'none';
+      }
+    } else {
+      childTripsWrap.style.display = 'none';
+    }
+  }
 
   // トリップ名
   if (nameEl) nameEl.textContent = currentTrip.name || '（無題）';
 
-  // トリップ説明
-  if (descEl) {
-    descEl.textContent = currentTrip.description || '';
-    descEl.style.display = currentTrip.description ? '' : 'none';
-  }
-
-  // ブログURL
-  if (urlWrap && urlEl) {
-    if (currentTrip.url) {
-      urlEl.href = currentTrip.url;
-      urlWrap.style.display = '';
+  // トリップ説明（ブログURLがある場合はリンク化）
+  if (descEl && descWrap) {
+    const desc = currentTrip.description || '';
+    if (desc) {
+      if (currentTrip.url) {
+        // ブログURLがある場合はリンクを追加
+        descEl.innerHTML = `${escapeHtml(desc)}<br><a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="viewer-trip-link">📝 ブログを見る</a>`;
+      } else {
+        descEl.textContent = desc;
+      }
+      descWrap.style.display = '';
+    } else if (currentTrip.url) {
+      // 説明がなくてもブログURLがあれば表示
+      descEl.innerHTML = `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="viewer-trip-link">📝 ブログを見る</a>`;
+      descWrap.style.display = '';
     } else {
-      urlWrap.style.display = 'none';
+      descWrap.style.display = 'none';
     }
   }
 
@@ -1164,6 +1214,12 @@ function updateViewerSection() {
   // 動画ボタン
   if (videoBtn) {
     videoBtn.style.display = currentTrip.videoUrl ? '' : 'none';
+  }
+
+  // スタンプボタン
+  if (stampBtn) {
+    const hasLandmarks = (currentTrip.photos || []).some(p => p.landmarkNo);
+    stampBtn.style.display = hasLandmarks ? '' : 'none';
   }
 
   // アニメ画像
@@ -5366,6 +5422,11 @@ function initEventListeners() {
   const viewerVideoBtn = document.getElementById('viewerVideoBtn');
   if (viewerVideoBtn) viewerVideoBtn.onclick = () => {
     if (currentTrip?.videoUrl) showVideoOverlay(currentTrip.videoUrl);
+    closeMenu();
+  };
+  const viewerStampBtn = document.getElementById('viewerStampBtn');
+  if (viewerStampBtn) viewerStampBtn.onclick = () => {
+    if (currentTrip) showStampRallyModal(currentTrip);
     closeMenu();
   };
 

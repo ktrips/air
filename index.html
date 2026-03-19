@@ -91,18 +91,24 @@
       <p class="menu-desc">Air — 地図と写真でエア旅行した気分になる</p>
       <!-- ログアウト時のトリップ閲覧用セクション -->
       <section class="menu-section viewer-only" id="viewerTripSection" style="display:none;">
+        <div class="menu-field" id="viewerParentTripWrap" style="display:none;">
+          <label class="menu-label">親トリップ</label>
+          <div class="viewer-parent-trip" id="viewerParentTrip"></div>
+        </div>
+        <div class="menu-field" id="viewerChildTripsWrap" style="display:none;">
+          <label class="menu-label">子トリップ</label>
+          <div class="viewer-child-trips" id="viewerChildTrips"></div>
+        </div>
         <div class="menu-field">
           <div class="viewer-trip-name" id="viewerTripName"></div>
         </div>
-        <div class="menu-field">
+        <div class="menu-field" id="viewerTripDescWrap" style="display:none;">
           <div class="viewer-trip-desc" id="viewerTripDesc"></div>
-        </div>
-        <div class="menu-field" id="viewerTripUrlWrap" style="display:none;">
-          <a id="viewerTripUrl" class="viewer-trip-link" target="_blank" rel="noopener">📝 ブログを見る</a>
         </div>
         <div class="menu-row" style="display:flex;gap:8px;">
           <button type="button" class="btn btn-travelogue btn-sm" id="viewerTravelogueBtn" style="display:none;">📖 旅行記</button>
           <button type="button" class="btn btn-primary btn-sm" id="viewerVideoBtn" style="display:none;">🎬 動画</button>
+          <button type="button" class="btn btn-stamp btn-sm" id="viewerStampBtn" style="display:none;">🎫 スタンプ</button>
         </div>
         <div class="menu-field" id="viewerAnimeWrap" style="display:none;">
           <label class="menu-label">アニメ画像</label>
