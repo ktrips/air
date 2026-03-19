@@ -1356,17 +1356,26 @@ body.app-playing .thumbnail-close-btn {
 }
 
 .photo-popup-save-delete-row .photo-popup-delete-small {
-  padding: 0.15rem 0.35rem;
-  font-size: 0.65rem;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.75rem;
   background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
+  color: #dc3545;
+  border: 1px solid #dc3545;
   margin-left: auto;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
 }
 
 .photo-popup-delete-small:hover {
-  background: rgba(0,0,0,0.04);
-  color: var(--text);
+  background: #dc3545;
+  color: white;
+  border-color: #dc3545;
+}
+
+.photo-popup-delete-small:active {
+  background: #c82333;
+  border-color: #bd2130;
 }
 
 .photo-popup-textarea {

@@ -1996,7 +1996,7 @@ function showPhotoPopupEditMode(lat, lng) {
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'btn photo-popup-delete-small';
-  deleteBtn.textContent = '削除';
+  deleteBtn.textContent = '🗑️ 削除';
   deleteBtn.title = 'この写真を削除';
   saveDeleteRow.appendChild(saveBtn);
   saveDeleteRow.appendChild(deleteBtn);
@@ -2137,7 +2137,16 @@ function showPhotoPopupEditMode(lat, lng) {
   saveBtn.onclick = () => performSave(true);
 
   deleteBtn.onclick = async () => {
-    if (!photos[idx] || !confirm('この写真を削除しますか？')) return;
+    if (!photos[idx]) return;
+    const photoName = photos[idx].name || '（無題）';
+    const message = `この写真を削除しますか？\n\n${photoName}\n\nこの操作は元に戻せません。`;
+    if (!confirm(message)) return;
+
+    // 削除ボタンを無効化して状態を表示
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = '削除中...';
+    setStatus('写真を削除中...');
+
     photos.splice(idx, 1);
     if (photoPopup) {
       map.removeLayer(photoPopup);
@@ -2156,8 +2165,11 @@ function showPhotoPopupEditMode(lat, lng) {
         if (attempt < 3 && isRetryable) {
           await new Promise(r => setTimeout(r, 1000 * attempt));
         } else {
-          setStatus('保存に失敗しました');
+          setStatus('❌ 削除の保存に失敗しました');
           console.error(err);
+          alert('削除の保存に失敗しました。\n\nもう一度お試しください。');
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = '🗑️ 削除';
           return;
         }
       }
@@ -2171,7 +2183,7 @@ function showPhotoPopupEditMode(lat, lng) {
         renderTripDetailPane();
         updateHeaderInfo();
       }
-      setStatus('削除しました');
+      setStatus('✓ 写真を削除しました');
     }
   };
 
