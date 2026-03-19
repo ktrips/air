@@ -1684,6 +1684,40 @@ body.editor .menu-section-bottom {
 .editor-only { display: none; }
 body.editor .editor-only { display: block; }
 
+/* 閲覧者向け（ログアウト時）のスタイル */
+.viewer-only { display: none; }
+body:not(.editor) .viewer-only { display: block; }
+
+.viewer-trip-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+
+.viewer-trip-desc {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.viewer-trip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: opacity 0.2s;
+}
+
+.viewer-trip-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
 .modal-overlay {
   display: none;
   position: fixed;

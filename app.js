@@ -1105,6 +1105,97 @@ async function updateTripInputs() {
   } else if (gpxLabel) {
     gpxLabel.textContent = 'GPXファイル';
   }
+  updateViewerSection();
+}
+
+function updateViewerSection() {
+  const viewerSection = document.getElementById('viewerTripSection');
+  if (!viewerSection) return;
+
+  // ログイン時は表示しない
+  if (isEditor()) {
+    viewerSection.style.display = 'none';
+    return;
+  }
+
+  // トリップが選択されていない場合は非表示
+  if (!currentTrip) {
+    viewerSection.style.display = 'none';
+    return;
+  }
+
+  // トリップ情報を表示
+  viewerSection.style.display = '';
+
+  const nameEl = document.getElementById('viewerTripName');
+  const descEl = document.getElementById('viewerTripDesc');
+  const urlWrap = document.getElementById('viewerTripUrlWrap');
+  const urlEl = document.getElementById('viewerTripUrl');
+  const travelogueBtn = document.getElementById('viewerTravelogueBtn');
+  const videoBtn = document.getElementById('viewerVideoBtn');
+  const animeWrap = document.getElementById('viewerAnimeWrap');
+  const animesList = document.getElementById('viewerAnimesList');
+
+  // トリップ名
+  if (nameEl) nameEl.textContent = currentTrip.name || '（無題）';
+
+  // トリップ説明
+  if (descEl) {
+    descEl.textContent = currentTrip.description || '';
+    descEl.style.display = currentTrip.description ? '' : 'none';
+  }
+
+  // ブログURL
+  if (urlWrap && urlEl) {
+    if (currentTrip.url) {
+      urlEl.href = currentTrip.url;
+      urlWrap.style.display = '';
+    } else {
+      urlWrap.style.display = 'none';
+    }
+  }
+
+  // 旅行記ボタン
+  if (travelogueBtn) {
+    const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
+    travelogueBtn.style.display = hasTravelogue ? '' : 'none';
+  }
+
+  // 動画ボタン
+  if (videoBtn) {
+    videoBtn.style.display = currentTrip.videoUrl ? '' : 'none';
+  }
+
+  // アニメ画像
+  if (animeWrap && animesList) {
+    const animes = currentTrip.animes || [];
+    if (animes.length > 0) {
+      animesList.innerHTML = '';
+      animes.forEach((anime, idx) => {
+        const img = document.createElement('img');
+        img.src = anime.url;
+        img.style.width = '100px';
+        img.style.height = '100px';
+        img.style.objectFit = 'cover';
+        img.style.borderRadius = '8px';
+        img.style.cursor = 'pointer';
+        img.style.border = '2px solid var(--border)';
+        img.title = anime.style || 'アニメ画像';
+        img.onclick = () => {
+          const modal = document.getElementById('animeModal');
+          const modalImg = document.getElementById('animeModalImage');
+          if (modal && modalImg) {
+            modalImg.src = anime.url;
+            modal.classList.add('open');
+          }
+        };
+        animesList.appendChild(img);
+      });
+      animeWrap.style.display = '';
+    } else {
+      animeWrap.style.display = 'none';
+    }
+  }
 }
 
 function getDisplayPhotos() {
@@ -5264,6 +5355,18 @@ function initEventListeners() {
   if (headerStampBtn) headerStampBtn.onclick = () => {
     if (playTimer) stopPlay();
     if (currentTrip) showStampRallyModal(currentTrip);
+  };
+
+  // 閲覧者用のボタン
+  const viewerTravelogueBtn = document.getElementById('viewerTravelogueBtn');
+  if (viewerTravelogueBtn) viewerTravelogueBtn.onclick = () => {
+    showTravelogueModal();
+    closeMenu();
+  };
+  const viewerVideoBtn = document.getElementById('viewerVideoBtn');
+  if (viewerVideoBtn) viewerVideoBtn.onclick = () => {
+    if (currentTrip?.videoUrl) showVideoOverlay(currentTrip.videoUrl);
+    closeMenu();
   };
 
   const generateTravelogueBtn = document.getElementById('generateTravelogueBtn');

@@ -89,6 +89,26 @@
     </div>
     <div class="menu-body">
       <p class="menu-desc">Air — 地図と写真でエア旅行した気分になる</p>
+      <!-- ログアウト時のトリップ閲覧用セクション -->
+      <section class="menu-section viewer-only" id="viewerTripSection" style="display:none;">
+        <div class="menu-field">
+          <div class="viewer-trip-name" id="viewerTripName"></div>
+        </div>
+        <div class="menu-field">
+          <div class="viewer-trip-desc" id="viewerTripDesc"></div>
+        </div>
+        <div class="menu-field" id="viewerTripUrlWrap" style="display:none;">
+          <a id="viewerTripUrl" class="viewer-trip-link" target="_blank" rel="noopener">📝 ブログを見る</a>
+        </div>
+        <div class="menu-row" style="display:flex;gap:8px;">
+          <button type="button" class="btn btn-travelogue btn-sm" id="viewerTravelogueBtn" style="display:none;">📖 旅行記</button>
+          <button type="button" class="btn btn-primary btn-sm" id="viewerVideoBtn" style="display:none;">🎬 動画</button>
+        </div>
+        <div class="menu-field" id="viewerAnimeWrap" style="display:none;">
+          <label class="menu-label">アニメ画像</label>
+          <div id="viewerAnimesList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
+        </div>
+      </section>
       <section class="menu-section editor-only" id="tripActionsSection">
         <div class="menu-row">
           <button type="button" class="btn btn-secondary btn-sm" id="newTripBtn">新規</button>
