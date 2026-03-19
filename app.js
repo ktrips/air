@@ -3663,6 +3663,10 @@ async function generateTravelogueWithAI() {
   const context = parts.join('\n');
   const tripColor = trip.color || '#e1306c';
 
+  // アニメ表紙画像があれば取得
+  const coverImage = trip.animes && trip.animes.length > 0 ? trip.animes[0].url : null;
+  const coverImageHtml = coverImage ? `<div style="text-align:center;margin:2rem 0;"><img src="${coverImage}" alt="旅行記の表紙" style="max-width:100%;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);"/></div>` : '';
+
   const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
 
 出力形式（HTML）:
@@ -3670,12 +3674,12 @@ async function generateTravelogueWithAI() {
 1. 最初に旅の表題を魅力的に表記:
 <h2 class="travelogue-title">トリップ名とトリップ説明を元に、旅の魅力を表す表題を生成（例：「瀬戸内の風を感じる しまなみ海道サイクリング紀行」「古都を巡る 京都・奈良の寺社仏閣めぐり」など）</h2>
 
-2. 次にサマリーを250字程度で記述:
+${coverImage ? `2. 次にAI生成の表紙画像を表示:\n${coverImageHtml}\n\n3` : '2'}. 次にサマリーを250字程度で記述:
 <div class="travelogue-summary">
   <p>旅行のサマリー250字程度（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）</p>
 </div>
 
-3. ランドマーク毎にセクション分けして記述:
+${coverImage ? '4' : '3'}. ランドマーク毎にセクション分けして記述:
 
 <div class="travelogue-landmark-section">
   <h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍 ランドマーク番号: ポイント名</h3>
@@ -3703,9 +3707,9 @@ async function generateTravelogueWithAI() {
   ※「（Wikipediaのtitleフィールドの値）について」の部分には、実際に取得したWikipedia記事のタイトルを使用してください（例：「観音寺について」「しまなみ海道について」など）
 </div>
 
-4. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）
+${coverImage ? '5' : '4'}. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）
 
-5. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
+${coverImage ? '6' : '5'}. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
 
 <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
   <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
