@@ -1207,9 +1207,10 @@ body.app-playing .thumbnail-close-btn {
 .photo-popup-save-delete-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  justify-content: flex-start;
+  gap: 0;
   margin-top: 0.25rem;
+  flex-wrap: wrap;
 }
 
 .photo-popup-info {
@@ -1355,13 +1356,36 @@ body.app-playing .thumbnail-close-btn {
   font-size: 0.9rem;
 }
 
+.photo-popup-delete-photo-only {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.7rem;
+  background: transparent;
+  color: #fd7e14;
+  border: 1px solid #fd7e14;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: auto;
+}
+
+.photo-popup-delete-photo-only:hover {
+  background: #fd7e14;
+  color: white;
+  border-color: #fd7e14;
+}
+
+.photo-popup-delete-photo-only:active {
+  background: #e8590c;
+  border-color: #dc5000;
+}
+
 .photo-popup-save-delete-row .photo-popup-delete-small {
-  padding: 0.4rem 0.8rem;
-  font-size: 0.75rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.7rem;
   background: transparent;
   color: #dc3545;
   border: 1px solid #dc3545;
-  margin-left: auto;
+  margin-left: 0.35rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s;

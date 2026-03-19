@@ -1993,12 +1993,18 @@ function showPhotoPopupEditMode(lat, lng) {
   saveBtn.type = 'button';
   saveBtn.className = 'btn btn-primary btn-sm';
   saveBtn.textContent = '保存';
+  const deletePhotoBtn = document.createElement('button');
+  deletePhotoBtn.type = 'button';
+  deletePhotoBtn.className = 'btn photo-popup-delete-photo-only';
+  deletePhotoBtn.textContent = '📷 写真削除';
+  deletePhotoBtn.title = 'ポイントは残して写真のみ削除';
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'btn photo-popup-delete-small';
-  deleteBtn.textContent = '🗑️ 削除';
-  deleteBtn.title = 'この写真を削除';
+  deleteBtn.textContent = '🗑️ 全削除';
+  deleteBtn.title = 'ポイントごと削除';
   saveDeleteRow.appendChild(saveBtn);
+  saveDeleteRow.appendChild(deletePhotoBtn);
   saveDeleteRow.appendChild(deleteBtn);
   form.appendChild(saveDeleteRow);
 
@@ -2136,16 +2142,70 @@ function showPhotoPopupEditMode(lat, lng) {
   // 自動保存を削除し、手動保存のみに変更
   saveBtn.onclick = () => performSave(true);
 
+  // 写真のみ削除（ポイントは残す）
+  deletePhotoBtn.onclick = async () => {
+    if (!photos[idx]) return;
+    const photoName = photos[idx].name || '（無題）';
+    const message = `写真のみを削除しますか？\n\n${photoName}\n\nポイント情報は残ります。`;
+    if (!confirm(message)) return;
+
+    // ボタンを無効化して状態を表示
+    deletePhotoBtn.disabled = true;
+    deletePhotoBtn.textContent = '削除中...';
+    setStatus('写真を削除中...');
+
+    // 写真URLのみ削除、ポイント情報は保持
+    if (photos[idx]) {
+      photos[idx].url = '';
+      photos[idx].mime = '';
+      // name, description, lat, lng, landmarkNo などは保持
+    }
+
+    if (photoPopup) {
+      map.removeLayer(photoPopup);
+      photoPopup = null;
+    }
+
+    updateTripInputs();
+    let saved = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await saveTrip({ silent: true });
+        saved = true;
+        break;
+      } catch (err) {
+        const isRetryable = err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError');
+        if (attempt < 3 && isRetryable) {
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+        } else {
+          setStatus('❌ 削除の保存に失敗しました');
+          console.error(err);
+          alert('削除の保存に失敗しました。\n\nもう一度お試しください。');
+          deletePhotoBtn.disabled = false;
+          deletePhotoBtn.textContent = '📷 写真削除';
+          return;
+        }
+      }
+    }
+    if (saved) {
+      renderThumbnails();
+      updateMapMarkers();
+      showPhotoAtIndex(currentPhotoIndex, true);
+      setStatus('✓ 写真を削除しました（ポイントは残っています）');
+    }
+  };
+
+  // ポイントごと削除
   deleteBtn.onclick = async () => {
     if (!photos[idx]) return;
     const photoName = photos[idx].name || '（無題）';
-    const message = `この写真を削除しますか？\n\n${photoName}\n\nこの操作は元に戻せません。`;
+    const message = `ポイントごと削除しますか？\n\n${photoName}\n\nこの操作は元に戻せません。`;
     if (!confirm(message)) return;
 
     // 削除ボタンを無効化して状態を表示
     deleteBtn.disabled = true;
     deleteBtn.textContent = '削除中...';
-    setStatus('写真を削除中...');
+    setStatus('ポイントを削除中...');
 
     photos.splice(idx, 1);
     if (photoPopup) {
@@ -2169,7 +2229,7 @@ function showPhotoPopupEditMode(lat, lng) {
           console.error(err);
           alert('削除の保存に失敗しました。\n\nもう一度お試しください。');
           deleteBtn.disabled = false;
-          deleteBtn.textContent = '🗑️ 削除';
+          deleteBtn.textContent = '🗑️ 全削除';
           return;
         }
       }
@@ -2183,7 +2243,7 @@ function showPhotoPopupEditMode(lat, lng) {
         renderTripDetailPane();
         updateHeaderInfo();
       }
-      setStatus('✓ 写真を削除しました');
+      setStatus('✓ ポイントを削除しました');
     }
   };
 
