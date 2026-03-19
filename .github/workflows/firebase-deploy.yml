@@ -21,12 +21,6 @@ jobs:
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 
-      - name: Create firebase-config.js
-        env:
-          FIREBASE_CONFIG_JSON: ${{ secrets.FIREBASE_CONFIG }}
-        run: |
-          echo "const FIREBASE_CONFIG = $FIREBASE_CONFIG_JSON;" > firebase-config.js
-
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
