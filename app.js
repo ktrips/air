@@ -3558,31 +3558,45 @@ async function generateTravelogueWithAI() {
     return;
   }
 
-  // 既存の旅行記がある場合は削除
+  const btn = document.getElementById('generateTravelogueBtn');
+  const originalBtnText = btn?.textContent || '旅行記生成';
+
+  // 既存の旅行記がある場合は削除して上書き
   if (trip.travelogueUrl || trip.travelogueHtml) {
+    if (btn) btn.textContent = '既存旅行記を削除中...';
+    setStatus('既存の旅行記を削除しています...');
+
     try {
       // StorageのURLがある場合は削除
       if (trip.travelogueUrl) {
         try {
           const ref = window.firebaseStorage?.refFromURL(trip.travelogueUrl);
-          if (ref) await ref.delete();
-          console.log('既存の旅行記をStorageから削除しました');
+          if (ref) {
+            await ref.delete();
+            console.log('既存の旅行記をStorageから削除しました:', trip.travelogueUrl);
+          }
         } catch (err) {
           console.warn('既存旅行記Storage削除エラー（無視）:', err);
         }
       }
-      // データをクリア
+
+      // データをクリアしてFirestoreに保存
       trip.travelogueHtml = '';
       trip.travelogueUrl = null;
       trip.travelogueGeneratedAt = null;
-      console.log('既存の旅行記データをクリアしました');
+      currentTrip.travelogueHtml = '';
+      currentTrip.travelogueUrl = null;
+      currentTrip.travelogueGeneratedAt = null;
+
+      // Firestoreに削除を反映
+      await saveTrip({ silent: true });
+      console.log('既存の旅行記データをクリアしてFirestoreに保存しました');
+      setStatus('既存の旅行記を削除しました。新しい旅行記を生成します...');
     } catch (err) {
       console.error('既存旅行記削除エラー:', err);
+      alert('既存の旅行記の削除に失敗しました。続行しますか？');
     }
   }
-
-  const btn = document.getElementById('generateTravelogueBtn');
-  const originalBtnText = btn?.textContent || '旅行記生成';
 
   // 表紙生成チェックボックスの状態を確認
   const generateCover = document.getElementById('generateCoverImageCheckbox')?.checked || false;
