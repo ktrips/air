@@ -338,41 +338,144 @@
         <button type="button" class="modal-close" id="helpModalClose">&times;</button>
       </div>
       <div class="modal-body">
-        <h4>🌍 閲覧（ログインなしでもOK）</h4>
-        <ul>
-          <li>公開トリップは誰でも閲覧可能</li>
+        <h3>Air - 地図と写真でエア旅行</h3>
+        <p>GPS付き写真を地図上に表示し、スライドショーで楽しむWebアプリです。</p>
+
+        <h4>🌍 閲覧モード（ログインなし）</h4>
+        <p><strong>公開トリップを見る:</strong></p>
+        <ol>
           <li>右側パネルのトリップ一覧から選択</li>
-          <li>写真サムネイルクリックで地図上に表示</li>
-          <li>「▶ 再生」「前」「次」でスライドショー（1/3/5秒間隔）</li>
-          <li>右上のメニューから動画・旅行記・スタンプラリーを表示</li>
-          <li>地図レイヤー（🗺️）から地図・地形・航空写真を切り替え</li>
+          <li>写真サムネイルをクリックして地図上に表示</li>
+          <li>「▶ 再生」でスライドショー（1/3/5秒間隔を選択可能）</li>
+          <li>「前」「次」ボタンで写真を手動で切り替え</li>
+        </ol>
+        <p><strong>地図操作:</strong></p>
+        <ul>
+          <li>右上の🗺️ボタンで地図・地形・航空写真を切り替え</li>
+          <li>マウスホイールでズーム、ドラッグで移動</li>
+          <li>写真マーカーをクリックして詳細表示</li>
+        </ul>
+        <p><strong>その他の機能:</strong></p>
+        <ul>
+          <li>右上メニュー（☰）から動画・旅行記・スタンプラリーを表示</li>
+          <li>旅行記がある場合、トリップ名をクリックで旅行記を表示</li>
         </ul>
 
-        <h4>✏️ 編集（ログイン必要）</h4>
+        <h4>✏️ 編集モード（ログイン必要）</h4>
+        <p><strong>1. ログインして始める:</strong></p>
+        <ol>
+          <li>右上メニュー（☰）→「Googleでログイン」</li>
+          <li>「新規」ボタンで新しいトリップを作成</li>
+        </ol>
+
+        <p><strong>2. 写真をアップロード:</strong></p>
         <ul>
-          <li><strong>ログイン:</strong> 右上メニューから「Googleでログイン」</li>
-          <li><strong>写真追加:</strong> 画面に写真をドラッグ＆ドロップ（GPS付き推奨）</li>
-          <li><strong>GPX追加:</strong> ルートファイルをアップロードして軌跡を表示</li>
-          <li><strong>ポイント編集:</strong> 地図上のマーカーをクリック→✏️編集→保存</li>
-          <li><strong>写真削除:</strong> 📷写真削除（ポイント残す）/🗑️全削除（ポイントごと）</li>
-          <li><strong>トリップ設定:</strong> 右上メニューでトリップ名・説明・ブログURL・動画URL・カラーを設定</li>
-          <li><strong>親子トリップ:</strong> 「親トリップ」でフォルダ作成→子トリップで整理</li>
-          <li><strong>公開:</strong> 「公開する」で誰でも閲覧可能に</li>
+          <li>画面に写真をドラッグ＆ドロップ（複数枚可）</li>
+          <li>GPS情報付き写真は自動的に地図上に配置</li>
+          <li>GPS情報がない写真は地図をクリックして位置を指定</li>
         </ul>
+
+        <p><strong>3. ポイント情報を編集:</strong></p>
+        <ol>
+          <li>地図上の写真マーカーをクリック</li>
+          <li>✏️編集ボタンをクリック</li>
+          <li>ポイント名・説明・ランドマーク番号を入力</li>
+          <li>「保存」ボタンで保存</li>
+        </ol>
+
+        <p><strong>4. 写真の削除:</strong></p>
+        <ul>
+          <li>📷<strong>写真削除</strong>: 写真のみ削除、ポイント情報は残る</li>
+          <li>🗑️<strong>全削除</strong>: ポイントごと完全に削除</li>
+        </ul>
+
+        <p><strong>5. GPXルートを追加:</strong></p>
+        <ol>
+          <li>右上メニュー→「GPXアップロード」</li>
+          <li>GPXファイルを選択</li>
+          <li>ルートが地図上に表示されます</li>
+        </ol>
+
+        <p><strong>6. トリップを設定:</strong></p>
+        <ul>
+          <li>右上メニューでトリップ名・説明を入力</li>
+          <li>ブログURLを追加（説明欄にリンク表示）</li>
+          <li>動画URLを追加（YouTube/Vimeo対応）</li>
+          <li>カラーピッカーでルート色を選択（12色）</li>
+        </ul>
+
+        <p><strong>7. 保存と公開:</strong></p>
+        <ol>
+          <li>「保存」ボタンでFirestoreに保存</li>
+          <li>「公開する」にチェック→誰でも閲覧可能に</li>
+          <li>チェックを外す→自分だけが見られる</li>
+        </ol>
+
+        <h4>📁 親子トリップ（フォルダ管理）</h4>
+        <p><strong>複数のトリップを整理:</strong></p>
+        <ol>
+          <li>「親トリップ」にチェック→フォルダとして使用</li>
+          <li>親トリップには写真やGPXは追加しない</li>
+          <li>子トリップで「親を選択」→親トリップを選択</li>
+          <li>「＋ 子トリップを追加」で新しい子を作成</li>
+        </ol>
 
         <h4>🤖 AI機能（オプション）</h4>
+        <p><strong>1. AI設定:</strong></p>
         <ul>
-          <li><strong>AI設定:</strong> メニュー→AI設定でAPIキーを設定</li>
-          <li><strong>旅行記生成:</strong> 写真・GPS・説明から自動生成（Gemini/OpenAI/Anthropic）</li>
-          <li><strong>アニメ生成:</strong> 旅行記を元に8種類のスタイルで画像生成</li>
+          <li>右上メニュー→「AI設定」</li>
+          <li>プロバイダー選択: Gemini / OpenAI / Anthropic</li>
+          <li>各プロバイダーのAPIキーを入力</li>
+          <li>Nano Banana Pro2のAPIキー（アニメ生成用）</li>
         </ul>
 
-        <h4>📱 モバイル</h4>
+        <p><strong>2. AI旅行記生成:</strong></p>
+        <ol>
+          <li>写真・ポイント説明・GPSを用意</li>
+          <li>右上メニュー→「AI旅行記生成」</li>
+          <li>自動的に旅行記が生成されます</li>
+          <li>ヘッダーの「旅行記」ボタンで表示</li>
+          <li>御朱印帳風のデザインで表示</li>
+        </ol>
+
+        <p><strong>3. AIアニメ生成:</strong></p>
+        <ol>
+          <li>先に旅行記を生成</li>
+          <li>右上メニュー→「AIアニメ生成」</li>
+          <li>8種類のスタイルから選択</li>
+          <li>スライドショー形式で画像が生成されます</li>
+        </ol>
+
+        <h4>📱 モバイル機能</h4>
         <ul>
-          <li>旅行記がある場合、トリップ名をタップで旅行記表示</li>
-          <li>下部の再生ボタンでスライドショー</li>
-          <li>写真をスワイプで切り替え</li>
+          <li><strong>トリップ名タップ:</strong> 旅行記を表示（旅行記がある場合）</li>
+          <li><strong>下部の再生ボタン:</strong> スライドショー開始</li>
+          <li><strong>スワイプ:</strong> 写真を左右に切り替え</li>
+          <li><strong>メニュー:</strong> 右上の☰から各機能にアクセス</li>
         </ul>
+
+        <h4>💡 Tips</h4>
+        <ul>
+          <li><strong>GPS付き写真:</strong> スマホで位置情報ONで撮影した写真を使用</li>
+          <li><strong>ルート表示:</strong> GPXファイルで移動軌跡を記録</li>
+          <li><strong>ランドマーク:</strong> ポイントにランドマーク番号を付けてスタンプラリー</li>
+          <li><strong>カラー:</strong> トリップごとに色を変えて地図上で区別</li>
+          <li><strong>公開設定:</strong> 公開/非公開はいつでも変更可能</li>
+        </ul>
+
+        <h4>❓ よくある質問</h4>
+        <p><strong>Q: 写真が地図に表示されません</strong></p>
+        <p>A: 写真にGPS情報が含まれているか確認してください。GPS情報がない場合は、地図をクリックして手動で位置を指定できます。</p>
+
+        <p><strong>Q: 保存したトリップが消えました</strong></p>
+        <p>A: ログアウトすると自分のトリップは見えなくなります。再度ログインしてください。</p>
+
+        <p><strong>Q: 動画が再生されません</strong></p>
+        <p>A: YouTube/VimeoのURLを使用してください。埋め込み制限がある動画は再生できません。</p>
+
+        <p style="margin-top:2rem; text-align:center; color:#888; font-size:0.9rem;">
+          詳細は <a href="https://github.com/ktrips/air" target="_blank" rel="noopener">GitHub</a> をご覧ください
+        </p>
       </div>
     </div>
   </div>

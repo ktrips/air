@@ -1905,14 +1905,54 @@ body:not(.editor) .viewer-only { display: block; }
 
 .modal-body {
   padding: 1.25rem;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
-.modal-body ul {
+.modal-body h3 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: var(--accent);
+}
+
+.modal-body h4 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: var(--text);
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.25rem;
+}
+
+.modal-body p {
+  margin: 0.5rem 0;
+  line-height: 1.6;
+}
+
+.modal-body p strong {
+  color: var(--text);
+}
+
+.modal-body ul,
+.modal-body ol {
   margin: 0.5rem 0 1rem 1.5rem;
+  line-height: 1.6;
 }
 
 .modal-body li {
   margin-bottom: 0.35rem;
+}
+
+.modal-body ol {
+  list-style-type: decimal;
+}
+
+.modal-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.modal-body a:hover {
+  text-decoration: underline;
 }
 
 .menu-desc-small {
