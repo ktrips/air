@@ -199,6 +199,15 @@ function addLayerControl() {
   layerControl.onAdd = function() {
     const container = L.DomUtil.create('div', 'gmap-layer-control');
 
+    // トグルボタン（レイヤーアイコン）
+    const toggleBtn = L.DomUtil.create('div', 'gmap-layer-toggle', container);
+    toggleBtn.innerHTML = '🗺️';
+    toggleBtn.title = 'レイヤーを選択';
+
+    // レイヤーパネル（初期は非表示）
+    const panel = L.DomUtil.create('div', 'gmap-layer-panel', container);
+    panel.style.display = 'none';
+
     const layers = [
       { key: 'standard', label: '地図', icon: '🗺️' },
       { key: 'terrain', label: '地形', icon: '⛰️' },
@@ -206,7 +215,7 @@ function addLayerControl() {
     ];
 
     layers.forEach(({ key, label, icon }) => {
-      const btn = L.DomUtil.create('div', 'gmap-layer-btn', container);
+      const btn = L.DomUtil.create('div', 'gmap-layer-btn', panel);
       btn.dataset.layer = key;
 
       const iconEl = L.DomUtil.create('div', 'gmap-layer-icon', btn);
@@ -224,15 +233,31 @@ function addLayerControl() {
         L.DomEvent.stopPropagation(e);
 
         // すべてのボタンからactiveクラスを削除
-        container.querySelectorAll('.gmap-layer-btn').forEach(b => {
+        panel.querySelectorAll('.gmap-layer-btn').forEach(b => {
           b.classList.remove('active');
         });
 
         // クリックされたボタンにactiveクラスを追加
         btn.classList.add('active');
 
+        // トグルボタンのアイコンを更新
+        toggleBtn.innerHTML = icon;
+
         switchMapLayer(key);
+        panel.style.display = 'none';
       });
+    });
+
+    // トグルボタンのクリックイベント
+    L.DomEvent.on(toggleBtn, 'click', function(e) {
+      L.DomEvent.preventDefault(e);
+      L.DomEvent.stopPropagation(e);
+      panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // マップクリック時にパネルを閉じる
+    map.on('click', function() {
+      panel.style.display = 'none';
     });
 
     // クリックイベントがマップに伝播しないようにする
