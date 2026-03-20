@@ -1224,17 +1224,16 @@ function updateViewerSection() {
   // トリップ名
   if (nameEl) {
     const tripName = currentTrip.name || '（無題）';
-    // モバイルの場合は最初の8文字まで
-    nameEl.textContent = window.innerWidth <= 768 ? tripName.substring(0, 8) : tripName;
+    nameEl.textContent = tripName;
   }
 
-  // トリップ説明（ブログURLがある場合はリンク化）
+  // トリップ説明（ブログURLがある場合は説明自体をリンク化）
   if (descEl && descWrap) {
     const desc = currentTrip.description || '';
     if (desc) {
       if (currentTrip.url) {
-        // ブログURLがある場合はリンクを追加
-        descEl.innerHTML = `${escapeHtml(desc)}<br><a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="viewer-trip-link">📝 ブログを見る</a>`;
+        // ブログURLがある場合は説明自体をリンクにする
+        descEl.innerHTML = `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="viewer-trip-desc-link">${escapeHtml(desc)}</a>`;
       } else {
         descEl.textContent = desc;
       }
@@ -1261,8 +1260,15 @@ function updateViewerSection() {
 
   // スタンプボタン
   if (stampBtn) {
-    const hasLandmarks = (currentTrip.photos || []).some(p => p.landmarkNo);
-    stampBtn.style.display = hasLandmarks ? '' : 'none';
+    let hasStamps = false;
+    if (currentTrip.isParent) {
+      // 親トリップの場合は子トリップのスタンプをチェック
+      const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
+      hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
+    } else {
+      hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
+    }
+    stampBtn.style.display = hasStamps ? '' : 'none';
   }
 
   // アニメ画像
@@ -2272,16 +2278,7 @@ function showPhotoPopupEditMode(lat, lng) {
     setStatus('ポイントを複製中...');
 
     try {
-      // 現在のフォームの内容を反映
-      if (photos[idx]) {
-        photos[idx].name = nameInput.value.trim();
-        photos[idx].description = descInput.value.trim();
-        photos[idx].landmarkNo = landmarkCheck.checked ? landmarkNoInput.value.trim() : '';
-        photos[idx].isStamp = stampCheck.checked;
-        photos[idx].videoUrl = videoUrlInput.value.trim();
-      }
-
-      // 現在のポイントをディープコピー
+      // 元のポイントをそのままディープコピー（フォームの内容は反映しない）
       const duplicatedPhoto = JSON.parse(JSON.stringify(photos[idx]));
 
       // 複製したポイントの名前に（コピー）を追加
@@ -3811,41 +3808,10 @@ async function generateTravelogueWithAI() {
   const btn = document.getElementById('generateTravelogueBtn');
   const originalBtnText = btn?.textContent || '旅行記生成';
 
-  // 既存の旅行記がある場合は削除して上書き
+  // 既存の旅行記がある場合は上書き（削除せずに更新）
   if (trip.travelogueUrl || trip.travelogueHtml) {
-    if (btn) btn.textContent = '既存旅行記を削除中...';
-    setStatus('既存の旅行記を削除しています...');
-
-    try {
-      // StorageのURLがある場合は削除
-      if (trip.travelogueUrl) {
-        try {
-          const ref = window.firebaseStorage?.refFromURL(trip.travelogueUrl);
-          if (ref) {
-            await ref.delete();
-            console.log('既存の旅行記をStorageから削除しました:', trip.travelogueUrl);
-          }
-        } catch (err) {
-          console.warn('既存旅行記Storage削除エラー（無視）:', err);
-        }
-      }
-
-      // データをクリアしてFirestoreに保存
-      trip.travelogueHtml = '';
-      trip.travelogueUrl = null;
-      trip.travelogueGeneratedAt = null;
-      currentTrip.travelogueHtml = '';
-      currentTrip.travelogueUrl = null;
-      currentTrip.travelogueGeneratedAt = null;
-
-      // Firestoreに削除を反映
-      await saveTrip({ silent: true });
-      console.log('既存の旅行記データをクリアしてFirestoreに保存しました');
-      setStatus('既存の旅行記を削除しました。新しい旅行記を生成します...');
-    } catch (err) {
-      console.error('既存旅行記削除エラー:', err);
-      alert('既存の旅行記の削除に失敗しました。続行しますか？');
-    }
+    setStatus('旅行記を更新します...');
+    console.log('既存の旅行記を更新します');
   }
 
   // 表紙生成チェックボックスの状態を確認
@@ -3951,9 +3917,16 @@ async function generateTravelogueWithAI() {
   const context = parts.join('\n');
   const tripColor = trip.color || '#e1306c';
 
-  // アニメ表紙画像があれば取得
-  const coverImage = trip.animes && trip.animes.length > 0 ? trip.animes[0].url : null;
-  const coverImageHtml = coverImage ? `<div style="text-align:center;margin:2rem 0;"><img src="${coverImage}" alt="旅行記の表紙" style="max-width:100%;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);"/></div>` : '';
+  // アニメ画像があれば取得（全ての画像をサマリーの後に表示）
+  const animeImages = trip.generatedAnimes && trip.generatedAnimes.length > 0 ? trip.generatedAnimes : [];
+  let animeImagesHtml = '';
+  if (animeImages.length > 0) {
+    animeImagesHtml = '<div style="text-align:center;margin:2rem 0;display:flex;gap:1rem;flex-wrap:wrap;justify-content:center;">';
+    animeImages.forEach(anime => {
+      animeImagesHtml += `<img src="${anime.url}" alt="AI生成画像" style="max-width:300px;width:100%;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);"/>`;
+    });
+    animeImagesHtml += '</div>';
+  }
 
   const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
 
@@ -3964,12 +3937,12 @@ ${parentTripInfo ? `【重要】この旅行記は「${parentTripInfo.name}」${
 1. 最初に旅の表題を魅力的に表記:
 <h2 class="travelogue-title">トリップ名とトリップ説明${parentTripInfo ? '、そして親トリップの情報' : ''}を元に、旅の魅力を表す表題を生成（例：「瀬戸内の風を感じる しまなみ海道サイクリング紀行」「古都を巡る 京都・奈良の寺社仏閣めぐり」など）${parentTripInfo ? '。親トリップの一部であることを表題に反映させてください。' : ''}</h2>
 
-${coverImage ? `2. 次にAI生成の表紙画像を表示:\n${coverImageHtml}\n\n3` : '2'}. 次にサマリーを250字程度で記述:
+2. 次にサマリーを250字程度で記述:
 <div class="travelogue-summary">
   <p>旅行のサマリー250字程度（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
 </div>
 
-${coverImage ? '4' : '3'}. ランドマーク毎にセクション分けして記述:
+${animeImagesHtml ? `3. サマリーの後にAI生成の画像を表示:\n${animeImagesHtml}\n\n4` : '3'}. ランドマーク毎にセクション分けして記述:
 
 <div class="travelogue-landmark-section">
   <h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍 ランドマーク番号: ポイント名</h3>
@@ -3997,21 +3970,27 @@ ${coverImage ? '4' : '3'}. ランドマーク毎にセクション分けして�
   ※「（Wikipediaのtitleフィールドの値）について」の部分には、実際に取得したWikipedia記事のタイトルを使用してください（例：「観音寺について」「しまなみ海道について」など）
 </div>
 
-${coverImage ? '5' : '4'}. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）
+${animeImagesHtml ? '5' : '4'}. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）
 
-${coverImage ? '6' : '5'}. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
+${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
 
 <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
   <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
   <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1.5rem;padding:2.5rem;background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;padding:2.5rem;background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">
     <!-- ランドマーク写真があるポイントごとに以下のカードを生成 -->
     <div style="background:#fffef8;border:3px double #c1272d;border-radius:10px;padding:1.2rem;text-align:center;box-shadow:0 6px 12px rgba(193,39,45,0.18),inset 0 1px 0 rgba(255,255,255,0.5);position:relative;">
+      <!-- 写真を表示 -->
+      <img src="写真URL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;margin-bottom:0.8rem;box-shadow:0 2px 6px rgba(0,0,0,0.15);">
+      <!-- スタンプ済みバッジ -->
       <div style="position:absolute;top:-10px;right:-10px;width:32px;height:32px;background:#c1272d;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.2rem;box-shadow:0 2px 6px rgba(193,39,45,0.3);">✓</div>
-      <div style="font-size:2rem;font-weight:700;color:#c1272d;margin-bottom:0.6rem;text-shadow:1px 1px 2px rgba(193,39,45,0.2);">📍 ランドマーク番号</div>
-      <div style="font-size:0.95rem;font-weight:600;color:#2d1810;line-height:1.3;min-height:2.6em;display:flex;align-items:center;justify-content:center;">ポイント名</div>
-      <div style="margin-top:0.8rem;padding:0.4rem 0.6rem;background:#c1272d;color:#fff;font-size:0.75rem;font-weight:700;border-radius:6px;box-shadow:0 2px 4px rgba(193,39,45,0.3);letter-spacing:0.05em;">スタンプ済み</div>
+      <!-- ランドマーク番号とポイント名を横に並べる -->
+      <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-bottom:0.6rem;">
+        <div style="font-size:1.5rem;font-weight:700;color:#c1272d;text-shadow:1px 1px 2px rgba(193,39,45,0.2);">📍 ランドマーク番号</div>
+        <div style="font-size:0.95rem;font-weight:600;color:#2d1810;line-height:1.3;">ポイント名</div>
+      </div>
+      <div style="padding:0.4rem 0.6rem;background:#c1272d;color:#fff;font-size:0.75rem;font-weight:700;border-radius:6px;box-shadow:0 2px 4px rgba(193,39,45,0.3);letter-spacing:0.05em;">✓ スタンプ済み</div>
     </div>
   </div>
 
@@ -4019,6 +3998,7 @@ ${coverImage ? '6' : '5'}. ランドマークがある場合、必ず最後に�
 </div>
 
 重要: ランドマーク番号（📍1、📍2など）が設定されている写真が1つでもある場合は、必ずこの御朱印帳セクションを旅行記の最後に含めてください。各ランドマークごとに上記のカードスタイルで表示してください。
+重要: スタンプカードには必ず写真を含めてください。写真URLはphotoInfosから取得できます。
 
 重要事項:
 - トリップカラーは${tripColor}です
@@ -4475,23 +4455,51 @@ function showStampRallyModal(trip) {
   const modal = document.getElementById('stampRallyModal');
   const content = document.getElementById('stampRallyContent');
   if (!modal || !content) return;
-  const photos = (trip?.photos || []).filter(p => p.isStamp);
-  photos.sort((a, b) => {
+
+  // 親トリップの場合は、子トリップのスタンプも含める
+  let allPhotos = [];
+  if (trip?.isParent) {
+    const childTrips = getOrderedTrips().filter(t => t.parentId === trip.id);
+    childTrips.forEach(childTrip => {
+      const childStamps = (childTrip.photos || []).filter(p => p.isStamp);
+      childStamps.forEach(p => {
+        allPhotos.push({
+          ...p,
+          _tripId: childTrip.id,
+          _tripName: childTrip.name,
+          _photoIndex: (childTrip.photos || []).indexOf(p)
+        });
+      });
+    });
+  } else {
+    const stamps = (trip?.photos || []).filter(p => p.isStamp);
+    stamps.forEach(p => {
+      allPhotos.push({
+        ...p,
+        _tripId: trip.id,
+        _tripName: trip.name,
+        _photoIndex: (trip.photos || []).indexOf(p)
+      });
+    });
+  }
+
+  allPhotos.sort((a, b) => {
     const na = String(a.landmarkNo || '');
     const nb = String(b.landmarkNo || '');
     return na.localeCompare(nb, undefined, { numeric: true });
   });
-  if (photos.length === 0) {
+
+  if (allPhotos.length === 0) {
     content.innerHTML = '<p class="stamp-rally-empty">スタンプがありません。写真のポップアップで「スタンプ」にチェックを入れてください。</p>';
   } else {
-    content.innerHTML = photos.map((p, i) => {
+    content.innerHTML = allPhotos.map((p, i) => {
       const stamped = !!(p.url && p.url.trim());
       const landmarkNo = escapeHtml(p.landmarkNo || '');
       const pointName = escapeHtml(p.name || '');
       const imgHtml = stamped
         ? `<img src="${escapeHtml(p.url)}" alt="${pointName}" class="stamp-card-img" loading="lazy">`
         : '<div class="stamp-card-empty">?</div>';
-      return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-photo-index="${(trip.photos || []).indexOf(p)}">
+      return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-trip-id="${p._tripId}" data-photo-index="${p._photoIndex}">
         <div class="stamp-card-inner">
           ${imgHtml}
           <div class="stamp-card-info-overlay">
@@ -4503,9 +4511,10 @@ function showStampRallyModal(trip) {
       </div>`;
     }).join('');
     content.querySelectorAll('.stamp-card').forEach((card) => {
+      const tripId = card.dataset.tripId;
       const photoIdx = parseInt(card.dataset.photoIndex, 10);
       card.onclick = async () => {
-        if (currentTrip?.id !== trip?.id) await loadTripById(trip.id);
+        if (currentTrip?.id !== tripId) await loadTripById(tripId);
         showPhotoAtIndex(photoIdx);
         closeStampRallyModal();
       };
@@ -5180,32 +5189,42 @@ async function updateHeaderInfo() {
   }
   const stampBtn = document.getElementById('headerStampBtn');
   if (stampBtn) {
-    // ランドマーク（スタンプ）がある場合に表示
-    const hasLandmarks = (currentTrip.photos || []).some(p => p.landmarkNo);
-    if (hasLandmarks) {
-      stampBtn.style.display = '';
+    // スタンプがある場合に表示（親トリップの場合は子トリップも含む）
+    let hasStamps = false;
+    if (currentTrip.isParent) {
+      const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
+      hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
     } else {
-      stampBtn.style.display = 'none';
+      hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
     }
+    stampBtn.style.display = hasStamps ? '' : 'none';
   }
   const name = currentTrip.name || '（無題）';
   const url = currentTrip.url;
-  const nameHtml = url
-    ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(name)}</a>`
-    : escapeHtml(name);
+  const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
+
+  // デスクトップ用のトリップ名HTML（旅行記優先、次にブログURL）
+  let nameHtml;
+  if (hasTravelogue) {
+    nameHtml = `<a href="#" class="header-trip-link header-travelogue-link-desktop">${escapeHtml(name)}</a>`;
+  } else if (url) {
+    nameHtml = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(name)}</a>`;
+  } else {
+    nameHtml = escapeHtml(name);
+  }
+
   if (isMobileView()) {
-    const short = Array.from(name).slice(0, 4).join('');
     const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
 
     if (hasTravelogue) {
       // 旅行記がある場合は旅行記へのリンク
-      line1.innerHTML = `<a href="#" class="header-trip-link header-travelogue-link-mobile">${escapeHtml(short)}</a>`;
+      line1.innerHTML = `<a href="#" class="header-trip-link header-travelogue-link-mobile">${escapeHtml(name)}</a>`;
     } else if (url) {
       // 旅行記がなくブログURLがある場合はブログへのリンク
-      line1.innerHTML = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(short)}</a>`;
+      line1.innerHTML = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(name)}</a>`;
     } else {
       // リンクなし
-      line1.innerHTML = escapeHtml(short);
+      line1.innerHTML = escapeHtml(name);
     }
 
     line2.textContent = '';
@@ -5235,12 +5254,12 @@ async function updateHeaderInfo() {
     let line2Html = '';
     if (currentTrip.description) {
       // 旅行記がある場合は説明の後ろに小さい旅行記ボタンを追加
-      const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
       if (hasTravelogue) {
         line2Html += escapeHtml(currentTrip.description);
         line2Html += ' <button type="button" class="header-travelogue-btn">📝 旅行記</button>';
       } else if (currentTrip.url) {
-        line2Html += `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(currentTrip.description)}</a>`;
+        // ブログURLがある場合は(ブログ)を付けて説明全体をリンクに
+        line2Html += `<a href="${escapeHtml(currentTrip.url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(currentTrip.description)}（ブログ）</a>`;
       } else {
         line2Html += escapeHtml(currentTrip.description);
       }
@@ -5251,6 +5270,15 @@ async function updateHeaderInfo() {
     const travelogueBtn = line2.querySelector('.header-travelogue-btn');
     if (travelogueBtn) {
       travelogueBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        showTravelogueModal();
+      });
+    }
+
+    // デスクトップの旅行記リンクにクリックイベントを追加
+    const travelogueLinkDesktop = line1.querySelector('.header-travelogue-link-desktop');
+    if (travelogueLinkDesktop) {
+      travelogueLinkDesktop.addEventListener('click', (e) => {
         e.preventDefault();
         showTravelogueModal();
       });
@@ -5389,65 +5417,11 @@ function updateCoverPreview() {
 }
 
 function updateTravelogueActionButtons() {
+  // 日時表示と削除ボタンは不要になったため、この関数は何もしない
   const container = document.getElementById('travelogueActionButtons');
-  if (!container) return;
-
-  // ボタンをクリア
-  container.innerHTML = '';
-
-  // 旅行記HTMLまたはURLがあるかチェック
-  if (!currentTrip || (!currentTrip.travelogueHtml?.trim() && !currentTrip.travelogueUrl)) {
-    return;
+  if (container) {
+    container.innerHTML = '';
   }
-
-  // 旅行記生成日時を取得（updatedAtを使用）
-  const timestamp = currentTrip.travelogueGeneratedAt || currentTrip.updatedAt || Date.now();
-  const date = new Date(timestamp);
-  const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-
-  // 旅行記表示ボタン
-  const viewBtn = document.createElement('button');
-  viewBtn.type = 'button';
-  viewBtn.className = 'btn btn-secondary btn-xs';
-  viewBtn.textContent = `旅行記 (${dateStr})`;
-  viewBtn.title = '旅行記を表示';
-  viewBtn.onclick = () => showTravelogueModal();
-  container.appendChild(viewBtn);
-
-  // 削除ボタン
-  const deleteBtn = document.createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'btn btn-xs';
-  deleteBtn.textContent = '×';
-  deleteBtn.title = '旅行記を削除';
-  deleteBtn.style.cssText = 'background:#dc3545;color:white;padding:0.2rem 0.5rem;min-width:auto;';
-  deleteBtn.onclick = async () => {
-    if (!confirm('この旅行記を削除してもよろしいですか？')) return;
-    try {
-      // StorageのURLがある場合は削除（エラーは無視）
-      if (currentTrip.travelogueUrl) {
-        try {
-          const ref = window.firebaseStorage?.refFromURL(currentTrip.travelogueUrl);
-          if (ref) await ref.delete();
-        } catch (err) {
-          console.warn('旅行記Storage削除エラー（無視）:', err);
-        }
-      }
-
-      currentTrip.travelogueHtml = '';
-      currentTrip.travelogueUrl = null;
-      currentTrip.travelogueGeneratedAt = null;
-      await saveTrip();
-      updateTravelogueActionButtons();
-      updateCoverPreview();
-      updateHeaderInfo();
-      setStatus('旅行記を削除しました');
-    } catch (err) {
-      console.error('旅行記削除エラー:', err);
-      alert('旅行記の削除に失敗しました: ' + (err.message || String(err)));
-    }
-  };
-  container.appendChild(deleteBtn);
 }
 
 function updateAnimePreview() {
