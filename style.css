@@ -1164,14 +1164,14 @@ body.app-playing .thumbnail-close-btn {
 }
 
 .photo-popup {
-  max-width: min(95vw, 400px);
+  max-width: min(95vw, 550px);
   position: relative;
 }
 .photo-popup img {
   width: 100%;
   height: auto;
-  max-width: 400px;
-  max-height: 320px;
+  max-width: 550px;
+  max-height: 400px;
   object-fit: cover;
   display: block;
 }
@@ -1304,9 +1304,9 @@ body.app-playing .thumbnail-close-btn {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0;
+  gap: 0.5rem;
   margin-top: 0.25rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .photo-popup-info {
@@ -1389,15 +1389,25 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-landmark-no-inline {
   display: none;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.photo-popup-landmark-name-inline {
+  display: none;
   flex: 1;
-  min-width: 100px;
+  min-width: 120px;
   align-items: center;
 }
 
 .photo-popup-input-inline {
   width: 100%;
-  min-width: 80px;
-  max-width: 120px;
+  min-width: 50px;
+  max-width: 70px;
+}
+
+.photo-popup-landmark-name-inline .photo-popup-input-inline {
+  max-width: 200px;
 }
 
 .photo-popup-field {
@@ -1452,8 +1462,15 @@ body.app-playing .thumbnail-close-btn {
   font-size: 0.9rem;
 }
 
+.photo-popup-save-delete-row .btn-primary,
+.photo-popup-save-delete-row .btn-secondary {
+  padding: 0.5rem 0.8rem;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
 .photo-popup-delete-photo-only {
-  padding: 0.4rem 0.7rem;
+  padding: 0.35rem 0.6rem;
   font-size: 0.7rem;
   background: transparent;
   color: #fd7e14;
@@ -1462,6 +1479,8 @@ body.app-playing .thumbnail-close-btn {
   cursor: pointer;
   transition: all 0.2s;
   margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .photo-popup-delete-photo-only:hover {
@@ -1476,15 +1495,17 @@ body.app-playing .thumbnail-close-btn {
 }
 
 .photo-popup-save-delete-row .photo-popup-delete-small {
-  padding: 0.4rem 0.7rem;
+  padding: 0.35rem 0.6rem;
   font-size: 0.7rem;
   background: transparent;
   color: #dc3545;
   border: 1px solid #dc3545;
-  margin-left: 0.35rem;
+  margin-left: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .photo-popup-delete-small:hover {
@@ -2490,17 +2511,17 @@ body:not(.editor) .viewer-only { display: block; }
 .play-stop-btn-mobile {
   display: flex;
   position: absolute;
-  bottom: 20px;
+  bottom: 30px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 500;
-  width: 50px;
-  height: 50px;
+  z-index: 1000;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(12px);
-  border: 2px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  border: 3px solid var(--trip-color, var(--accent));
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2), 0 3px 12px rgba(0, 0, 0, 0.15);
   font-size: 1rem;
   font-weight: 600;
   color: var(--trip-color, var(--accent));
@@ -2512,22 +2533,22 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 .play-stop-btn-mobile:hover {
-  transform: translateX(-50%) translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15), 0 3px 8px rgba(0, 0, 0, 0.1);
-  background: rgba(255, 255, 255, 0.8);
+  transform: translateX(-50%) translateY(-3px) scale(1.05);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 1);
 }
 
 .play-stop-btn-mobile:active {
-  transform: translateX(-50%) translateY(0);
+  transform: translateX(-50%) translateY(-1px) scale(1.02);
 }
 
 .play-stop-btn-mobile::before {
   content: '▶';
-  font-size: 1.3rem;
+  font-size: 1.6rem;
   display: block;
   line-height: 1;
-  margin-left: 3px;
-  filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.8));
+  margin-left: 4px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
 }
 
 body.app-playing .play-stop-btn-mobile {
@@ -2554,6 +2575,20 @@ body.app-playing .play-stop-btn-mobile::before {
 
   .header-info-mobile .header-line2 {
     display: none;
+  }
+
+  /* モバイルでは写真ポップアップのボタンを2行に */
+  .photo-popup-save-delete-row {
+    flex-wrap: wrap;
+  }
+
+  .photo-popup {
+    max-width: min(95vw, 450px);
+  }
+
+  .photo-popup img {
+    max-width: 450px;
+    max-height: 350px;
   }
 
   .header-travelogue-link-mobile {
@@ -2712,12 +2747,13 @@ body.app-playing .play-stop-btn-mobile::before {
   .play-stop-btn-mobile {
     position: fixed;
     bottom: calc(75px + env(safe-area-inset-bottom, 0px));
-    width: 48px;
-    height: 48px;
+    width: 54px;
+    height: 54px;
     z-index: 1100;
   }
   .play-stop-btn-mobile::before {
-    font-size: 1.2rem;
+    font-size: 1.3rem;
+    margin-left: 3px;
   }
   /* モバイルの自動再生時は停止ボタンをシンプルに */
   body.app-playing .play-stop-btn-mobile {
