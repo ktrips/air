@@ -16,6 +16,7 @@ let playbackPhotos = []; // 再生中の写真配列
 let currentYouTubePlayer = null;
 let youtubeApiReady = false;
 let playbackVideoEndCallback = null;
+let playbackVideoTimer = null; // 動画再生時の30秒タイマー
 let map3d = null;
 let photoPopup = null;
 let myTrips = [];
@@ -1553,6 +1554,10 @@ async function updateMapMarkers() {
     const shouldShowPhotoMarkers = !(currentTrip?.isParent && trip.parentId === currentTrip.id);
 
     if (shouldShowPhotoMarkers) {
+      // マーカーを2つの配列に分類（通常マーカーとランドマーク/スタンプ）
+      const normalMarkers = [];
+      const landmarkMarkers = [];
+
       (trip.photos || []).forEach((p, i) => {
         const coord = ensureLatLng(p.lat, p.lng);
         if (coord) {
@@ -1608,13 +1613,14 @@ async function updateMapMarkers() {
                 iconAnchor: iconAnchor
               })
             });
-        // マーカーをツールチップのみで表示（クリック時のポップアップなし）
+        // ツールチップを設定
         const tooltipParts = [];
         if (p.landmarkNo) tooltipParts.push('📍 ' + p.landmarkNo);
         if (p.name) tooltipParts.push(p.name);
         if (p.description) tooltipParts.push(p.description);
         const tooltipLabel = tooltipParts.length ? tooltipParts.join(' — ') : `#${i + 1}`;
-        m.addTo(map).bindTooltip(tooltipLabel, { direction: 'top', offset: [0, -10] });
+        m.bindTooltip(tooltipLabel, { direction: 'top', offset: [0, -10] });
+
         const tripRef = trip;
         const photoIdx = i;
         const idx = globalIdx++;
@@ -1642,10 +1648,29 @@ async function updateMapMarkers() {
             }
           });
         }
-        markers.push(m);
-        allLatLngs.push([plat, plng]);
+
+        // ランドマークまたはスタンプの場合は landmarkMarkers に、それ以外は normalMarkers に追加
+        if (isLandmark || isStamp) {
+          landmarkMarkers.push({ marker: m, latLng: [plat, plng] });
+        } else {
+          normalMarkers.push({ marker: m, latLng: [plat, plng] });
+        }
       }
     });
+
+      // 通常マーカーを先に地図に追加（背面）
+      normalMarkers.forEach(({ marker, latLng }) => {
+        marker.addTo(map);
+        markers.push(marker);
+        allLatLngs.push(latLng);
+      });
+
+      // ランドマーク/スタンプマーカーを後で地図に追加（最前面）
+      landmarkMarkers.forEach(({ marker, latLng }) => {
+        marker.addTo(map);
+        markers.push(marker);
+        allLatLngs.push(latLng);
+      });
     }
   }
   if (allLatLngs.length > 0) {
@@ -1847,6 +1872,38 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     overlay.classList.add('playback-video-fullscreen');
     card.classList.add('playback-video-card');
 
+    // 戻るボタンを追加
+    let backBtn = card.querySelector('.playback-video-back-btn');
+    if (!backBtn) {
+      backBtn = document.createElement('button');
+      backBtn.type = 'button';
+      backBtn.className = 'playback-video-back-btn';
+      backBtn.textContent = '← 戻る';
+      backBtn.title = '動画をスキップして次へ';
+      card.appendChild(backBtn);
+    }
+    backBtn.style.display = '';
+    backBtn.onclick = () => {
+      if (onVideoEnd) {
+        // 30秒タイマーをクリア
+        if (playbackVideoTimer) {
+          clearTimeout(playbackVideoTimer);
+          playbackVideoTimer = null;
+        }
+        // YouTubeプレイヤーを破棄
+        if (currentYouTubePlayer) {
+          try {
+            currentYouTubePlayer.destroy();
+          } catch (e) {
+            console.warn('YouTube Player破棄エラー:', e);
+          }
+          currentYouTubePlayer = null;
+        }
+        // 次へ進むコールバックを即座に呼ぶ
+        onVideoEnd();
+      }
+    };
+
     // YouTube動画の場合はYouTube IFrame APIを使用
     const youtubeId = getYouTubeVideoId(p.videoUrl);
     if (youtubeId) {
@@ -1866,22 +1923,24 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
         height: '100%',
         playerVars: {
           autoplay: 1,
+          mute: 1,
           controls: 1,
           modestbranding: 1,
-          rel: 0
+          rel: 0,
+          playsinline: 1
         }
       });
 
       // 30秒後に次へ進む
       if (onVideoEnd) {
-        setTimeout(onVideoEnd, 30000);
+        playbackVideoTimer = setTimeout(onVideoEnd, 30000);
       }
     } else {
       // Vimeoやその他の動画
       const embedUrl = getVideoEmbedUrl(p.videoUrl);
       if (embedUrl) {
         const iframe = document.createElement('iframe');
-        iframe.src = embedUrl + '?autoplay=1';
+        iframe.src = embedUrl + '?autoplay=1&muted=1';
         iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:8px;';
         iframe.allow = 'autoplay; encrypted-media';
         iframe.allowFullscreen = true;
@@ -1889,11 +1948,16 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
 
         // 30秒後に次へ進む
         if (onVideoEnd) {
-          setTimeout(onVideoEnd, 30000);
+          playbackVideoTimer = setTimeout(onVideoEnd, 30000);
         }
       }
     }
   } else {
+    // 写真の場合は戻るボタンを非表示
+    const backBtn = card.querySelector('.playback-video-back-btn');
+    if (backBtn) {
+      backBtn.style.display = 'none';
+    }
     // 写真の場合は通常表示モードに
     overlay.classList.remove('playback-video-fullscreen');
     card.classList.remove('playback-video-card');
@@ -2630,6 +2694,12 @@ function stopPlay() {
       console.warn('YouTube Player破棄エラー:', e);
     }
     currentYouTubePlayer = null;
+  }
+
+  // 動画再生タイマーをクリア
+  if (playbackVideoTimer) {
+    clearTimeout(playbackVideoTimer);
+    playbackVideoTimer = null;
   }
 
   playbackPhotos = []; // 再生用配列をクリア
@@ -3879,14 +3949,17 @@ function showVideoOverlay(url) {
   wrap.innerHTML = '';
   if (embedUrl) {
     const iframe = document.createElement('iframe');
-    iframe.src = embedUrl;
+    iframe.src = embedUrl + '?autoplay=1';
     iframe.title = '動画';
+    iframe.allow = 'autoplay; encrypted-media';
+    iframe.allowFullscreen = true;
     wrap.appendChild(iframe);
   } else {
     const video = document.createElement('video');
     video.src = url;
     video.controls = true;
     video.autoplay = true;
+    video.muted = false;
     wrap.appendChild(video);
   }
   overlay.classList.remove('hidden');
