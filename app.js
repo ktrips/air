@@ -13,6 +13,9 @@ let gpxLayers = [];
 let playTimer = null;
 let playIntervalMs = 3000;
 let playbackPhotos = []; // 再生中の写真配列
+let currentYouTubePlayer = null;
+let youtubeApiReady = false;
+let playbackVideoEndCallback = null;
 let map3d = null;
 let photoPopup = null;
 let myTrips = [];
@@ -1555,10 +1558,17 @@ async function updateMapMarkers() {
         if (coord) {
           const { lat: plat, lng: plng } = coord;
         const isLandmark = !!(p.landmarkNo);
+        const isStamp = !!(p.isStamp);
 
-        // ランドマークは小さい写真、その他は小さい丸
+        // スタンプは番号のみ、ランドマークは小さい写真（スタンプでない場合）、その他は小さい丸
         let photoIconHtml, iconSize, iconAnchor;
-        if (isLandmark && p.url) {
+        if (isStamp) {
+          // スタンプは番号のみの丸（写真を表示しない）
+          const no = String(p.landmarkNo || '?').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          photoIconHtml = `<div style="background:${color};width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:16px;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5)">${no}</div>`;
+          iconSize = [34, 34];
+          iconAnchor = [17, 17];
+        } else if (isLandmark && p.url) {
           const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
           photoIconHtml = `
             <div style="position:relative;width:50px;height:50px;">
@@ -1770,15 +1780,9 @@ function showPhotoAtIndex(i, viewOnly = true, opts = {}) {
     // 自動再生中の3D地図更新は別で行うのでここではスキップ
   }
 
-  // 自動再生中は専用オーバーレイに表示
+  // 自動再生中は専用オーバーレイに表示（写真または動画）
   if (playTimer) {
-    // 動画URLがある場合は動画を再生
-    if (p.videoUrl) {
-      stopPlay();
-      showVideoOverlay(p.videoUrl);
-    } else {
-      showPlaybackPhotoOverlay(p);
-    }
+    showPlaybackPhotoOverlay(p);
     return;
   }
 
@@ -1801,19 +1805,33 @@ function showPhotoAtIndex(i, viewOnly = true, opts = {}) {
 
 let lastPlaybackPhotoUrl = null;
 
-function showPlaybackPhotoOverlay(p) {
+async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
   const overlay = document.getElementById('playbackPhotoOverlay');
   const card = document.getElementById('playbackPhotoCard');
   if (!overlay || !card) return;
 
-  // 同じ写真なら更新しない（パフォーマンス最適化）
-  if (lastPlaybackPhotoUrl === p.url) {
+  // 既存のYouTubeプレイヤーを破棄
+  if (currentYouTubePlayer) {
+    try {
+      currentYouTubePlayer.destroy();
+    } catch (e) {
+      console.warn('YouTube Player破棄エラー:', e);
+    }
+    currentYouTubePlayer = null;
+  }
+
+  // 動画URLがある場合は動画優先
+  const hasVideo = p.videoUrl && p.videoUrl.trim();
+  const contentKey = hasVideo ? p.videoUrl : p.url;
+
+  // 同じコンテンツなら更新しない（パフォーマンス最適化）
+  if (lastPlaybackPhotoUrl === contentKey && !hasVideo) {
     overlay.classList.remove('hidden');
     return;
   }
-  lastPlaybackPhotoUrl = p.url;
+  lastPlaybackPhotoUrl = contentKey;
 
-  // 写真コンテナ
+  // 写真/動画コンテナ
   let photoWrap = card.querySelector('.playback-photo-wrap');
   if (!photoWrap) {
     photoWrap = document.createElement('div');
@@ -1821,20 +1839,72 @@ function showPlaybackPhotoOverlay(p) {
     card.appendChild(photoWrap);
   }
 
-  // 写真
-  let img = photoWrap.querySelector('img');
-  if (!img) {
-    img = document.createElement('img');
+  // コンテナをクリア
+  photoWrap.innerHTML = '';
+
+  if (hasVideo) {
+    // 動画の場合は下半分表示モードに
+    overlay.classList.add('playback-video-fullscreen');
+    card.classList.add('playback-video-card');
+
+    // YouTube動画の場合はYouTube IFrame APIを使用
+    const youtubeId = getYouTubeVideoId(p.videoUrl);
+    if (youtubeId) {
+      // YouTube IFrame APIをロード
+      await loadYouTubeIFrameAPI();
+
+      // プレイヤー用のdivを作成
+      const playerDiv = document.createElement('div');
+      playerDiv.id = 'playbackYoutubePlayer';
+      playerDiv.style.cssText = 'width:100%;height:100%;';
+      photoWrap.appendChild(playerDiv);
+
+      // YouTube Playerを作成
+      currentYouTubePlayer = new YT.Player('playbackYoutubePlayer', {
+        videoId: youtubeId,
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          modestbranding: 1,
+          rel: 0
+        }
+      });
+
+      // 30秒後に次へ進む
+      if (onVideoEnd) {
+        setTimeout(onVideoEnd, 30000);
+      }
+    } else {
+      // Vimeoやその他の動画
+      const embedUrl = getVideoEmbedUrl(p.videoUrl);
+      if (embedUrl) {
+        const iframe = document.createElement('iframe');
+        iframe.src = embedUrl + '?autoplay=1';
+        iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:8px;';
+        iframe.allow = 'autoplay; encrypted-media';
+        iframe.allowFullscreen = true;
+        photoWrap.appendChild(iframe);
+
+        // 30秒後に次へ進む
+        if (onVideoEnd) {
+          setTimeout(onVideoEnd, 30000);
+        }
+      }
+    }
+  } else {
+    // 写真の場合は通常表示モードに
+    overlay.classList.remove('playback-video-fullscreen');
+    card.classList.remove('playback-video-card');
+    // 写真を表示
+    const img = document.createElement('img');
     img.loading = 'eager';
     img.decoding = 'async';
+    img.src = p.url || '';
+    img.alt = p.name || '';
     photoWrap.appendChild(img);
   }
-  // 画像URLが変わる場合のみ更新
-  const newSrc = p.url || '';
-  if (img.src !== newSrc) {
-    img.src = newSrc;
-  }
-  img.alt = p.name || '';
 
   // 写真上部のオーバーレイ（ランドマーク番号・ポイント名）
   let topOverlay = photoWrap.querySelector('.playback-photo-overlay-top');
@@ -2167,10 +2237,17 @@ function showPhotoPopupEditMode(lat, lng) {
       const originalPlaceName = photos[idx].placeName;
       const originalName = photos[idx].name;
 
-      // 古い写真をStorageから削除
+      // 古い写真をStorageから削除（ただし、他のポイントが同じURLを使っている場合は削除しない）
       const oldPhotoUrl = photos[idx].url;
       if (oldPhotoUrl) {
-        await deletePhotoFromStorage(oldPhotoUrl);
+        // 同じURLを持つ他のポイントがあるかチェック
+        const otherPhotosWithSameUrl = photos.filter((p, i) => i !== idx && p.url === oldPhotoUrl);
+        if (otherPhotosWithSameUrl.length === 0) {
+          // 他に使っているポイントがない場合のみStorageから削除
+          await deletePhotoFromStorage(oldPhotoUrl);
+        } else {
+          console.log('他のポイントが同じ写真を使用しているため、Storageから削除しません:', oldPhotoUrl);
+        }
       }
 
       // Storageにアップロード
@@ -2281,12 +2358,18 @@ function showPhotoPopupEditMode(lat, lng) {
       // 元のポイントをそのままディープコピー（フォームの内容は反映しない）
       const duplicatedPhoto = JSON.parse(JSON.stringify(photos[idx]));
 
-      // 複製したポイントの名前に（コピー）を追加
+      // 複製したポイントをスタンプに設定
+      duplicatedPhoto.isStamp = true;
+
+      // ポイント名に「御朱印」を追加
       if (duplicatedPhoto.name) {
-        duplicatedPhoto.name = `${duplicatedPhoto.name}（コピー）`;
+        duplicatedPhoto.name = `${duplicatedPhoto.name} 御朱印`;
       } else {
-        duplicatedPhoto.name = '（コピー）';
+        duplicatedPhoto.name = '御朱印';
       }
+
+      // ポイント説明を「御朱印」に設定
+      duplicatedPhoto.description = '御朱印';
 
       // 次の位置に挿入
       photos.splice(idx + 1, 0, duplicatedPhoto);
@@ -2331,10 +2414,17 @@ function showPhotoPopupEditMode(lat, lng) {
     deletePhotoBtn.textContent = '削除中...';
     setStatus('写真を削除中...');
 
-    // Storageから写真を削除
+    // Storageから写真を削除（ただし、他のポイントが同じURLを使っている場合は削除しない）
     const photoUrl = photos[idx]?.url;
     if (photoUrl) {
-      await deletePhotoFromStorage(photoUrl);
+      // 同じURLを持つ他のポイントがあるかチェック
+      const otherPhotosWithSameUrl = photos.filter((p, i) => i !== idx && p.url === photoUrl);
+      if (otherPhotosWithSameUrl.length === 0) {
+        // 他に使っているポイントがない場合のみStorageから削除
+        await deletePhotoFromStorage(photoUrl);
+      } else {
+        console.log('他のポイントが同じ写真を使用しているため、Storageから削除しません:', photoUrl);
+      }
     }
 
     // 写真URLのみ削除、ポイント情報は保持
@@ -2390,10 +2480,17 @@ function showPhotoPopupEditMode(lat, lng) {
     deleteBtn.textContent = '削除中...';
     setStatus('ポイントを削除中...');
 
-    // Storageから写真を削除
+    // Storageから写真を削除（ただし、他のポイントが同じURLを使っている場合は削除しない）
     const photoUrl = photos[idx]?.url;
     if (photoUrl) {
-      await deletePhotoFromStorage(photoUrl);
+      // 同じURLを持つ他のポイントがあるかチェック
+      const otherPhotosWithSameUrl = photos.filter((p, i) => i !== idx && p.url === photoUrl);
+      if (otherPhotosWithSameUrl.length === 0) {
+        // 他に使っているポイントがない場合のみStorageから削除
+        await deletePhotoFromStorage(photoUrl);
+      } else {
+        console.log('他のポイントが同じ写真を使用しているため、Storageから削除しません:', photoUrl);
+      }
     }
 
     photos.splice(idx, 1);
@@ -2524,6 +2621,17 @@ function stopPlay() {
     clearInterval(playTimer); // 念のため両方
     playTimer = null;
   }
+
+  // YouTubeプレイヤーを破棄
+  if (currentYouTubePlayer) {
+    try {
+      currentYouTubePlayer.destroy();
+    } catch (e) {
+      console.warn('YouTube Player破棄エラー:', e);
+    }
+    currentYouTubePlayer = null;
+  }
+
   playbackPhotos = []; // 再生用配列をクリア
   const playBtn = document.getElementById('playBtn');
   if (playBtn) playBtn.textContent = '▶ 再生';
@@ -2694,28 +2802,41 @@ async function startPlay() {
       currentPhotoIndex++;
       const nextP = playbackPhotos[currentPhotoIndex];
 
-      // 次の写真を表示
-      showPlaybackPhotoOverlay(nextP);
-
       // カメラアニメーションを実行して完了を待つ
       if (nextP?.lat != null && nextP?.lng != null) {
         // 3D地図を移動
         await flyMap3dTo(nextP.lat, nextP.lng, 17, 1500);
       }
 
-      // カメラアニメーション完了後、写真を表示する時間を設定
-      const displayDuration = 2500; // 写真表示時間
-      playTimer = setTimeout(tick, displayDuration);
+      // 動画がある場合は動画終了まで待つ
+      if (nextP.videoUrl && nextP.videoUrl.trim()) {
+        // 次の写真（動画）を表示、終了コールバック付き
+        await showPlaybackPhotoOverlay(nextP, () => {
+          // 動画終了後、次へ進む
+          playTimer = setTimeout(tick, 500);
+        });
+      } else {
+        // 次の写真を表示
+        await showPlaybackPhotoOverlay(nextP);
+
+        // 写真の場合は固定時間後に次へ
+        const displayDuration = 2500; // 写真表示時間
+        playTimer = setTimeout(tick, displayDuration);
+      }
     };
 
     // playTimerを設定して自動再生モードに（ダミー値で先に設定）
     playTimer = true;
 
-    // 1枚目の写真を表示
-    showPlaybackPhotoOverlay(p0);
-
-    // 初期化完了後、最初の写真の表示時間後に次へ
-    playTimer = setTimeout(tick, 2500);
+    // 1枚目の写真/動画を表示
+    if (p0.videoUrl && p0.videoUrl.trim()) {
+      await showPlaybackPhotoOverlay(p0, () => {
+        playTimer = setTimeout(tick, 500);
+      });
+    } else {
+      await showPlaybackPhotoOverlay(p0);
+      playTimer = setTimeout(tick, 2500);
+    }
   } catch (err) {
     console.error('自動再生の開始エラー:', err);
     stopPlay(); // エラー発生時は停止
@@ -2837,6 +2958,7 @@ async function saveTrip(opts = {}) {
       travelogueHtml: null,
       travelogueUrl: currentTrip.travelogueUrl || null,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt || null,
+      travelogueHistory: currentTrip.travelogueHistory || [],
       generatedAnimes: currentTrip.generatedAnimes || []
     });
   } else if (useMinimal) {
@@ -2860,6 +2982,7 @@ async function saveTrip(opts = {}) {
       travelogueHtml: null,
       travelogueUrl: currentTrip.travelogueUrl || null,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt || null,
+      travelogueHistory: currentTrip.travelogueHistory || [],
       generatedAnimes: currentTrip.generatedAnimes || []
     });
   } else {
@@ -3714,6 +3837,40 @@ function getVideoEmbedUrl(url) {
   return null;
 }
 
+function getYouTubeVideoId(url) {
+  if (!url) return null;
+  const u = url.trim();
+  const ytMatch = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  return ytMatch ? ytMatch[1] : null;
+}
+
+function loadYouTubeIFrameAPI() {
+  return new Promise((resolve) => {
+    if (youtubeApiReady) {
+      resolve();
+      return;
+    }
+
+    if (window.YT && window.YT.Player) {
+      youtubeApiReady = true;
+      resolve();
+      return;
+    }
+
+    window.onYouTubeIframeAPIReady = () => {
+      youtubeApiReady = true;
+      resolve();
+    };
+
+    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    }
+  });
+}
+
 function showVideoOverlay(url) {
   const overlay = document.getElementById('videoOverlay');
   const wrap = document.getElementById('videoPlayerWrap');
@@ -3813,9 +3970,6 @@ async function generateTravelogueWithAI() {
     setStatus('旅行記を更新します...');
     console.log('既存の旅行記を更新します');
   }
-
-  // 表紙生成チェックボックスの状態を確認
-  const generateCover = document.getElementById('generateCoverImageCheckbox')?.checked || false;
 
   const photos = getDisplayPhotos();
   const parts = [];
@@ -3927,6 +4081,8 @@ async function generateTravelogueWithAI() {
     });
     animeImagesHtml += '</div>';
   }
+
+  const hasAnimeImages = animeImagesHtml ? true : false;
 
   const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
 
@@ -4076,147 +4232,7 @@ ${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後
     if (!content.trim()) throw new Error('応答が空です');
 
     let finalHtml = content.trim();
-
-    // 表紙生成が有効な場合、Nano Banana Pro2で表紙画像を生成
-    if (generateCover) {
-      setStatus('表紙画像を生成中...');
-      if (btn) btn.textContent = '表紙生成中...';
-      try {
-        // 訪問地から代表的な地域名を抽出してタイトルを生成
-        const uniquePlaces = [...new Set(photos.filter(p => p.placeName).map(p => p.placeName))];
-        let coverTitle = trip.name || '旅行';
-
-        // トリップ名から地域を抽出（例：「しまなみ海道サイクリング」→「しまなみ」）
-        // 地名、観光地などのキーワードを優先的に抽出
-        const regionPatterns = [
-          /([ぁ-ん一-龥]{2,})(海道|街道|地方|エリア|地区)/,
-          /([ぁ-ん一-龥]{2,})(旅行|観光|めぐり|巡り)/,
-          /^([ぁ-ん一-龥]{2,})/
-        ];
-
-        for (const pattern of regionPatterns) {
-          const match = (trip.name || '').match(pattern);
-          if (match) {
-            coverTitle = `${match[1]}の歩き方`;
-            break;
-          }
-        }
-
-        // パターンにマッチしない場合は最初の訪問地を使用
-        if (coverTitle === (trip.name || '旅行') && uniquePlaces.length > 0) {
-          // 市町村名や観光地名を抽出（「〇〇市」「〇〇町」などを除去）
-          const mainPlace = uniquePlaces[0].replace(/(市|町|村|区|県|府|道).*/, '');
-          coverTitle = `${mainPlace}の歩き方`;
-        }
-
-        // 表紙用のプロンプトを作成（トリップの全情報を含める）
-        const coverPromptParts = [
-          '地球の歩き方の表紙風のアニメスタイルで、旅行の表紙画像を生成してください。',
-          '鮮やかな色彩、冒険心をくすぐるレイアウト、魅力的な背景で表現してください。',
-          `画像内に「${coverTitle}」というタイトルを大きく、読みやすく配置してください。`,
-          '',
-          `【表紙タイトル】${coverTitle}`,
-          `【旅行名】${trip.name || '旅行'}`,
-        ];
-
-        // キャラクター画像がある場合はプロンプトに追加
-        if (characterImageData) {
-          coverPromptParts.push('【メインキャラクター】アップロードされた人物の特徴（顔立ち、髪型、表情など）を保ちながら、優しく親しみやすいタッチのアニメキャラクターに変換してください。柔らかな線、温かみのある色彩、穏やかな表情で描いてください。このキャラクターを旅の主人公として、地球の歩き方の表紙風アニメスタイルに完全に合わせ、背景や他の要素と統一された画風で描いてください。写真のような実写感は残さず、全体が一つのアニメ作品として調和するように仕上げてください。');
-        }
-
-        // トリップ説明
-        if (trip.description) {
-          coverPromptParts.push(`【旅行の説明】${trip.description}`);
-        }
-
-        // GPS情報
-        if (gpxSummary) {
-          coverPromptParts.push(`【GPS情報】${gpxSummary}`);
-        }
-
-        // ブログURL情報
-        if (trip.url) {
-          coverPromptParts.push('【ブログ】旅の詳細記録あり');
-        }
-
-        // 訪問した場所（重複なし、最大8箇所）
-        if (uniquePlaces.length > 0) {
-          const placesList = uniquePlaces.slice(0, 8).join('、');
-          coverPromptParts.push(`【訪問地】${placesList}`);
-        }
-
-        // ランドマーク情報
-        const landmarks = photoInfos.filter(pi => pi.landmarkNo);
-        if (landmarks.length > 0) {
-          const landmarkNames = landmarks.map(pi => `${pi.landmarkNo}: ${pi.pointName || '名所'}`).slice(0, 5).join('、');
-          coverPromptParts.push(`【スタンプラリー】${landmarkNames}`);
-        }
-
-        // 写真の説明から重要なキーワードを抽出（最大3つ）
-        const descriptions = photoInfos
-          .filter(pi => pi.description && pi.description.length > 5)
-          .map(pi => pi.description)
-          .slice(0, 3);
-        if (descriptions.length > 0) {
-          coverPromptParts.push(`【旅のハイライト】${descriptions.join('、')}`);
-        }
-
-        // Wikipedia情報から旅の特徴を抽出（最大2つ）
-        const wikiExtracts = photoInfos
-          .filter(pi => pi.wikiData && pi.wikiData.extract && pi.wikiData.extract.length > 10)
-          .map(pi => pi.wikiData.extract.slice(0, 100))
-          .slice(0, 2);
-        if (wikiExtracts.length > 0) {
-          coverPromptParts.push(`【特色】${wikiExtracts.join('。')}`);
-        }
-
-        coverPromptParts.push('');
-        coverPromptParts.push(`この旅行の魅力が一目で伝わる、「${coverTitle}」というタイトルの地球の歩き方スタイルの素敵な表紙を作成してください。`);
-        if (characterImageData) {
-          coverPromptParts.push('人物は完全にアニメキャラクターとして描き直し、表紙全体が統一された地球の歩き方風アニメ作品の一部として自然に調和するように仕上げてください。実写的な要素は一切残さないでください。');
-        }
-
-        const coverPrompt = coverPromptParts.join('\n');
-        const coverImageUrl = await generateImageWithNanoBananaPro2(coverPrompt, cfg, characterImageData);
-
-        if (coverImageUrl) {
-          // サマリー部分を抽出
-          const summaryMatch = finalHtml.match(/<div class="travelogue-summary">([\s\S]*?)<\/div>/);
-          let summaryHtml = '';
-          let restHtml = finalHtml;
-
-          if (summaryMatch) {
-            summaryHtml = summaryMatch[1];
-            restHtml = finalHtml.replace(summaryMatch[0], '');
-          }
-
-          // 表紙画像とサマリーを横並びに配置
-          const coverSectionHtml = `
-<div style="display:flex;gap:2rem;margin-bottom:2rem;align-items:flex-start;flex-wrap:wrap;">
-  <div style="flex:0 0 auto;max-width:400px;">
-    <img src="${coverImageUrl}" alt="旅行記の表紙" style="width:100%;height:auto;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);">
-  </div>
-  <div style="flex:1;min-width:300px;">
-    <h3 style="margin-top:0;color:#c75b12;font-size:1.3rem;">📖 旅のあらすじ</h3>
-    ${summaryHtml || '<p>この旅行の素晴らしい思い出をご覧ください。</p>'}
-  </div>
-</div>
-
-<div id="travelogue-map-container" style="margin:2rem 0;"></div>
-`;
-          finalHtml = coverSectionHtml + restHtml;
-
-          setStatus('旅行記と表紙を生成しました');
-        } else {
-          setStatus('表紙生成に失敗しましたが、旅行記は生成しました');
-        }
-      } catch (err) {
-        console.error('表紙生成エラー:', err);
-        setStatus('表紙生成に失敗しましたが、旅行記は生成しました');
-      }
-    } else {
-      setStatus('旅行記を生成しました');
-    }
+    setStatus('旅行記を生成しました');
 
     // 旅行記をStorageに保存（Firestoreの1MB制限を回避）
     try {
@@ -4226,9 +4242,20 @@ ${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後
       // HTMLはStorageに保存したのでFirestoreには保存しない（1MB制限回避）
       currentTrip.travelogueHtml = null;
       currentTrip.travelogueGeneratedAt = Date.now();
+
+      // 履歴に追加
+      if (!currentTrip.travelogueHistory) {
+        currentTrip.travelogueHistory = [];
+      }
+      currentTrip.travelogueHistory.push({
+        url: travelogueUrl,
+        timestamp: Date.now()
+      });
+
       console.log('旅行記をStorageに保存しました:', {
         url: travelogueUrl,
-        htmlSize: finalHtml.length
+        htmlSize: finalHtml.length,
+        historyCount: currentTrip.travelogueHistory.length
       });
     } catch (err) {
       console.error('旅行記のStorage保存エラー:', err);
@@ -4238,6 +4265,16 @@ ${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後
         currentTrip.travelogueHtml = finalHtml;
         currentTrip.travelogueUrl = null;
         currentTrip.travelogueGeneratedAt = Date.now();
+
+        // 履歴に追加（HTMLの場合はURLとして特殊値を使用）
+        if (!currentTrip.travelogueHistory) {
+          currentTrip.travelogueHistory = [];
+        }
+        currentTrip.travelogueHistory.push({
+          html: finalHtml,
+          timestamp: Date.now()
+        });
+
         console.log('StorageではなくFirestoreに直接保存します（小サイズ）');
       } else {
         throw new Error('旅行記のサイズが大きすぎてStorageにも保存できませんでした: ' + err.message);
@@ -4249,6 +4286,7 @@ ${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後
     console.log('トリップ保存完了');
     updateCoverPreview();
     updateTravelogueActionButtons();
+    updateTravelogueHistoryLinks();
     showTravelogueModal();
   } catch (err) {
     console.error('旅行記生成エラー:', err);
@@ -5299,6 +5337,9 @@ async function updateHeaderInfo() {
 
   // 旅行記アクションボタンを更新
   updateTravelogueActionButtons();
+
+  // 旅行記履歴リンクを更新
+  updateTravelogueHistoryLinks();
 }
 
 function updateTripSheetTriggerLabel() {
@@ -5421,6 +5462,66 @@ function updateTravelogueActionButtons() {
   const container = document.getElementById('travelogueActionButtons');
   if (container) {
     container.innerHTML = '';
+  }
+}
+
+function updateTravelogueHistoryLinks() {
+  const container = document.getElementById('travelogueHistoryLinks');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (!currentTrip || !currentTrip.travelogueHistory || currentTrip.travelogueHistory.length === 0) {
+    return;
+  }
+
+  // 履歴を新しい順に並べる（最新が最初）
+  const history = [...currentTrip.travelogueHistory].reverse();
+
+  history.forEach((entry, index) => {
+    const actualIndex = history.length - 1 - index; // 元のインデックス
+    const date = new Date(entry.timestamp);
+    const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'btn btn-secondary btn-xs';
+    link.textContent = `📝 ${dateStr}`;
+    link.title = `旅行記履歴 ${actualIndex + 1} を表示`;
+    link.onclick = () => showTravelogueFromHistory(entry);
+    container.appendChild(link);
+  });
+}
+
+async function showTravelogueFromHistory(entry) {
+  try {
+    let html = '';
+    if (entry.url) {
+      // StorageからHTMLを取得
+      const response = await fetch(entry.url);
+      html = await response.text();
+    } else if (entry.html) {
+      // Firestoreに保存されたHTML
+      html = entry.html;
+    }
+
+    if (html) {
+      // 一時的にcurrentTripのtravelogueHtml/Urlを上書きして表示
+      const originalHtml = currentTrip.travelogueHtml;
+      const originalUrl = currentTrip.travelogueUrl;
+
+      currentTrip.travelogueHtml = html;
+      currentTrip.travelogueUrl = entry.url || null;
+
+      showTravelogueModal();
+
+      // 元に戻す
+      currentTrip.travelogueHtml = originalHtml;
+      currentTrip.travelogueUrl = originalUrl;
+    }
+  } catch (err) {
+    console.error('履歴の旅行記表示エラー:', err);
+    alert('旅行記の読み込みに失敗しました: ' + (err.message || String(err)));
   }
 }
 

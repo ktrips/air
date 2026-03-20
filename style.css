@@ -257,6 +257,19 @@ body {
 .playback-photo-overlay.hidden {
   display: none;
 }
+/* 動画下半分表示モード */
+.playback-photo-overlay.playback-video-fullscreen {
+  top: 50%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.95);
+}
 .playback-photo-card {
   background: rgba(255, 255, 255, 0.98);
   border-radius: 12px;
@@ -266,8 +279,19 @@ body {
   max-width: 540px;
   animation: fadeInSlide 0.4s ease-out;
 }
+/* 動画カード（下半分） */
+.playback-photo-card.playback-video-card {
+  width: 95%;
+  max-width: 95%;
+  height: 90%;
+  max-height: 90%;
+  background: #000;
+  border-radius: 8px;
+}
 .playback-photo-wrap {
   position: relative;
+  width: 100%;
+  height: 100%;
 }
 .playback-photo-card img {
   width: 540px;
@@ -275,6 +299,11 @@ body {
   display: block;
   max-height: 360px;
   object-fit: cover;
+}
+/* 動画カード内の動画ラッパー */
+.playback-video-card .playback-photo-wrap {
+  width: 100%;
+  height: 100%;
 }
 .playback-photo-overlay-top {
   position: absolute;
@@ -340,11 +369,23 @@ body {
     right: 12px;
     left: auto;
   }
+  .playback-photo-overlay.playback-video-fullscreen {
+    top: 50%;
+    left: 0;
+    right: 0;
+    bottom: 0;
+  }
   .playback-photo-card {
     width: 60vw;
     max-width: 60vw;
     border-radius: 10px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  }
+  .playback-photo-card.playback-video-card {
+    width: 95%;
+    max-width: 95%;
+    height: 90%;
+    max-height: 90%;
   }
   .playback-photo-card img {
     width: 100%;
