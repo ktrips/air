@@ -31,6 +31,64 @@ let corsWarningShown = false;
 let characterImageData = null; // キャラクター画像（Base64形式）
 let addingGpsPointMode = false; // GPSポイント追加モード
 
+// トリップ所在フィルタ: 'all' | 'japan' | 'global'（URLパラメータ ?region=japan または ?region=global で指定可能）
+let tripRegionFilter = 'all';
+
+/** 日本の大まかな範囲（緯度・経度） */
+const JAPAN_BOUNDS = { latMin: 24.2, latMax: 45.5, lngMin: 122.9, lngMax: 153.9 };
+
+/** 座標が日本国内かどうかを判定 */
+function isCoordInJapan(lat, lng) {
+  if (lat == null || lng == null) return false;
+  return lat >= JAPAN_BOUNDS.latMin && lat <= JAPAN_BOUNDS.latMax &&
+         lng >= JAPAN_BOUNDS.lngMin && lng <= JAPAN_BOUNDS.lngMax;
+}
+
+/** URLパラメータからregionを取得し、tripRegionFilterを設定。airj/air.jp 系は japan、airg/air.gl 系は global をデフォルトとする */
+function initRegionFilterFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    let region = params.get('region');
+    if (region === 'japan' || region === 'global') {
+      tripRegionFilter = region;
+    } else if (!region) {
+      const host = window.location.hostname || '';
+      if (/^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$/.test(host)) tripRegionFilter = 'japan';
+      else if (/^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) tripRegionFilter = 'global';
+    }
+  } catch (_) {}
+}
+
+/** トリップの所在を判定: 'japan' | 'global' | null（判定不可の場合はnull＝両方に表示） */
+function getTripRegion(trip, allTrips) {
+  const photos = trip.photos || [];
+  const hasJapan = photos.some(p => isCoordInJapan(p.lat, p.lng));
+  const hasGlobal = photos.some(p => {
+    if (p.lat == null || p.lng == null) return false;
+    return !isCoordInJapan(p.lat, p.lng);
+  });
+  if (trip.isParent && photos.length === 0 && allTrips) {
+    const childIds = new Set(allTrips.filter(t => t.parentId === trip.id).map(t => t.id));
+    if (childIds.size > 0) {
+      let childJapan = false, childGlobal = false;
+      for (const t of allTrips) {
+        if (childIds.has(t.id)) {
+          const r = getTripRegion(t, allTrips);
+          if (r === 'japan') childJapan = true;
+          if (r === 'global') childGlobal = true;
+        }
+      }
+      if (childJapan && !childGlobal) return 'japan';
+      if (childGlobal && !childJapan) return 'global';
+      if (childJapan && childGlobal) return 'japan'; // 混在時は日本優先で表示
+    }
+  }
+  if (hasJapan && !hasGlobal) return 'japan';
+  if (hasGlobal && !hasJapan) return 'global';
+  if (hasJapan && hasGlobal) return 'japan'; // 混在時は日本として扱う
+  return null; // 写真なし or GPSなし → 両方に表示
+}
+
 function isEditor() {
   return !!(window.firebaseAuth?.currentUser);
 }
@@ -3283,7 +3341,7 @@ function getOrderedTrips() {
   });
 }
 
-/** 表示用: 親→子の順、子はインデント対象 */
+/** 表示用: 親→子の順、子はインデント対象。regionフィルタ（japan/global）を適用 */
 function getTripsForDisplay() {
   const ordered = getOrderedTrips();
   const parentIds = new Set(ordered.map(t => t.id));
@@ -3297,12 +3355,32 @@ function getTripsForDisplay() {
       childrenByParent.set(t.parentId, arr);
     }
   }
+
+  // regionフィルタ適用
+  const matchesRegion = (trip) => {
+    if (tripRegionFilter === 'all') return true;
+    const region = getTripRegion(trip, ordered);
+    if (region === null) return true; // 判定不可は両方に表示
+    return region === tripRegionFilter;
+  };
+
+  const filteredRoots = roots.filter(r => {
+    if (r.isParent) {
+      const children = childrenByParent.get(r.id) || [];
+      const matchingChildren = children.filter(c => matchesRegion(c));
+      if (matchingChildren.length === 0) return matchesRegion(r); // 子がいない親は自身で判定
+      return true; // 親は子が1件でもマッチすれば表示（子は個別にフィルタ）
+    }
+    return matchesRegion(r);
+  });
+
   const result = [];
-  roots.forEach(r => {
+  filteredRoots.forEach(r => {
+    const children = (childrenByParent.get(r.id) || []).filter(c => matchesRegion(c))
+      .sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0));
+    if (r.isParent && children.length === 0 && !matchesRegion(r)) return; // 親のみで子がマッチしない場合は非表示
     result.push({ trip: r, isChild: false });
-    (childrenByParent.get(r.id) || []).sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0)).forEach(c => {
-      result.push({ trip: c, isChild: true });
-    });
+    children.forEach(c => result.push({ trip: c, isChild: true }));
   });
   return result;
 }
@@ -5676,6 +5754,33 @@ function initEventListeners() {
     tripListTitle.onclick = () => goToDefaultView();
     tripListTitle.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToDefaultView(); } };
   }
+
+  const tripRegionSelect = document.getElementById('tripRegionSelect');
+  if (tripRegionSelect) {
+    tripRegionSelect.value = tripRegionFilter;
+    tripRegionSelect.onchange = async () => {
+      tripRegionFilter = tripRegionSelect.value;
+      try {
+        const url = new URL(window.location.href);
+        if (tripRegionFilter === 'all') {
+          url.searchParams.delete('region');
+        } else {
+          url.searchParams.set('region', tripRegionFilter);
+        }
+        window.history.replaceState({}, '', url.toString());
+      } catch (_) {}
+      renderTripList();
+      refreshTripSelect();
+      const displayIds = new Set(getTripsForDisplay().map(x => x.trip.id));
+      if (currentTrip && !displayIds.has(currentTrip.id)) {
+        const first = getTripsForDisplay()[0]?.trip;
+        if (first) await loadTripById(first.id);
+        else await updateHeaderInfo();
+      } else {
+        updateHeaderInfo();
+      }
+    };
+  }
   const tripSheetTrigger = document.getElementById('tripSheetTrigger');
   const tripSheetOverlay = document.getElementById('tripSheetOverlay');
   const tripPanel = document.getElementById('tripPanel');
@@ -5693,30 +5798,30 @@ function initEventListeners() {
     };
   }
 
-  // 前のトリップボタン
+  // 前のトリップボタン（フィルタ適用後の表示順でナビゲート）
   const tripNavPrev = document.getElementById('tripNavPrev');
   if (tripNavPrev) {
     tripNavPrev.onclick = async (e) => {
       e.stopPropagation();
       if (!currentTrip) return;
-      const trips = getOrderedTrips();
-      const currentIndex = trips.findIndex(t => t.id === currentTrip.id);
+      const displayTrips = getTripsForDisplay().map(x => x.trip);
+      const currentIndex = displayTrips.findIndex(t => t.id === currentTrip.id);
       if (currentIndex > 0) {
-        await loadTripById(trips[currentIndex - 1].id);
+        await loadTripById(displayTrips[currentIndex - 1].id);
       }
     };
   }
 
-  // 次のトリップボタン
+  // 次のトリップボタン（フィルタ適用後の表示順でナビゲート）
   const tripNavNext = document.getElementById('tripNavNext');
   if (tripNavNext) {
     tripNavNext.onclick = async (e) => {
       e.stopPropagation();
       if (!currentTrip) return;
-      const trips = getOrderedTrips();
-      const currentIndex = trips.findIndex(t => t.id === currentTrip.id);
-      if (currentIndex >= 0 && currentIndex < trips.length - 1) {
-        await loadTripById(trips[currentIndex + 1].id);
+      const displayTrips = getTripsForDisplay().map(x => x.trip);
+      const currentIndex = displayTrips.findIndex(t => t.id === currentTrip.id);
+      if (currentIndex >= 0 && currentIndex < displayTrips.length - 1) {
+        await loadTripById(displayTrips[currentIndex + 1].id);
       }
     };
   }
@@ -6003,6 +6108,7 @@ function initEventListeners() {
 }
 
 function init() {
+  initRegionFilterFromUrl();
   initMap();
   initMapSearch();
   initEventListeners();

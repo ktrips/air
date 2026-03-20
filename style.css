@@ -693,14 +693,35 @@ body.app-playing .maplibregl-ctrl-logo {
 
 .trip-list-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
 
+.trip-list-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .trip-list-header h3 {
   margin: 0;
+}
+
+.trip-region-filter {
+  flex-shrink: 0;
+}
+
+.trip-region-select {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  cursor: pointer;
 }
 .trip-list-title {
   cursor: pointer;
@@ -2942,9 +2963,12 @@ body.app-playing .play-stop-btn-mobile::before {
   }
   .trip-list-header {
     position: relative;
-    padding-right: 90px;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.75rem;
+  }
+  .trip-list-header-top {
+    position: relative;
+    padding-right: 90px;
   }
   .trip-list-header h3 {
     padding-top: 0.5rem;
