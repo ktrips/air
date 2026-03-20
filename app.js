@@ -458,7 +458,7 @@ async function add3dMapRouteAndMarkers() {
       properties: {
         name: p.name || `#${i + 1}`,
         landmarkNo: p.landmarkNo || '',
-        isLandmark: !!(p.landmarkNo || p.landmarkName)
+        isLandmark: !!(p.landmarkNo)
       }
     }));
 
@@ -874,7 +874,7 @@ async function loadPhotoWithExif(file) {
     placeName: '',
     description: '',
     landmarkNo: '',
-    landmarkName: '',
+    isStamp: false,
     date: date || new Date().toISOString()
   };
 }
@@ -1025,7 +1025,7 @@ async function handleFiles(files, options = {}) {
           placeName,
           description: photoData.description,
           landmarkNo: photoData.landmarkNo,
-          landmarkName: photoData.landmarkName,
+          isStamp: photoData.isStamp,
           date: photoData.date
         };
         currentTrip.photos.push(photo);
@@ -2013,11 +2013,12 @@ function showPhotoPopupEditMode(lat, lng) {
 
   const landmarkRow = document.createElement('div');
   landmarkRow.className = 'photo-popup-landmark-row';
+
   const landmarkWrap = document.createElement('label');
   landmarkWrap.className = 'photo-popup-checkbox';
   const landmarkCheck = document.createElement('input');
   landmarkCheck.type = 'checkbox';
-  landmarkCheck.checked = !!(p.landmarkNo || p.landmarkName);
+  landmarkCheck.checked = !!(p.landmarkNo);
   const landmarkSpan = document.createElement('span');
   landmarkSpan.textContent = 'ランドマーク';
   landmarkWrap.appendChild(landmarkCheck);
@@ -2034,17 +2035,18 @@ function showPhotoPopupEditMode(lat, lng) {
   landmarkNoWrap.appendChild(landmarkNoInput);
   landmarkRow.appendChild(landmarkNoWrap);
 
-  // スタンプ名入力欄（同じ行に配置）
-  const landmarkNameWrap = document.createElement('div');
-  landmarkNameWrap.className = 'photo-popup-landmark-name-inline';
-  landmarkNameWrap.style.display = landmarkCheck.checked ? 'flex' : 'none';
-  const landmarkNameInput = document.createElement('input');
-  landmarkNameInput.type = 'text';
-  landmarkNameInput.className = 'photo-popup-input photo-popup-input-inline';
-  landmarkNameInput.placeholder = 'スタンプ名';
-  landmarkNameInput.value = p.landmarkName || '';
-  landmarkNameWrap.appendChild(landmarkNameInput);
-  landmarkRow.appendChild(landmarkNameWrap);
+  // スタンプチェック
+  const stampWrap = document.createElement('label');
+  stampWrap.className = 'photo-popup-checkbox';
+  stampWrap.style.marginLeft = 'auto';
+  const stampCheck = document.createElement('input');
+  stampCheck.type = 'checkbox';
+  stampCheck.checked = !!(p.isStamp);
+  const stampSpan = document.createElement('span');
+  stampSpan.textContent = 'スタンプ';
+  stampWrap.appendChild(stampCheck);
+  stampWrap.appendChild(stampSpan);
+  landmarkRow.appendChild(stampWrap);
 
   form.appendChild(landmarkRow);
 
@@ -2129,10 +2131,8 @@ function showPhotoPopupEditMode(lat, lng) {
 
   landmarkCheck.onchange = () => {
     landmarkNoWrap.style.display = landmarkCheck.checked ? 'flex' : 'none';
-    landmarkNameWrap.style.display = landmarkCheck.checked ? 'block' : 'none';
     if (!landmarkCheck.checked) {
       landmarkNoInput.value = '';
-      landmarkNameInput.value = '';
     }
   };
   landmarkNoWrap.style.display = landmarkCheck.checked ? 'flex' : 'none';
@@ -2154,13 +2154,12 @@ function showPhotoPopupEditMode(lat, lng) {
     try {
       setStatus('写真をアップロード中...');
       const photoData = await loadPhotoWithExif(file);
-      const coord = ensureLatLng(photoData.lat, photoData.lng);
-      let photoLat = coord ? coord.lat : (lat || photos[idx].lat);
-      let photoLng = coord ? coord.lng : (lng || photos[idx].lng);
-      let placeName = photoData.placeName || '';
-      if (coord) {
-        placeName = await reverseGeocode(photoLat, photoLng);
-      }
+
+      // オリジナルのGPS位置を保持（新しい写真のGPSは使用しない）
+      const originalLat = photos[idx].lat;
+      const originalLng = photos[idx].lng;
+      const originalPlaceName = photos[idx].placeName;
+      const originalName = photos[idx].name;
 
       // 古い写真をStorageから削除
       const oldPhotoUrl = photos[idx].url;
@@ -2171,15 +2170,15 @@ function showPhotoPopupEditMode(lat, lng) {
       // Storageにアップロード
       const url = await uploadPhotoToStorage(currentTrip.id, idx, photoData.blob);
 
-      // 写真データを更新
+      // 写真データを更新（GPS位置は元のまま維持）
       photos[idx].url = url;
       photos[idx].mime = photoData.mime;
-      photos[idx].lat = photoLat;
-      photos[idx].lng = photoLng;
-      photos[idx].placeName = placeName || photos[idx].placeName;
-      photos[idx].name = photos[idx].name || photoData.name;
+      photos[idx].lat = originalLat;
+      photos[idx].lng = originalLng;
+      photos[idx].placeName = originalPlaceName;
+      photos[idx].name = originalName;
 
-      // UI更新
+      // UI更新（画像のみ更新、地図は移動しない）
       img.src = url;
       await updateTripInputs();
 
@@ -2187,8 +2186,8 @@ function showPhotoPopupEditMode(lat, lng) {
       try {
         await saveTrip({ silent: true });
         renderThumbnails();
-        updateMapMarkers();
-        setStatus('写真を追加しました');
+        // マーカー更新は呼ばない（現在のポップアップ位置を維持）
+        setStatus('写真を変更しました');
       } catch (err) {
         console.error('保存エラー:', err);
         setStatus('写真をアップロードしました（保存は手動で）');
@@ -2213,7 +2212,7 @@ function showPhotoPopupEditMode(lat, lng) {
       photos[idx].name = nameInput.value.trim();
       photos[idx].description = descInput.value.trim();
       photos[idx].landmarkNo = landmarkCheck.checked ? landmarkNoInput.value.trim() : '';
-      photos[idx].landmarkName = landmarkCheck.checked ? landmarkNameInput.value.trim() : '';
+      photos[idx].isStamp = stampCheck.checked;
       photos[idx].videoUrl = videoUrlInput.value.trim();
     }
     // フォームが空の場合（メニュー未表示時など）は currentTrip をフォームに反映してから保存
@@ -2278,12 +2277,19 @@ function showPhotoPopupEditMode(lat, lng) {
         photos[idx].name = nameInput.value.trim();
         photos[idx].description = descInput.value.trim();
         photos[idx].landmarkNo = landmarkCheck.checked ? landmarkNoInput.value.trim() : '';
-        photos[idx].landmarkName = landmarkCheck.checked ? landmarkNameInput.value.trim() : '';
+        photos[idx].isStamp = stampCheck.checked;
         photos[idx].videoUrl = videoUrlInput.value.trim();
       }
 
       // 現在のポイントをディープコピー
       const duplicatedPhoto = JSON.parse(JSON.stringify(photos[idx]));
+
+      // 複製したポイントの名前に（コピー）を追加
+      if (duplicatedPhoto.name) {
+        duplicatedPhoto.name = `${duplicatedPhoto.name}（コピー）`;
+      } else {
+        duplicatedPhoto.name = '（コピー）';
+      }
 
       // 次の位置に挿入
       photos.splice(idx + 1, 0, duplicatedPhoto);
@@ -3913,7 +3919,6 @@ async function generateTravelogueWithAI() {
         placeName: loc,
         description: desc,
         landmarkNo: p.landmarkNo || '',
-        landmarkName: p.landmarkName || '',
         pointName: p.name || p.description || '',
         wikiData // { title, extract } または null
       });
@@ -3922,8 +3927,8 @@ async function generateTravelogueWithAI() {
     if (landmarkPhotos.length > 0) {
       parts.push('スタンプラリー（ランドマークポイント、順番）:');
       landmarkPhotos.forEach((pi) => {
-        const stampName = pi.landmarkName || pi.pointName || '';
-        parts.push(`  📍 ${pi.landmarkNo}${stampName ? ': ' + stampName : ''}（写真${pi.index}）`);
+        const pointName = pi.pointName || '';
+        parts.push(`  📍 ${pi.landmarkNo}${pointName ? ': ' + pointName : ''}（写真${pi.index}）`);
       });
       parts.push('');
       parts.push('⚠️ これらのランドマークスポットを、旅行記の最後に御朱印帳風の一覧として必ず表示してください。');
@@ -4470,27 +4475,29 @@ function showStampRallyModal(trip) {
   const modal = document.getElementById('stampRallyModal');
   const content = document.getElementById('stampRallyContent');
   if (!modal || !content) return;
-  const photos = (trip?.photos || []).filter(p => p.landmarkNo);
+  const photos = (trip?.photos || []).filter(p => p.isStamp);
   photos.sort((a, b) => {
     const na = String(a.landmarkNo || '');
     const nb = String(b.landmarkNo || '');
     return na.localeCompare(nb, undefined, { numeric: true });
   });
   if (photos.length === 0) {
-    content.innerHTML = '<p class="stamp-rally-empty">ランドマークがありません。写真のポップアップで「ランドマーク」にチェックし、番号を入力してください。</p>';
+    content.innerHTML = '<p class="stamp-rally-empty">スタンプがありません。写真のポップアップで「スタンプ」にチェックを入れてください。</p>';
   } else {
     content.innerHTML = photos.map((p, i) => {
       const stamped = !!(p.url && p.url.trim());
-      const no = escapeHtml(p.landmarkNo || '');
-      const stampName = escapeHtml(p.landmarkName || p.name || p.description || '');
+      const landmarkNo = escapeHtml(p.landmarkNo || '');
+      const pointName = escapeHtml(p.name || '');
       const imgHtml = stamped
-        ? `<img src="${escapeHtml(p.url)}" alt="${no}" class="stamp-card-img" loading="lazy">`
+        ? `<img src="${escapeHtml(p.url)}" alt="${pointName}" class="stamp-card-img" loading="lazy">`
         : '<div class="stamp-card-empty">?</div>';
-      const infoText = stampName ? `<span class="stamp-card-no">${no}</span> <span class="stamp-card-name">${stampName}</span>` : `<span class="stamp-card-no">${no}</span>`;
       return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-photo-index="${(trip.photos || []).indexOf(p)}">
         <div class="stamp-card-inner">
           ${imgHtml}
-          <div class="stamp-card-info-overlay">${infoText}</div>
+          <div class="stamp-card-info-overlay">
+            ${landmarkNo ? `<span class="stamp-card-no">${landmarkNo}</span>` : ''}
+            ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
+          </div>
         </div>
         <span class="stamp-card-badge">${stamped ? '✓ スタンプ済み' : '未スタンプ'}</span>
       </div>`;
