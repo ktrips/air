@@ -48,6 +48,23 @@ function isCoordInJapan(lat, lng) {
          lng >= JAPAN_BOUNDS.lngMin && lng <= JAPAN_BOUNDS.lngMax;
 }
 
+/** ドメインに応じたアプリ表題を取得 */
+function getAppTitle() {
+  const host = window.location.hostname || '';
+  if (/^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$/.test(host)) return 'Air.Jp';
+  if (/^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) return 'Air.Global';
+  if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) return 'Ohenro';
+  return 'Air';
+}
+
+/** アプリ表題をDOMに反映（タイトル・ヘッダーロゴ） */
+function applyAppTitle() {
+  const title = getAppTitle();
+  document.title = title + ' — 地図と写真でエア旅行';
+  const headerLogo = document.getElementById('headerLogo');
+  if (headerLogo) headerLogo.textContent = title;
+}
+
 /** URLパラメータとドメインからフィルタを設定 */
 function initRegionFilterFromUrl() {
   try {
@@ -512,7 +529,7 @@ async function add3dMapRouteAndMarkers() {
       source: 'route',
       paint: {
         'line-color': color,
-        'line-width': 5,
+        'line-width': 7,
         'line-opacity': 0.8
       }
     });
@@ -6271,6 +6288,7 @@ function initEventListeners() {
 
 function init() {
   initRegionFilterFromUrl();
+  applyAppTitle();
   initMap();
   initMapSearch();
   initEventListeners();
