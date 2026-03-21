@@ -17,6 +17,7 @@ let currentYouTubePlayer = null;
 let youtubeApiReady = false;
 let playbackVideoEndCallback = null;
 let playbackVideoTimer = null; // 動画再生時の30秒タイマー
+let videoSequenceTimer = null; // 動画シーケンス再生時のタイマー
 let map3d = null;
 let photoPopup = null;
 let myTrips = [];
@@ -34,6 +35,9 @@ let addingGpsPointMode = false; // GPSポイント追加モード
 // トリップ所在フィルタ: 'all' | 'japan' | 'global'（URLパラメータ ?region=japan または ?region=global で指定可能）
 let tripRegionFilter = 'all';
 
+// 特定ドメイン用: 親トリップ名でフィルタ（ohenro/henro.ktrips.net では「しまなみ街道と四国お遍路旅」とその子のみ表示）
+let tripFilterParentName = null;
+
 /** 日本の大まかな範囲（緯度・経度） */
 const JAPAN_BOUNDS = { latMin: 24.2, latMax: 45.5, lngMin: 122.9, lngMax: 153.9 };
 
@@ -44,15 +48,21 @@ function isCoordInJapan(lat, lng) {
          lng >= JAPAN_BOUNDS.lngMin && lng <= JAPAN_BOUNDS.lngMax;
 }
 
-/** URLパラメータからregionを取得し、tripRegionFilterを設定。airj/air.jp 系は japan、airg/air.gl 系は global をデフォルトとする */
+/** URLパラメータとドメインからフィルタを設定 */
 function initRegionFilterFromUrl() {
   try {
+    const host = window.location.hostname || '';
     const params = new URLSearchParams(window.location.search);
+
+    // ohenro/henro.ktrips.net: 「しまなみ街道と四国お遍路旅」とその子トリップのみ表示
+    if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
+      tripFilterParentName = 'しまなみ街道と四国お遍路旅';
+    }
+
     let region = params.get('region');
     if (region === 'japan' || region === 'global') {
       tripRegionFilter = region;
     } else if (!region) {
-      const host = window.location.hostname || '';
       if (/^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$/.test(host)) tripRegionFilter = 'japan';
       else if (/^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) tripRegionFilter = 'global';
     }
@@ -1315,9 +1325,9 @@ function updateViewerSection() {
     travelogueBtn.style.display = hasTravelogue ? '' : 'none';
   }
 
-  // 動画ボタン
+  // 動画ボタン（トリップまたはポイントに動画URLがあれば表示）
   if (videoBtn) {
-    videoBtn.style.display = currentTrip.videoUrl ? '' : 'none';
+    videoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
   }
 
   // スタンプボタン
@@ -1941,8 +1951,10 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
       card.appendChild(backBtn);
     }
     backBtn.style.display = '';
+    playbackVideoEndCallback = onVideoEnd || null;
     backBtn.onclick = () => {
       if (onVideoEnd) {
+        playbackVideoEndCallback = null;
         // 30秒タイマーをクリア
         if (playbackVideoTimer) {
           clearTimeout(playbackVideoTimer);
@@ -2011,6 +2023,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
       }
     }
   } else {
+    playbackVideoEndCallback = null;
     // 写真の場合は戻るボタンを非表示
     const backBtn = card.querySelector('.playback-video-back-btn');
     if (backBtn) {
@@ -2028,23 +2041,19 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     photoWrap.appendChild(img);
   }
 
-  // 写真上部のオーバーレイ（ランドマーク番号・ポイント名）
-  let topOverlay = photoWrap.querySelector('.playback-photo-overlay-top');
+  // 写真上部のオーバーレイ（写真ポップアップと同様のフォーマット: ランドマーク番号・ポイント名）
+  let topOverlay = photoWrap.querySelector('.photo-popup-overlay-top');
   if (!topOverlay) {
     topOverlay = document.createElement('div');
-    topOverlay.className = 'playback-photo-overlay-top';
+    topOverlay.className = 'photo-popup-overlay-top';
     photoWrap.appendChild(topOverlay);
   }
   let overlayHTML = '';
   if (p.landmarkNo) {
-    overlayHTML += `<span class="playback-photo-landmark">${escapeHtml(String(p.landmarkNo))}</span>`;
+    overlayHTML += `<span class="photo-popup-landmark">${escapeHtml(String(p.landmarkNo))}</span>`;
   }
-  // ポイント名を表示
-  const pointName = p.name || '';
-  if (pointName) {
-    const tripColor = currentTrip && currentTrip.color ? currentTrip.color : '';
-    const colorStyle = tripColor ? ` style="color:${tripColor}"` : '';
-    overlayHTML += `<span class="playback-photo-name"${colorStyle}>${escapeHtml(pointName)}</span>`;
+  if (p.name) {
+    overlayHTML += `<span class="photo-popup-name">${escapeHtml(p.name)}</span>`;
   }
   topOverlay.innerHTML = overlayHTML;
   topOverlay.style.display = overlayHTML ? '' : 'none';
@@ -2737,7 +2746,58 @@ function hidePlayOverlay() {
   }
 }
 
+/** 自動再生中の停止ボタン: 動画再生中なら動画を止めて次へ、そうでなければ再生を停止 */
+function handlePlaybackStop() {
+  if (playbackVideoEndCallback) {
+    const cb = playbackVideoEndCallback;
+    playbackVideoEndCallback = null;
+    if (playbackVideoTimer) {
+      clearTimeout(playbackVideoTimer);
+      playbackVideoTimer = null;
+    }
+    if (currentYouTubePlayer) {
+      try {
+        currentYouTubePlayer.destroy();
+      } catch (e) {
+        console.warn('YouTube Player破棄エラー:', e);
+      }
+      currentYouTubePlayer = null;
+    }
+    cb();
+  } else {
+    stopPlay();
+  }
+}
+
+/** 再生完了時: スタンプ一覧を5秒表示後、全ポイントを含む地図に戻る */
+async function onPlaybackComplete() {
+  if (playTimer) {
+    clearTimeout(playTimer);
+    clearInterval(playTimer);
+    playTimer = null;
+  }
+  playbackVideoEndCallback = null;
+  if (playbackVideoTimer) {
+    clearTimeout(playbackVideoTimer);
+    playbackVideoTimer = null;
+  }
+  hidePlaybackPhotoOverlay();
+  if (currentTrip) {
+    showStampRallyModal(currentTrip);
+  }
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  closeStampRallyModal();
+  stopPlay();
+  await updateMapMarkers();
+  await updateHeaderInfo();
+  if (!thumbnailsVisible) {
+    thumbnailsVisible = true;
+    renderThumbnails();
+  }
+}
+
 function stopPlay() {
+  playbackVideoEndCallback = null;
   if (playTimer) {
     clearTimeout(playTimer);
     clearInterval(playTimer); // 念のため両方
@@ -2876,7 +2936,7 @@ function animateCameraAlongRoute(routePts, durationMs) {
 
 async function startPlay() {
   if (playTimer) {
-    stopPlay();
+    handlePlaybackStop();
     return;
   }
 
@@ -2909,54 +2969,59 @@ async function startPlay() {
     thumbnailsVisible = false;
     renderThumbnails();
 
-    // 3D地図の初期化完了を待つ
-    await initMap3d();
-
-    // 3D地図にルートとマーカーを表示
-    await add3dMapRouteAndMarkers();
-
     const p0 = playbackPhotos[0];
     if (p0?.lat != null && p0?.lng != null) {
       map.setView([p0.lat, p0.lng], 17);
-      setMap3dView(p0.lat, p0.lng, 17);
     }
 
+    // 3D地図の初期化をバックグラウンドで開始（tickでflyMap3dToを使うため）
+    const map3dReady = initMap3d()
+      .then(() => add3dMapRouteAndMarkers())
+      .then(() => {
+        if (p0?.lat != null && p0?.lng != null) setMap3dView(p0.lat, p0.lng, 17);
+      })
+      .catch(err => { console.warn('3D地図初期化エラー:', err); });
+
     const tick = async () => {
-      if (!playTimer || currentPhotoIndex >= playbackPhotos.length - 1) {
-        stopPlay();
-        return;
-      }
+      try {
+        if (!playTimer || currentPhotoIndex >= playbackPhotos.length - 1) {
+          onPlaybackComplete();
+          return;
+        }
 
-      currentPhotoIndex++;
-      const nextP = playbackPhotos[currentPhotoIndex];
+        currentPhotoIndex++;
+        const nextP = playbackPhotos[currentPhotoIndex];
 
-      // カメラアニメーションを実行して完了を待つ
-      if (nextP?.lat != null && nextP?.lng != null) {
-        // 3D地図を移動
-        await flyMap3dTo(nextP.lat, nextP.lng, 17, 1500);
-      }
+        // 3D地図の準備ができていればカメラアニメーション（最大3秒待機、ブロック防止）
+        try {
+          await Promise.race([map3dReady, new Promise(r => setTimeout(r, 3000))]);
+          if (nextP?.lat != null && nextP?.lng != null) {
+            await flyMap3dTo(nextP.lat, nextP.lng, 17, 1500);
+          }
+        } catch (e) {
+          console.warn('3D地図アニメーションスキップ:', e);
+        }
 
-      // 動画がある場合は動画終了まで待つ
-      if (nextP.videoUrl && nextP.videoUrl.trim()) {
-        // 次の写真（動画）を表示、終了コールバック付き
-        await showPlaybackPhotoOverlay(nextP, () => {
-          // 動画終了後、次へ進む
-          playTimer = setTimeout(tick, 500);
-        });
-      } else {
-        // 次の写真を表示
-        await showPlaybackPhotoOverlay(nextP);
-
-        // 写真の場合は固定時間後に次へ
-        const displayDuration = 2500; // 写真表示時間
-        playTimer = setTimeout(tick, displayDuration);
+        // 動画がある場合は動画終了まで待つ
+        if (nextP.videoUrl && nextP.videoUrl.trim()) {
+          await showPlaybackPhotoOverlay(nextP, () => {
+            playTimer = setTimeout(tick, 500);
+          });
+        } else {
+          await showPlaybackPhotoOverlay(nextP);
+          playTimer = setTimeout(tick, 2500);
+        }
+      } catch (err) {
+        console.error('自動再生tickエラー:', err);
+        if (currentPhotoIndex < playbackPhotos.length - 1) {
+          playTimer = setTimeout(tick, 2500);
+        } else {
+          onPlaybackComplete();
+        }
       }
     };
 
-    // playTimerを設定して自動再生モードに（ダミー値で先に設定）
-    playTimer = true;
-
-    // 1枚目の写真/動画を表示
+    // 1枚目の写真を即座に表示して再生開始（3D地図の初期化を待たない）
     if (p0.videoUrl && p0.videoUrl.trim()) {
       await showPlaybackPhotoOverlay(p0, () => {
         playTimer = setTimeout(tick, 500);
@@ -3317,7 +3382,15 @@ async function saveTripOrder(ids) {
 }
 
 function getOrderedTrips() {
-  const byId = new Map(myTrips.map(t => [t.id, t]));
+  let trips = myTrips;
+  if (tripFilterParentName) {
+    const parent = myTrips.find(t => (t.name || '').trim() === tripFilterParentName && t.isParent);
+    if (parent) {
+      const childIds = new Set(myTrips.filter(t => t.parentId === parent.id).map(t => t.id));
+      trips = myTrips.filter(t => t.id === parent.id || childIds.has(t.id));
+    }
+  }
+  const byId = new Map(trips.map(t => [t.id, t]));
   if (tripOrder.length > 0) {
     const ordered = [];
     for (const id of tripOrder) {
@@ -3502,10 +3575,11 @@ function renderTripList() {
         html += `<p class="trip-detail-desc"><span class="trip-photo-count-toggle">（${photos.length}枚）</span></p>`;
       }
       const hasLandmarks = (t.photos || []).some(p => p.landmarkNo);
+      const hasVideos = getTripVideoUrlsForTrip(t).length > 0;
       // ブログボタンは表示しない（説明にリンクをつけるため）
-      if (t.videoUrl || (t.travelogueHtml && t.travelogueHtml.trim()) || hasLandmarks) {
+      if (hasVideos || (t.travelogueHtml && t.travelogueHtml.trim()) || hasLandmarks) {
         html += '<div class="trip-detail-btns">';
-        if (t.videoUrl) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">動画</button>`;
+        if (hasVideos) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">動画</button>`;
         if (t.travelogueHtml && t.travelogueHtml.trim()) html += `<button type="button" class="btn btn-secondary btn-xs trip-detail-btn trip-detail-travelogue-btn">旅行記</button>`;
         if (hasLandmarks) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">スタンプ</button>`;
         html += '</div>';
@@ -3521,7 +3595,7 @@ function renderTripList() {
       detail.innerHTML = html;
       list.appendChild(detail);
       detail.querySelectorAll('.trip-detail-video-btn').forEach(btn => {
-        btn.onclick = (e) => { e.stopPropagation(); showVideoOverlay(t.videoUrl); };
+        btn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(t)); };
       });
       detail.querySelectorAll('.trip-detail-travelogue-btn').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(); };
@@ -3975,6 +4049,29 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+/** 指定トリップの動画URLを表示順で取得（トリップ動画→ポイント動画の順） */
+function getTripVideoUrlsForTrip(trip) {
+  if (!trip) return [];
+  const urls = [];
+  if (trip.videoUrl && trip.videoUrl.trim()) {
+    urls.push(trip.videoUrl.trim());
+  }
+  const photos = trip.isParent
+    ? (getOrderedTrips().filter(t => t.parentId === trip.id) || []).flatMap(t => (t.photos || []))
+    : (trip.photos || []);
+  for (const p of photos) {
+    if (p.videoUrl && p.videoUrl.trim()) {
+      urls.push(p.videoUrl.trim());
+    }
+  }
+  return urls;
+}
+
+/** 現在のトリップ＋ポイントの動画URLを表示順で取得 */
+function getTripVideoUrls() {
+  return getTripVideoUrlsForTrip(currentTrip);
+}
+
 function getVideoEmbedUrl(url) {
   if (!url) return null;
   const u = url.trim();
@@ -4042,6 +4139,61 @@ function showVideoOverlay(url) {
   }
   overlay.classList.remove('hidden');
   document.querySelector('.map-container')?.classList.add('map-showing-video');
+}
+
+/** 動画URLの配列を連続再生。1件の場合は showVideoOverlay、複数なら順番に再生 */
+function playVideoSequence(urls) {
+  if (!urls || urls.length === 0) return;
+  const overlay = document.getElementById('videoOverlay');
+  const wrap = document.getElementById('videoPlayerWrap');
+  if (!overlay || !wrap) return;
+
+  if (urls.length === 1) {
+    showVideoOverlay(urls[0]);
+    return;
+  }
+
+  let index = 0;
+  const VIDEO_DURATION_MS = 30000; // iframe動画の最大表示時間（YouTube/Vimeoは終了検知不可のため）
+
+  const playNext = () => {
+    if (videoSequenceTimer) {
+      clearTimeout(videoSequenceTimer);
+      videoSequenceTimer = null;
+    }
+    if (index >= urls.length) {
+      return;
+    }
+    const url = urls[index];
+    index++;
+    wrap.innerHTML = '';
+    const embedUrl = getVideoEmbedUrl(url);
+    if (embedUrl) {
+      const iframe = document.createElement('iframe');
+      iframe.src = embedUrl + '?autoplay=1';
+      iframe.title = '動画';
+      iframe.allow = 'autoplay; encrypted-media';
+      iframe.allowFullscreen = true;
+      wrap.appendChild(iframe);
+      if (index < urls.length) {
+        videoSequenceTimer = setTimeout(playNext, VIDEO_DURATION_MS);
+      }
+    } else {
+      const video = document.createElement('video');
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      video.muted = false;
+      video.addEventListener('ended', () => {
+        if (index < urls.length) playNext();
+      });
+      wrap.appendChild(video);
+    }
+    overlay.classList.remove('hidden');
+    document.querySelector('.map-container')?.classList.add('map-showing-video');
+  };
+
+  playNext();
 }
 
 let animePlayTimer = null;
@@ -4642,6 +4794,8 @@ function closeTravelogueModal() {
 
 function showStampRallyModal(trip) {
   const modal = document.getElementById('stampRallyModal');
+  const titleEl = document.getElementById('stampRallyTitle');
+  const countEl = document.getElementById('stampRallyCount');
   const content = document.getElementById('stampRallyContent');
   if (!modal || !content) return;
 
@@ -4679,8 +4833,14 @@ function showStampRallyModal(trip) {
   });
 
   if (allPhotos.length === 0) {
+    if (titleEl) titleEl.textContent = 'スタンプ';
+    if (countEl) countEl.textContent = '';
     content.innerHTML = '<p class="stamp-rally-empty">スタンプがありません。写真のポップアップで「スタンプ」にチェックを入れてください。</p>';
   } else {
+    const stampedCount = allPhotos.filter(p => p.url && p.url.trim()).length;
+    const totalCount = allPhotos.length;
+    if (titleEl) titleEl.textContent = 'スタンプ一覧';
+    if (countEl) countEl.textContent = `スタンプ済み ${stampedCount} / ${totalCount}`;
     content.innerHTML = allPhotos.map((p, i) => {
       const stamped = !!(p.url && p.url.trim());
       const landmarkNo = escapeHtml(p.landmarkNo || '');
@@ -5271,6 +5431,10 @@ function closeAnimeModal() {
 }
 
 function closeVideoOverlay() {
+  if (videoSequenceTimer) {
+    clearTimeout(videoSequenceTimer);
+    videoSequenceTimer = null;
+  }
   const overlay = document.getElementById('videoOverlay');
   const wrap = document.getElementById('videoPlayerWrap');
   if (overlay) overlay.classList.add('hidden');
@@ -5370,11 +5534,7 @@ async function updateHeaderInfo() {
     return;
   }
   if (videoBtn) {
-    if (currentTrip.videoUrl) {
-      videoBtn.style.display = '';
-    } else {
-      videoBtn.style.display = 'none';
-    }
+    videoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
   }
   const stampBtn = document.getElementById('headerStampBtn');
   if (stampBtn) {
@@ -5955,7 +6115,7 @@ function initEventListeners() {
   if (playStopBtnMobile) {
     playStopBtnMobile.onclick = () => {
       if (playTimer) {
-        stopPlay();
+        handlePlaybackStop();
       } else {
         startPlay();
       }
@@ -5966,7 +6126,8 @@ function initEventListeners() {
   const headerVideoBtn = document.getElementById('headerVideoBtn');
   if (headerVideoBtn) headerVideoBtn.onclick = () => {
     if (playTimer) stopPlay();
-    if (currentTrip?.videoUrl) showVideoOverlay(currentTrip.videoUrl);
+    const urls = getTripVideoUrls();
+    if (urls.length > 0) playVideoSequence(urls);
   };
   const headerStampBtn = document.getElementById('headerStampBtn');
   if (headerStampBtn) headerStampBtn.onclick = () => {
@@ -5982,7 +6143,8 @@ function initEventListeners() {
   };
   const viewerVideoBtn = document.getElementById('viewerVideoBtn');
   if (viewerVideoBtn) viewerVideoBtn.onclick = () => {
-    if (currentTrip?.videoUrl) showVideoOverlay(currentTrip.videoUrl);
+    const urls = getTripVideoUrls();
+    if (urls.length > 0) playVideoSequence(urls);
     closeMenu();
   };
   const viewerStampBtn = document.getElementById('viewerStampBtn');

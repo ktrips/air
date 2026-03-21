@@ -201,7 +201,16 @@ body {
 .map-container {
   flex: 1;
   position: relative;
-  background: #e8e8e8;
+}
+
+/* 地図のattribution（Leaflet | © Esri等）を常に非表示 */
+.map-container .leaflet-control-attribution,
+.map-container .maplibregl-ctrl-attrib,
+.map-container .maplibregl-ctrl-attrib-button,
+.map-container .maplibregl-ctrl-bottom-right,
+.map-container .maplibregl-ctrl-bottom-left,
+.map-container .maplibregl-ctrl-logo {
+  display: none !important;
 }
 .map-container.map-playback-cinematic {
   transform: perspective(1400px) rotateX(10deg);
@@ -335,37 +344,6 @@ body {
   width: 100%;
   height: 100%;
 }
-.playback-photo-overlay-top {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  border-radius: 6px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-.playback-photo-overlay-top .playback-photo-landmark {
-  background: var(--accent);
-  color: white;
-  padding: 4px 9px;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 900;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
-  letter-spacing: 0.5px;
-}
-.playback-photo-overlay-top .playback-photo-name {
-  color: white;
-  font-size: 15px;
-  font-weight: 700;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
-  letter-spacing: 0.4px;
-}
 .playback-photo-info {
   padding: 10px 14px;
   background: rgba(255, 255, 255, 0.95);
@@ -398,6 +376,10 @@ body {
     bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     right: 12px;
     left: auto;
+  }
+  /* モバイルの自動再生時は写真表示を下から1/10上の位置に（動画フルスクリーン時は除く） */
+  body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) {
+    bottom: 10%;
   }
   .playback-photo-overlay.playback-video-fullscreen {
     top: 50%;
@@ -432,32 +414,6 @@ body {
   }
   .playback-photo-wrap {
     position: relative;
-  }
-  .playback-photo-overlay-top {
-    top: 6px;
-    left: 6px;
-    padding: 5px 8px;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(6px);
-    border-radius: 5px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
-  }
-  .playback-photo-overlay-top .playback-photo-landmark {
-    font-size: 13px;
-    padding: 3px 8px;
-    font-weight: 900;
-    background: var(--accent);
-    color: white;
-    border-radius: 4px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
-    letter-spacing: 0.4px;
-  }
-  .playback-photo-overlay-top .playback-photo-name {
-    font-size: 12.6px;
-    font-weight: 700;
-    color: white;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
-    letter-spacing: 0.4px;
   }
   .playback-photo-info {
     padding: 6px 8px;
@@ -769,6 +725,7 @@ body.app-playing .maplibregl-ctrl-logo {
 .trip-detail-inline .trip-detail-desc {
   margin: 0 0 0.5rem 0;
   color: var(--text);
+  font-size: 0.8em;
 }
 
 .trip-detail-link {
@@ -2494,6 +2451,33 @@ body:not(.editor) .viewer-only { display: block; }
   background: linear-gradient(to bottom, #f9f5e8 0%, #f5f0e0 100%);
 }
 
+.stamp-rally-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.stamp-rally-header-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.stamp-rally-modal-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.stamp-rally-modal-header .stamp-rally-count {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
 .stamp-rally-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2622,8 +2606,26 @@ body:not(.editor) .viewer-only { display: block; }
   }
 
   .stamp-rally-grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 1rem;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  .stamp-card-inner {
+    min-height: 200px;
+  }
+
+  .stamp-card-empty {
+    font-size: 4rem;
+  }
+
+  .stamp-card-info-overlay {
+    font-size: 1.05rem;
+    padding: 0.9rem 1rem;
+  }
+
+  .stamp-card-badge {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.6rem;
   }
 }
 
@@ -2902,11 +2904,11 @@ body.app-playing .play-stop-btn-mobile::before {
     font-size: 1.3rem;
     margin-left: 3px;
   }
-  /* モバイルの自動再生時は停止ボタンをシンプルに */
+  /* モバイルの自動再生時は停止ボタンをシンプルに、下から1/10上の位置に */
   body.app-playing .play-stop-btn-mobile {
     width: 32px;
     height: 32px;
-    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    bottom: 10%;
     background: rgba(0, 0, 0, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
