@@ -4792,17 +4792,6 @@ async function generateTravelogueWithAI() {
         wikiData // { title, extract } または null
       });
     }
-    const landmarkPhotos = photoInfos.filter(pi => pi.landmarkNo);
-    if (landmarkPhotos.length > 0) {
-      parts.push('スタンプラリー（ランドマークポイント、順番）:');
-      landmarkPhotos.forEach((pi) => {
-        const pointName = pi.pointName || '';
-        parts.push(`  📍 ${pi.landmarkNo}${pointName ? ': ' + pointName : ''}（写真${pi.index}）`);
-      });
-      parts.push('');
-      parts.push('⚠️ これらのランドマークスポットを、旅行記の最後に御朱印帳風の一覧として必ず表示してください。');
-      parts.push('');
-    }
     parts.push('写真情報（順番に、各写真ごとに左右レイアウトで旅行記を生成してください）:');
     photoInfos.forEach((pi) => {
       parts.push(`\n  【写真${pi.index}】`);
@@ -4898,33 +4887,7 @@ ${detailAnimeHtml}
 
 4. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）。※ランドマークでない写真では親トリップの説明は参照しないでください
 
-5. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
-
-<div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
-  <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
-  <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
-
-  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;padding:2.5rem;background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">
-    <!-- ランドマーク写真があるポイントごとに以下のカードを生成 -->
-    <div style="background:#fffef8;border:3px double #c1272d;border-radius:10px;padding:1.2rem;text-align:center;box-shadow:0 6px 12px rgba(193,39,45,0.18),inset 0 1px 0 rgba(255,255,255,0.5);position:relative;">
-      <!-- 写真を表示 -->
-      <img src="写真URL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;margin-bottom:0.8rem;box-shadow:0 2px 6px rgba(0,0,0,0.15);">
-      <!-- スタンプ済みバッジ -->
-      <div style="position:absolute;top:-10px;right:-10px;width:32px;height:32px;background:#c1272d;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.2rem;box-shadow:0 2px 6px rgba(193,39,45,0.3);">✓</div>
-      <!-- ランドマーク番号とポイント名を横に並べる -->
-      <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;margin-bottom:0.6rem;">
-        <div style="font-size:1.5rem;font-weight:700;color:#c1272d;text-shadow:1px 1px 2px rgba(193,39,45,0.2);">📍 ランドマーク番号</div>
-        <div style="font-size:0.95rem;font-weight:600;color:#2d1810;line-height:1.3;">ポイント名</div>
-      </div>
-      <div style="padding:0.4rem 0.6rem;background:#c1272d;color:#fff;font-size:0.75rem;font-weight:700;border-radius:6px;box-shadow:0 2px 4px rgba(193,39,45,0.3);letter-spacing:0.05em;">✓ スタンプ済み</div>
-    </div>
-  </div>
-
-  <p style="text-align:center;color:#8b7355;font-size:0.85rem;margin-top:1.5rem;font-style:italic;">訪れた全てのスポットを記録しました ✨</p>
-</div>
-
-重要: ランドマーク番号（📍1、📍2など）が設定されている写真が1つでもある場合は、必ずこの御朱印帳セクションを旅行記の最後に含めてください。各ランドマークごとに上記のカードスタイルで表示してください。
-重要: スタンプカードには必ず写真を含めてください。写真URLはphotoInfosから取得できます。
+5. スタンプ一覧はアプリ側で自動表示するため、旅行記のHTMLには含めないでください。
 
 重要事項:
 - トリップカラーは${tripColor}です
@@ -4942,7 +4905,7 @@ ${detailAnimeHtml}
 - Wikipedia情報のタイトルは、実際に参照した地域名や観光名所の名前を使用してください（例：「観音寺について」「しまなみ海道について」など）
 - Wikipedia情報は、その場所の歴史、特徴、見どころなど、旅行者に役立つ情報を含めてください
 - GPSルート地図は自動表示されるのでHTMLに含めない
-- ⚠️重要：ランドマーク写真が1つでもある場合は、必ず旅行記の最後に御朱印帳セクションを含めてください。御朱印帳は和の趣を感じる特別なセクションです。`;
+- スタンプ一覧はアプリ側で自動表示するため旅行記HTMLに含めない`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
   try {
     setStatus('旅行記を生成中...');
@@ -5240,6 +5203,66 @@ async function showTravelogueModal(trip) {
 
     content.innerHTML = processedHtml;
 
+    // 旅行記内の写真・アニメ画像をクリックで拡大表示
+    content.querySelectorAll('img').forEach((img) => {
+      img.style.cursor = 'pointer';
+      img.title = 'クリックで拡大表示';
+      img.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (img.src) showImagePopup(img.src);
+      });
+    });
+
+    // 旅行記の最後にスタンプ一覧を追加（スタンプボタンと同様の形式・スタンプチェック付き写真）
+    const stampPhotos = getStampListForTrip(t);
+    if (stampPhotos.length > 0) {
+      const stampSection = document.createElement('div');
+      stampSection.className = 'travelogue-stamp-section';
+      stampSection.innerHTML = `
+        <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
+          <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
+          <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
+          <div class="stamp-rally-grid" style="background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;padding:2rem;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">${stampPhotos.map((p, i) => {
+            const stamped = !!(p.url && p.url.trim());
+            const landmarkNo = escapeHtml(p.landmarkNo || '');
+            const pointName = escapeHtml(p.name || '');
+            const imgHtml = stamped
+              ? `<img src="${escapeHtml(p.url)}" alt="${pointName}" class="stamp-card-img" loading="lazy">`
+              : '<div class="stamp-card-empty">?</div>';
+            return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-trip-id="${escapeHtml(p._tripId)}" data-photo-index="${p._photoIndex}">
+              <div class="stamp-card-inner">
+                ${imgHtml}
+                <div class="stamp-card-info-overlay">
+                  ${landmarkNo ? `<span class="stamp-card-no">${landmarkNo}</span>` : ''}
+                  ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
+                </div>
+              </div>
+              <span class="stamp-card-badge">${stamped ? '✓ スタンプ済み' : '未スタンプ'}</span>
+            </div>`;
+          }).join('')}</div>
+          <p style="text-align:center;color:#8b7355;font-size:0.85rem;margin-top:1.5rem;font-style:italic;">訪れた全てのスポットを記録しました ✨</p>
+        </div>`;
+      content.appendChild(stampSection);
+      stampSection.querySelectorAll('.stamp-card').forEach((card) => {
+        const tripId = card.dataset.tripId;
+        const photoIdx = parseInt(card.dataset.photoIndex, 10);
+        card.onclick = async () => {
+          if (currentTrip?.id !== tripId) await loadTripById(tripId);
+          closeTravelogueModal();
+          showPhotoAtIndex(photoIdx);
+        };
+        card.querySelectorAll('img').forEach((img) => {
+          img.style.cursor = 'pointer';
+          img.title = 'クリックで拡大表示';
+          img.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (img.src) showImagePopup(img.src);
+          });
+        });
+      });
+    }
+
     if (t && (t.photos?.length || t.gpxData || t.gpxDataUrl)) {
       // 新しいtravelogue-map-containerがある場合はそれを使用
       const mapContainer = document.getElementById('travelogue-map-container');
@@ -5272,6 +5295,24 @@ async function showTravelogueModal(trip) {
   modal.classList.add('open');
 }
 
+/** 画像を大きなポップアップで表示（旅行記内の写真・アニメクリック用） */
+function showImagePopup(src) {
+  if (!src) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.9);z-index:10001;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = '';
+  img.style.cssText = 'max-width:90vw;max-height:90vh;border-radius:8px;object-fit:contain;pointer-events:none;';
+  overlay.appendChild(img);
+  const close = () => {
+    document.body.removeChild(overlay);
+    overlay.removeEventListener('click', close);
+  };
+  overlay.addEventListener('click', close);
+  document.body.appendChild(overlay);
+}
+
 function closeTravelogueModal() {
   if (travelogueMap) {
     travelogueMap.remove();
@@ -5280,16 +5321,11 @@ function closeTravelogueModal() {
   document.getElementById('travelogueModal')?.classList.remove('open');
 }
 
-function showStampRallyModal(trip) {
-  const modal = document.getElementById('stampRallyModal');
-  const titleEl = document.getElementById('stampRallyTitle');
-  const countEl = document.getElementById('stampRallyCount');
-  const content = document.getElementById('stampRallyContent');
-  if (!modal || !content) return;
-
-  // 親トリップの場合は、子トリップのスタンプも含める
+/** スタンプチェックがついた写真一覧を取得（スタンプボタン・旅行記で共通利用） */
+function getStampListForTrip(trip) {
+  if (!trip) return [];
   let allPhotos = [];
-  if (trip?.isParent) {
+  if (trip.isParent) {
     const childTrips = getOrderedTrips().filter(t => t.parentId === trip.id);
     childTrips.forEach(childTrip => {
       const childStamps = (childTrip.photos || []).filter(p => p.isStamp);
@@ -5313,12 +5349,22 @@ function showStampRallyModal(trip) {
       });
     });
   }
-
   allPhotos.sort((a, b) => {
     const na = String(a.landmarkNo || '');
     const nb = String(b.landmarkNo || '');
     return na.localeCompare(nb, undefined, { numeric: true });
   });
+  return allPhotos;
+}
+
+function showStampRallyModal(trip) {
+  const modal = document.getElementById('stampRallyModal');
+  const titleEl = document.getElementById('stampRallyTitle');
+  const countEl = document.getElementById('stampRallyCount');
+  const content = document.getElementById('stampRallyContent');
+  if (!modal || !content) return;
+
+  const allPhotos = getStampListForTrip(trip);
 
   if (allPhotos.length === 0) {
     if (titleEl) titleEl.textContent = 'スタンプ';
