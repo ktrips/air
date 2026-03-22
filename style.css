@@ -381,6 +381,14 @@ body {
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) {
     bottom: 10%;
   }
+  /* モバイルの自動再生時は写真を10%大きく表示 */
+  body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card {
+    width: 66vw;
+    max-width: 66vw;
+  }
+  body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card img {
+    max-height: 38.5vh;
+  }
   .playback-photo-overlay.playback-video-fullscreen {
     top: 50%;
     left: 0;
