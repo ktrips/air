@@ -6,9 +6,18 @@ Access to fetch at 'https://firebasestorage.googleapis.com/...'
 from origin 'http://127.0.0.1:8080' has been blocked by CORS policy
 ```
 
-このエラーは Firebase Storage へのローカル開発環境からのアクセスがブロックされています。
+このエラーは Firebase Storage へのアクセスが CORS によりブロックされています。**アニメ画像の表示**や **GPX ファイルの読み込み**が失敗する原因になります。
 
-## 解決方法
+## クイック修正（推奨）
+
+```bash
+cd /path/to/air   # プロジェクトフォルダに移動
+./setup-cors.sh
+```
+
+`setup-cors.sh` が `firebasestorage.app` と `appspot.com` の両方のバケットに CORS を設定します。成功後、ブラウザのキャッシュをクリアしてページを再読み込みしてください。
+
+## 解決方法（手動）
 
 ### 方法1: gsutil コマンドを使用（推奨）
 

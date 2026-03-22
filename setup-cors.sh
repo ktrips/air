@@ -51,18 +51,36 @@ echo "プロジェクトを設定中..."
 gcloud config set project ${PROJECT_ID}
 echo ""
 
-# CORS 設定を適用
-echo "CORS 設定を適用中..."
-if gsutil cors set cors.json ${BUCKET}; then
-    echo ""
-    echo "✅ CORS 設定が正常に適用されました！"
-    echo ""
+# CORS 設定を適用（cors.json はスクリプトと同じディレクトリにあること）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}" || exit 1
 
-    # 設定を確認
+if [ ! -f "cors.json" ]; then
+    echo "❌ cors.json が見つかりません。${SCRIPT_DIR} に cors.json があるか確認してください。"
+    exit 1
+fi
+
+echo "CORS 設定を適用中..."
+APPLIED=0
+# firebasestorage.app と appspot.com の両方を試す
+for BUCKET in "gs://${PROJECT_ID}.firebasestorage.app" "gs://${PROJECT_ID}.appspot.com"; do
+  echo "  試行: ${BUCKET}"
+  if gsutil cors set cors.json "${BUCKET}" 2>/dev/null; then
+    echo ""
+    echo "✅ ${BUCKET} に CORS 設定が適用されました"
+    APPLIED=1
+    break
+  else
+    echo "    （このバケットは存在しないか、権限がありません）"
+  fi
+done
+
+if [ "${APPLIED}" -eq 1 ]; then
+    echo ""
     echo "=========================================="
     echo "適用された CORS 設定："
     echo "=========================================="
-    gsutil cors get ${BUCKET}
+    gsutil cors get "${BUCKET}"
     echo ""
 
     echo "=========================================="
@@ -75,16 +93,20 @@ if gsutil cors set cors.json ${BUCKET}; then
     echo "2. ページを強制リロードしてください"
     echo "   Cmd+Shift+R (Mac) / Ctrl+Shift+R (Windows)"
     echo ""
-    echo "3. http://127.0.0.1:8080 を開いて確認してください"
+    echo "3. アニメ表示・GPX 読み込みが正常になるか確認してください"
     echo ""
 else
     echo ""
-    echo "❌ CORS 設定の適用に失敗しました"
+    echo "❌ CORS 設定の適用に失敗しました（両方のバケットで試行済み）"
     echo ""
     echo "トラブルシューティング："
     echo "1. プロジェクトへのアクセス権限があるか確認"
-    echo "2. Firebase Console で権限を確認："
-    echo "   https://console.firebase.google.com/project/${PROJECT_ID}/settings/iam"
+    echo "2. firebase-config.js の storageBucket の値を確認（.appspot.com か .firebasestorage.app）"
+    echo "3. 以下を手動で実行してみてください："
+    echo "   gsutil cors set cors.json gs://${PROJECT_ID}.firebasestorage.app"
+    echo "   gsutil cors set cors.json gs://${PROJECT_ID}.appspot.com"
+    echo ""
+    echo "詳細: CORS_SETUP.md を参照"
     echo ""
     exit 1
 fi

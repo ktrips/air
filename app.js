@@ -148,9 +148,12 @@ function showCorsWarning() {
   console.warn('Firebase Storage の CORS 設定が必要です');
   console.warn('='.repeat(60));
   console.warn('');
-  console.warn('GPX ファイルや画像の読み込みに失敗しています。');
-  console.warn('以下のコマンドを実行して CORS 設定を適用してください：');
+  console.warn('GPX ファイルやアニメ画像の読み込みに失敗しています（CORS の可能性）。');
+  console.warn('プロジェクトルートで以下を実行してください：');
   console.warn('');
+  console.warn('  ./setup-cors.sh');
+  console.warn('');
+  console.warn('または手動で：');
   console.warn('  gsutil cors set cors.json gs://airgo-trip.firebasestorage.app');
   console.warn('');
   console.warn('詳しい手順は CORS_SETUP.md を参照してください。');
@@ -159,8 +162,8 @@ function showCorsWarning() {
   // ユーザーにも通知（1回のみ）
   if (isEditor()) {
     setTimeout(() => {
-      if (confirm('Firebase Storage の CORS 設定が必要です。\n\nGPX ファイルの読み込みに失敗しています。\n設定手順を確認しますか？')) {
-        alert('ターミナルで以下を実行してください：\n\ngsutil cors set cors.json gs://airgo-trip.firebasestorage.app\n\n詳しくは CORS_SETUP.md を参照してください。');
+      if (confirm('Firebase Storage の CORS 設定が必要です。\n\nアニメ画像・GPX ファイルの読み込みに失敗している可能性があります。\n設定手順を確認しますか？')) {
+        alert('ターミナルでプロジェクトフォルダに移動し、以下を実行してください：\n\n  cd (プロジェクトのパス)\n  ./setup-cors.sh\n\n詳しくは CORS_SETUP.md を参照してください。');
       }
     }, 1000);
   }
@@ -850,7 +853,7 @@ async function uploadTravelogueToStorage(tripId, htmlContent) {
   return url;
 }
 
-async function uploadAnimeImageToStorage(tripId, imageDataUrl) {
+async function uploadAnimeImageToStorage(tripId, imageDataUrl, filePrefix = 'anime') {
   if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
 
   // Data URLからBase64データとMIMEタイプを抽出
@@ -869,10 +872,10 @@ async function uploadAnimeImageToStorage(tripId, imageDataUrl) {
   const byteArray = new Uint8Array(byteNumbers);
   const blob = new Blob([byteArray], { type: mimeType });
 
-  // ユニークなファイル名を生成
+  // ユニークなファイル名を生成（cover/detailのプリフィックス対応）
   const timestamp = Date.now();
   const extension = mimeType.split('/')[1] || 'jpg';
-  const path = `trips/${tripId}/animes/anime_${timestamp}.${extension}`;
+  const path = `trips/${tripId}/animes/${filePrefix}_${timestamp}.${extension}`;
   const ref = window.firebaseStorage.ref(path);
 
   await ref.put(blob, { contentType: mimeType });
@@ -3895,9 +3898,9 @@ function renderTripList() {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'btn btn-travelogue btn-xs trip-detail-parent-btn';
-            const tName = c.name || '（無題）';
-            btn.textContent = '📖 ' + tName.slice(0, 8);
-            btn.title = tName;
+            const tName = (c.name || '（無題）').replace(/\s/g, '').slice(0, 9);
+            btn.textContent = '📖 ' + tName;
+            btn.title = c.name || '（無題）';
             btn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(c); };
             meta.appendChild(btn);
           });
@@ -4164,9 +4167,9 @@ function renderParentTripChildren(parentId) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'btn btn-travelogue btn-sm trip-parent-detail-travelogue-btn';
-        const tName = c.name || '（無題）';
-        btn.textContent = '📖 ' + tName.slice(0, 8);
-        btn.title = tName;
+        const tName = (c.name || '（無題）').replace(/\s/g, '').slice(0, 9);
+        btn.textContent = '📖 ' + tName;
+        btn.title = c.name || '（無題）';
         btn.onclick = () => showTravelogueModal(c);
         traveloguesEl.appendChild(btn);
       });
@@ -4817,15 +4820,23 @@ async function generateTravelogueWithAI() {
   const context = parts.join('\n');
   const tripColor = trip.color || '#e1306c';
 
-  // アニメ画像があれば取得（表紙用に1枚目を使用）
+  // アニメ画像: 表紙(cover)と詳細(detail)を分離
   const animeImages = trip.generatedAnimes && trip.generatedAnimes.length > 0 ? trip.generatedAnimes : [];
-  const animeCoverUrl = animeImages.length > 0 ? animeImages[0].url : null;
+  const coverAnimes = animeImages.filter(a => a.style && !String(a.style).startsWith('detail'));
+  const detailAnimes = animeImages.filter(a => a.style && String(a.style).startsWith('detail'));
+  const animeCoverUrl = coverAnimes.length > 0 ? coverAnimes[0].url : (animeImages.length > 0 ? animeImages[0].url : null);
   let animeCoverHtml = '';
   if (animeCoverUrl) {
     animeCoverHtml = `<img src="${animeCoverUrl}" alt="旅行記の表紙" style="width:100%;max-width:400px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:block;"/>`;
   }
+  let detailAnimeHtml = '';
+  if (detailAnimes.length > 0) {
+    const imgs = detailAnimes.map(a => `<img src="${a.url}" alt="旅行記詳細" style="width:calc(33.333% - 0.5rem);min-width:120px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`).join('\n');
+    detailAnimeHtml = `<div class="travelogue-detail-animes" style="display:flex;flex-wrap:wrap;gap:0.75rem;margin:2rem 0;justify-content:flex-start;">\n${imgs}\n</div>`;
+  }
 
   const hasAnimeCover = !!animeCoverHtml;
+  const hasDetailAnimes = !!detailAnimeHtml;
 
   const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
 
@@ -4836,25 +4847,28 @@ ${parentTripInfo ? `【重要】この旅行記は「${parentTripInfo.name}」${
 1. 最初に旅の表題を魅力的に表記:
 <h2 class="travelogue-title">トリップ名とトリップ説明${parentTripInfo ? '、そして親トリップの情報' : ''}を元に、旅の魅力を表す表題を生成（例：「瀬戸内の風を感じる しまなみ海道サイクリング紀行」「古都を巡る 京都・奈良の寺社仏閣めぐり」など）${parentTripInfo ? '。親トリップの一部であることを表題に反映させてください。' : ''}</h2>
 
-2. 最初のセクション${hasAnimeCover ? '（アニメ表紙・要約・地図）' : ''}:
-${hasAnimeCover ? `アニメ画像の表紙と250字の旅の要約を横並びで配置し、その下にGPSルート地図用のコンテナを配置してください。
+2. 最初のセクション（上段: 左にアニメ表紙・右にサマリー、その下に詳細アニメ、さらにその下に地図）:
+${hasAnimeCover ? `【上段】左にアニメ表紙、右に旅のサマリー（220字）を横並びで配置:
 <div class="travelogue-summary" style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;margin:2rem 0;">
   <div style="flex:0 0 auto;min-width:200px;">
 ${animeCoverHtml}
   </div>
   <div style="flex:1;min-width:250px;">
-    <p>旅の要約を250字程度で記述（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
+    <p>旅のサマリーを<strong>220字</strong>で記述（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
   </div>
 </div>
-<div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
-
-3` : `サマリーを250字程度で記述:
+` : `【上段】旅のサマリーを<strong>220字</strong>で記述:
 <div class="travelogue-summary">
-  <p>旅行のサマリー250字程度（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
+  <p>旅行のサマリー220字（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
 </div>
+`}
+${hasDetailAnimes ? `【詳細アニメ】その下に詳細アニメ画像を1/3サイズで横並び配置:
+${detailAnimeHtml}
+` : ''}
+【地図】その下にGPSルート地図用のコンテナ:
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
 
-3`}. 各マイルストーン（ランドマーク）毎にセクション分けして旅行記を記述（マイルストーンの写真のみ、親トリップの説明を参照して旅の流れを反映可）:
+3. その下にランドマーク毎にセクション分けして旅行記を記述（マイルストーンの写真のみ、親トリップの説明を参照して旅の流れを反映可）:
 
 <div class="travelogue-landmark-section">
   <h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍 ランドマーク番号: ポイント名</h3>
@@ -4916,7 +4930,7 @@ ${animeCoverHtml}
 - トリップカラーは${tripColor}です
 - ランドマーク見出しにトリップカラーを使用してください
 - 旅の表題はトリップ名とトリップ説明を元に魅力的な表題を生成してください
-- サマリーは250字程度で、旅の見どころ、特徴、魅力を具体的に
+- サマリーは220字で、旅の見どころ、特徴、魅力を具体的に
 - 写真は500px幅で表示してください
 - 写真の左上にポイント名をオーバーレイで配置
 - 写真の下部に[ポイント説明]をオーバーレイで配置（ブラケット付きで表示）
@@ -5377,29 +5391,11 @@ const ANIME_STYLES = {
     prompt: ANIME_COVER_PREFIX + 'Professional travel magazine cover style. Elegant travel publication aesthetic, high-end magazine layout, aspirational travel imagery. Travelogue content: ',
     brandClass: 'anime-brand-magazine'
   },
-  'page1': {
-    label: '個別ページ1/4',
-    brand: '',
-    prompt: ANIME_COVER_PREFIX + 'Travel guide book inner page style, layout 1 of 4. Clean editorial design, informative and readable layout. Travelogue content: ',
-    brandClass: 'anime-brand-magazine'
-  },
-  'page2': {
-    label: '個別ページ2/4',
-    brand: '',
-    prompt: ANIME_COVER_PREFIX + 'Travel guide book inner page style, layout 2 of 4. Clean editorial design, informative and readable layout. Travelogue content: ',
-    brandClass: 'anime-brand-magazine'
-  },
-  'page3': {
-    label: '個別ページ3/4',
-    brand: '',
-    prompt: ANIME_COVER_PREFIX + 'Travel guide book inner page style, layout 3 of 4. Clean editorial design, informative and readable layout. Travelogue content: ',
-    brandClass: 'anime-brand-magazine'
-  },
-  'page4': {
-    label: '個別ページ4/4',
-    brand: '',
-    prompt: ANIME_COVER_PREFIX + 'Travel guide book inner page style, layout 4 of 4. Clean editorial design, informative and readable layout. Travelogue content: ',
-    brandClass: 'anime-brand-magazine'
+  'detail4pages': {
+    label: '詳細4ページ',
+    brand: '地球の歩き方',
+    prompt: '',
+    brandClass: 'anime-brand-chikyu'
   }
 };
 
@@ -5441,9 +5437,9 @@ function getSelectedAnimeStyle() {
   return (select && select.value) || 'chikyu-cover';
 }
 
-/** 旅行記を4分割し、指定ページ(1-4)の内容を取得。5コマ用に5セグメントに分割して返す */
-function getTravelogueContentForPagePanels(trip, pageIndex) {
-  const pageIndex0 = Math.max(0, Math.min(pageIndex - 1, 3)); // 1-4 → 0-3
+/** 旅行記を4分割し、指定ページ(1-4)の1/4分の全文を返す */
+function getTravelogueQuarterContent(trip, pageIndex) {
+  const pageIndex0 = Math.max(0, Math.min(pageIndex - 1, 3));
   let fullText = '';
   let html = trip.travelogueHtml && trip.travelogueHtml.trim();
   if (!html && trip.travelogueHistory?.length > 0) {
@@ -5467,24 +5463,13 @@ function getTravelogueContentForPagePanels(trip, pageIndex) {
     fullText = parts.join('。').replace(/\s+/g, ' ') || trip.name || '旅行の思い出';
   }
   fullText = fullText.replace(/\s+/g, ' ').trim();
-  if (!fullText) return [];
+  if (!fullText) return '';
 
   const len = fullText.length;
   const quarterLen = Math.ceil(len / 4);
   const start = pageIndex0 * quarterLen;
   const end = Math.min(start + quarterLen, len);
-  const quarterText = fullText.slice(start, end);
-  if (!quarterText.trim()) return [];
-
-  const segLen = Math.ceil(quarterText.length / 5);
-  const segments = [];
-  for (let i = 0; i < 5; i++) {
-    const s = i * segLen;
-    const e = Math.min(s + segLen, quarterText.length);
-    const seg = quarterText.slice(s, e).trim();
-    if (seg) segments.push(seg);
-  }
-  return segments;
+  return fullText.slice(start, end).trim();
 }
 
 function showAnimeLoading(visible, text = '生成中...') {
@@ -5693,7 +5678,7 @@ async function showAnimeModal() {
 
   const styleId = getSelectedAnimeStyle();
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
-  const isPageStyle = ['page1', 'page2', 'page3', 'page4'].includes(styleId);
+  const isDetail4Pages = styleId === 'detail4pages';
 
   try {
     if (btn) btn.textContent = '画像生成中...';
@@ -5701,42 +5686,47 @@ async function showAnimeModal() {
 
     const charImg = await getCharacterImageForGeneration();
 
-    // 個別ページ1/4〜4/4: 5コマアニメを生成
-    if (isPageStyle) {
-      const pageNum = parseInt(styleId.replace('page', ''), 10);
-      const segments = getTravelogueContentForPagePanels(trip, pageNum);
-      if (segments.length === 0) {
+    // 詳細4ページ: キャラ主人公で4枚の5コマアニメ画像を生成（キャラ画像必須）
+    if (isDetail4Pages) {
+      if (!charImg) {
+        alert('詳細4ページではキャラ画像が必須です。キャラ画像をアップロードしてください。');
+        return;
+      }
+      const hasContent = [1, 2, 3, 4].some(p => getTravelogueQuarterContent(trip, p));
+      if (!hasContent) {
         alert('旅行記または写真・説明がありません。まず旅行記を生成するか、写真に説明を追加してください。');
         return;
       }
-      if (btn) btn.textContent = `5コマ生成中 (1/${segments.length})...`;
       const generatedAnimesToAdd = [];
-      for (let i = 0; i < segments.length; i++) {
-        setStatus(`5コマアニメ生成中 ${i + 1}/${segments.length}...`);
-        if (btn) btn.textContent = `5コマ生成中 (${i + 1}/${segments.length})...`;
+      for (let page = 1; page <= 4; page++) {
+        setStatus(`詳細4ページ生成中 ${page}/4...`);
+        if (btn) btn.textContent = `詳細4ページ生成中 (${page}/4)...`;
 
-        const panelPrompt = [
-          'Create a single manga/comic panel in Chikyu no Arukikata (地球の歩き方) travel guide style.',
-          'Soft, warm illustration. 旅のスポット（観光地・名所旧跡）をキャラクターのセリフで説明する形式。',
-          '',
-          '【Style】地球の歩き方風 - ソフトなタッチ、親しみやすい旅行ガイドのイラスト。吹き出し付きマンガコマ。',
-          `【コマ ${i + 1}/5 の内容】${segments[i].slice(0, 400)}`,
+        let quarterText = getTravelogueQuarterContent(trip, page);
+        if (!quarterText) quarterText = getTravelogueQuarterContent(trip, 1) || (trip.name || '旅行の思い出');
+        const pagePrompt = [
+          'Create a single manga/comic PAGE image containing exactly 5 panels in one layout.',
+          'Style: Chikyu no Arukikata (地球の歩き方) travel guide - soft, warm illustration.',
           '',
           '【必須】',
-          '- キャラクターを主役に、その場のスポット・名所・景色を吹き出しのセリフで説明する。',
-          '- 背景に観光スポット、名所旧跡、風景を描く。',
-          '- 縦または正方形の単一コマ。吹き出し以外の文字は入れない。',
-          '- 柔らかい色調、読みやすい構図。実写感は残さずアニメ調。',
+          '- 1枚の画像内に5コマを縦または適切に配置。旅行ガイドのページレイアウト風。',
+          '- アップロードされたキャラクターを主人公として、全コマに登場させる。',
+          '- 各コマでキャラクターが旅のスポット・名所・風景を吹き出しで説明する形式。',
+          '- 旅行記の写真と説明を元に、旅の内容を説明するアニメ画像。',
+          '- ソフトなタッチ、柔らかい色調。実写感は残さずアニメ調。',
+          '',
+          `【このページ（${page}/4）の旅行記内容 - 5コマで順に説明】`,
+          quarterText.slice(0, 800),
           ''
         ].join('\n');
 
-        const generatedDataUrl = await generateImageWithAI(panelPrompt, charImg, animeCfg);
+        const generatedDataUrl = await generateImageWithAI(pagePrompt, charImg, animeCfg);
         if (generatedDataUrl) {
-          const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl);
+          const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'detail');
           generatedAnimesToAdd.push({
             url: storageUrl,
             timestamp: Date.now(),
-            style: `${styleId}-panel${i + 1}`
+            style: `detail4pages-page${page}`
           });
         }
       }
@@ -5746,9 +5736,9 @@ async function showAnimeModal() {
         currentTrip.generatedAnimes.push(...generatedAnimesToAdd);
         await saveTrip({ silent: true });
         renderGeneratedAnimesList();
-        setStatus(`${generatedAnimesToAdd.length}コマのアニメを生成しました`);
+        setStatus(`${generatedAnimesToAdd.length}ページのアニメを生成しました`);
       } else {
-        alert('5コマアニメの生成に失敗しました。APIキーと旅行記の内容を確認してください。');
+        alert('詳細4ページの生成に失敗しました。APIキーと旅行記の内容を確認してください。');
       }
       return;
     }
@@ -5836,7 +5826,7 @@ async function showAnimeModal() {
       try {
         // 画像をStorageにアップロード
         setStatus('画像をStorageに保存中...');
-        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl);
+        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'cover');
 
         // トリップデータに追加
         if (!currentTrip.generatedAnimes) {
