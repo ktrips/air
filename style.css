@@ -640,7 +640,7 @@ body.app-playing .maplibregl-ctrl-logo {
 }
 
 .trip-panel {
-  width: 300px;
+  width: 345px;
   flex-shrink: 0;
   background: var(--bg-card);
   border-left: 1px solid var(--border);
@@ -1997,6 +1997,203 @@ body:not(.editor) .viewer-only { display: block; }
   border-color: var(--accent);
 }
 
+.viewer-child-list,
+.trip-parent-detail-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.viewer-child-list-item,
+.trip-parent-detail-list-item {
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background-color 0.2s;
+}
+
+.viewer-child-list-item:hover,
+.trip-parent-detail-list-item:hover {
+  background: var(--bg-hover);
+}
+
+.viewer-child-travelogue-btn,
+.viewer-child-video-btn,
+.trip-parent-detail-travelogue-btn,
+.trip-parent-detail-video-btn {
+  flex-shrink: 0;
+}
+
+.viewer-child-animes,
+.trip-parent-detail-animes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.viewer-child-anime-row,
+.trip-parent-detail-anime-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+
+.viewer-child-anime-label,
+.trip-parent-detail-anime-label {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.viewer-child-anime-label:hover,
+.trip-parent-detail-anime-label:hover {
+  text-decoration: underline;
+}
+
+.viewer-child-anime-thumbs,
+.trip-parent-detail-anime-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.viewer-child-anime-thumbs img,
+.trip-parent-detail-anime-thumbs img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid var(--border);
+  transition: border-color 0.2s;
+}
+
+.viewer-child-anime-thumbs img:hover,
+.trip-parent-detail-anime-thumbs img:hover {
+  border-color: var(--accent);
+}
+
+.trip-parent-detail-lists {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.trip-parent-detail-item {
+  margin-bottom: 0.75rem;
+}
+
+.trip-parent-detail-item:last-child {
+  margin-bottom: 0;
+}
+
+.trip-detail-inline-link {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.trip-detail-inline-link:hover {
+  text-decoration: underline;
+}
+
+.trip-detail-parent .trip-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.trip-detail-parent .trip-detail-meta strong {
+  flex-shrink: 0;
+}
+
+.trip-detail-parent-btn {
+  flex-shrink: 0;
+}
+
+.trip-detail-parent-anime-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.trip-detail-parent-anime-row:first-of-type {
+  margin-top: 0.35rem;
+}
+
+.trip-detail-parent-anime-label {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.trip-detail-parent-anime-label:hover {
+  text-decoration: underline;
+}
+
+.trip-detail-parent-anime-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.trip-detail-parent-anime-thumbs img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: border-color 0.2s;
+}
+
+.trip-detail-parent-anime-thumbs img:hover {
+  border-color: var(--accent);
+}
+
+.trip-detail-anime-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.trip-detail-anime-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.trip-detail-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: border-color 0.2s;
+}
+
+.trip-detail-thumb:hover {
+  border-color: var(--accent);
+}
+
 .modal-overlay {
   display: none;
   position: fixed;
@@ -2134,6 +2331,44 @@ body:not(.editor) .viewer-only { display: block; }
   max-width: 560px;
   width: 95%;
   overflow: hidden;
+}
+
+/* アニメ画像ビューア（サムネイルクリック時の前へ/次へ付き表示） */
+.modal-anime-viewer {
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-anime-viewer .modal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.anime-viewer-counter {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.anime-viewer-body {
+  flex: 1;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.anime-viewer-display-img {
+  max-width: 100%;
+  max-height: 75vh;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
 }
 
 .anime-viewer {

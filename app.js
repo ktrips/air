@@ -29,7 +29,27 @@ let currentMapLayer = 'satellite'; // デフォルトを衛星写真に設定
 const gpxCache = {};
 const LAST_TRIP_ID_KEY = 'air-last-trip-id';
 let corsWarningShown = false;
-let characterImageData = null; // キャラクター画像（Base64形式）
+let characterImageData = null; // キャラクター画像（Base64形式・メモリキャッシュ）
+
+/** アニメ生成用のキャラ画像を取得（トリップ保存分またはメモリ） */
+async function getCharacterImageForGeneration() {
+  if (characterImageData) return characterImageData;
+  const url = currentTrip?.characterImageUrl;
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('キャラ画像の取得に失敗:', err);
+    return null;
+  }
+}
 let addingGpsPointMode = false; // GPSポイント追加モード
 
 // トリップ所在フィルタ: 'all' | 'japan' | 'global'（URLパラメータ ?region=japan または ?region=global で指定可能）
@@ -860,6 +880,60 @@ async function uploadAnimeImageToStorage(tripId, imageDataUrl) {
   return url;
 }
 
+async function saveCharacterToTrip(tripId, characterImageUrl) {
+  if (!window.firebaseDb || !window.firebaseAuth?.currentUser) throw new Error('Not logged in');
+  const trip = myTrips.find(t => t.id === tripId) || currentTrip;
+  if (!trip || trip.id !== tripId) throw new Error('Trip not found');
+  const uid = window.firebaseAuth.currentUser.uid;
+  if (trip.userId && trip.userId !== uid) throw new Error('Permission denied');
+
+  const update = {
+    characterImageUrl: characterImageUrl || null,
+    updatedAt: Date.now(),
+    userId: uid
+  };
+  if (trip.name) update.name = trip.name;
+  if (trip.createdAt) update.createdAt = trip.createdAt;
+
+  await window.firebaseDb.collection('trips').doc(tripId).set(update, { merge: true });
+
+  const updated = myTrips.find(t => t.id === tripId);
+  if (updated) updated.characterImageUrl = characterImageUrl;
+  if (currentTrip?.id === tripId) currentTrip.characterImageUrl = characterImageUrl;
+
+  if (!tripOrder.includes(tripId)) {
+    try {
+      const res = await saveTripOrder([...tripOrder, tripId]);
+      if (!res.ok) console.warn('順序の保存に失敗:', res.err);
+    } catch (_) {}
+  }
+  await loadMyTrips();
+  const saved = myTrips.find(t => t.id === tripId);
+  if (saved && currentTrip?.id === tripId) {
+    currentTrip = { ...saved, id: saved.id };
+  }
+}
+
+async function uploadCharacterImageToStorage(tripId, imageDataUrl) {
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
+  const matches = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!matches) throw new Error('Invalid image data URL');
+  const mimeType = matches[1];
+  const base64Data = matches[2];
+  const byteCharacters = atob(base64Data);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i++) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  const byteArray = new Uint8Array(byteNumbers);
+  const blob = new Blob([byteArray], { type: mimeType });
+  const extension = mimeType.split('/')[1] || 'jpg';
+  const path = `trips/${tripId}/character.${extension}`;
+  const ref = window.firebaseStorage.ref(path);
+  await ref.put(blob, { contentType: mimeType });
+  return await ref.getDownloadURL();
+}
+
 async function deleteAnimeImageFromStorage(imageUrl) {
   if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
   try {
@@ -1203,6 +1277,7 @@ async function updateTripInputs() {
   const gpxLabel = gpxZone?.querySelector('span:last-of-type');
   if (!currentTrip) {
     if (gpxLabel) gpxLabel.textContent = 'GPXファイル';
+    updateCharacterPreview();
     return;
   }
   document.getElementById('tripNameInput').value = currentTrip.name || '';
@@ -1233,7 +1308,32 @@ async function updateTripInputs() {
   } else if (gpxLabel) {
     gpxLabel.textContent = 'GPXファイル';
   }
+  updateCharacterPreview();
   updateViewerSection();
+}
+
+function updateCharacterPreview() {
+  const characterPreview = document.getElementById('characterPreview');
+  const characterPreviewImg = document.getElementById('characterPreviewImg');
+  const characterImageInput = document.getElementById('characterImageInput');
+  if (!characterPreview || !characterPreviewImg) return;
+  if (!currentTrip || currentTrip.isParent) {
+    characterImageData = null;
+    characterPreview.style.display = 'none';
+    if (characterImageInput) characterImageInput.value = '';
+    return;
+  }
+  if (currentTrip.characterImageUrl) {
+    characterPreviewImg.src = currentTrip.characterImageUrl;
+    characterPreview.style.display = 'flex';
+    characterImageData = null;
+  } else if (characterImageData) {
+    characterPreviewImg.src = characterImageData;
+    characterPreview.style.display = 'flex';
+  } else {
+    characterPreview.style.display = 'none';
+    if (characterImageInput) characterImageInput.value = '';
+  }
 }
 
 function updateViewerSection() {
@@ -1310,6 +1410,116 @@ function updateViewerSection() {
     }
   }
 
+  // 親トリップ時: 子トリップの旅行記・動画・アニメ一覧を表示
+  try {
+  const childTraveloguesWrap = document.getElementById('viewerChildTraveloguesWrap');
+  const childTraveloguesEl = document.getElementById('viewerChildTravelogues');
+  const childVideosWrap = document.getElementById('viewerChildVideosWrap');
+  const childVideosEl = document.getElementById('viewerChildVideos');
+  const childAnimesWrap = document.getElementById('viewerChildAnimesWrap');
+  const childAnimesEl = document.getElementById('viewerChildAnimes');
+
+  if (currentTrip.isParent) {
+    const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
+
+    // 旅行記一覧
+    const travelogueChildren = childTrips.filter(c =>
+      (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0)
+    );
+    if (childTraveloguesWrap && childTraveloguesEl) {
+      if (travelogueChildren.length > 0) {
+        childTraveloguesEl.innerHTML = '';
+        travelogueChildren.forEach(c => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn btn-travelogue btn-sm viewer-child-travelogue-btn';
+          const tName = c.name || '（無題）';
+          btn.textContent = '📖 ' + tName.slice(0, 8);
+          btn.title = tName;
+          btn.onclick = () => showTravelogueModal(c);
+          childTraveloguesEl.appendChild(btn);
+        });
+        childTraveloguesWrap.style.display = '';
+      } else {
+        childTraveloguesWrap.style.display = 'none';
+      }
+    }
+
+    // 動画一覧
+    const videoChildren = childTrips.filter(c => getTripVideoUrlsForTrip(c).length > 0);
+    if (childVideosWrap && childVideosEl) {
+      if (videoChildren.length > 0) {
+        childVideosEl.innerHTML = '';
+        videoChildren.forEach(c => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'btn btn-primary btn-sm viewer-child-video-btn';
+          const vName = c.name || '（無題）';
+          btn.textContent = '🎬 ' + vName.slice(0, 5);
+          btn.title = vName;
+          btn.onclick = () => playVideoSequence(getTripVideoUrlsForTrip(c));
+          childVideosEl.appendChild(btn);
+        });
+        childVideosWrap.style.display = '';
+      } else {
+        childVideosWrap.style.display = 'none';
+      }
+    }
+
+    // アニメ一覧（generatedAnimes または animes）
+    const animeChildren = childTrips.filter(c => {
+      const animes = c.generatedAnimes || c.animes || [];
+      return animes.length > 0;
+    });
+    if (childAnimesWrap && childAnimesEl) {
+      if (animeChildren.length > 0) {
+        childAnimesEl.innerHTML = '';
+        animeChildren.forEach(c => {
+          const animes = c.generatedAnimes || c.animes || [];
+          const item = document.createElement('div');
+          item.className = 'viewer-child-anime-row';
+          const label = document.createElement('span');
+          label.className = 'viewer-child-anime-label';
+          label.textContent = c.name || '（無題）';
+          label.onclick = async () => { await loadTripById(c.id); };
+          item.appendChild(label);
+          const thumbs = document.createElement('div');
+          thumbs.className = 'viewer-child-anime-thumbs';
+          animes.forEach((anime, idx) => {
+            const img = document.createElement('img');
+            img.src = anime.url;
+            img.alt = anime.style || '';
+            img.title = c.name ? `${c.name} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+            img.onclick = (e) => {
+              e.stopPropagation();
+              const list = c.generatedAnimes || c.animes || [];
+              showAnimeImageViewer(list, idx, c.name);
+            };
+            thumbs.appendChild(img);
+          });
+          item.appendChild(thumbs);
+          childAnimesEl.appendChild(item);
+        });
+        childAnimesWrap.style.display = '';
+      } else {
+        childAnimesWrap.style.display = 'none';
+      }
+    }
+  } else {
+    if (childTraveloguesWrap) childTraveloguesWrap.style.display = 'none';
+    if (childVideosWrap) childVideosWrap.style.display = 'none';
+    if (childAnimesWrap) childAnimesWrap.style.display = 'none';
+  }
+  } catch (err) {
+    console.error('親トリップ詳細表示エラー:', err);
+    const w1 = document.getElementById('viewerChildTraveloguesWrap');
+    const w2 = document.getElementById('viewerChildVideosWrap');
+    const w3 = document.getElementById('viewerChildAnimesWrap');
+    if (w1) w1.style.display = 'none';
+    if (w2) w2.style.display = 'none';
+    if (w3) w3.style.display = 'none';
+  }
+
   // トリップ名
   if (nameEl) {
     const tripName = currentTrip.name || '（無題）';
@@ -1377,12 +1587,8 @@ function updateViewerSection() {
         img.style.border = '2px solid var(--border)';
         img.title = anime.style || 'アニメ画像';
         img.onclick = () => {
-          const modal = document.getElementById('animeModal');
-          const modalImg = document.getElementById('animeModalImage');
-          if (modal && modalImg) {
-            modalImg.src = anime.url;
-            modal.classList.add('open');
-          }
+          const list = currentTrip.animes || [];
+          showAnimeImageViewer(list, idx, currentTrip?.name);
         };
         animesList.appendChild(img);
       });
@@ -3120,8 +3326,9 @@ async function saveTrip(opts = {}) {
   if (isParent && currentTrip?.photos?.length > 0 && !confirm('親トリップには写真を保存できません。写真は破棄されます。続行しますか？')) {
     throw new Error('Cancelled');
   }
-  if (!isParent && !parentId && (!currentTrip?.photos?.length) && !currentTrip?.gpxData && !currentTrip?.gpxDataUrl) {
-    if (!silent) alert('写真またはGPXを追加するか、「親トリップ」にチェックを入れてください');
+  const hasContent = (currentTrip?.photos?.length) || currentTrip?.gpxData || currentTrip?.gpxDataUrl || currentTrip?.characterImageUrl;
+  if (!isParent && !parentId && !hasContent) {
+    if (!silent) alert('写真、GPX、またはキャラクター画像を追加するか、「親トリップ」にチェックを入れてください');
     throw new Error('Photos or GPX required');
   }
 
@@ -3170,7 +3377,8 @@ async function saveTrip(opts = {}) {
       travelogueUrl: currentTrip.travelogueUrl || null,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt || null,
       travelogueHistory: currentTrip.travelogueHistory || [],
-      generatedAnimes: currentTrip.generatedAnimes || []
+      generatedAnimes: currentTrip.generatedAnimes || [],
+      characterImageUrl: null
     });
   } else if (useMinimal) {
     data = sanitizeForFirestore({
@@ -3194,7 +3402,8 @@ async function saveTrip(opts = {}) {
       travelogueUrl: currentTrip.travelogueUrl || null,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt || null,
       travelogueHistory: currentTrip.travelogueHistory || [],
-      generatedAnimes: currentTrip.generatedAnimes || []
+      generatedAnimes: currentTrip.generatedAnimes || [],
+      characterImageUrl: currentTrip.characterImageUrl || null
     });
   } else {
     const tripForSave = { ...currentTrip };
@@ -3614,9 +3823,9 @@ function renderTripList() {
       // ブログボタンは表示しない（説明にリンクをつけるため）
       if (hasVideos || hasTravelogue || hasLandmarks) {
         html += '<div class="trip-detail-btns">';
-        if (hasVideos) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">動画</button>`;
-        if (hasTravelogue) html += `<button type="button" class="btn btn-secondary btn-xs trip-detail-btn trip-detail-travelogue-btn">旅行記</button>`;
-        if (hasLandmarks) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">スタンプ</button>`;
+        if (hasTravelogue) html += `<button type="button" class="btn btn-travelogue btn-sm trip-detail-btn trip-detail-travelogue-btn">📖 旅行記</button>`;
+        if (hasVideos) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">🎬 動画</button>`;
+        if (hasLandmarks) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">🎫 スタンプ</button>`;
         html += '</div>';
       }
       if (t.isParent && children.length > 0) {
@@ -3641,6 +3850,111 @@ function renderTripList() {
       detail.querySelectorAll('.trip-photo-count-toggle').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); toggleThumbnails(); };
       });
+      const animes = t.generatedAnimes || t.animes || [];
+      if (animes.length > 0) {
+        const thumbsWrap = document.createElement('div');
+        thumbsWrap.className = 'trip-detail-anime-thumbs';
+        const label = document.createElement('span');
+        label.className = 'trip-detail-anime-label';
+        label.textContent = 'アニメ: ';
+        thumbsWrap.appendChild(label);
+        animes.forEach((anime, idx) => {
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = anime.style || '';
+          img.className = 'trip-detail-thumb';
+          img.onclick = (e) => {
+            e.stopPropagation();
+            showAnimeImageViewer(animes, idx, t.name);
+          };
+          thumbsWrap.appendChild(img);
+        });
+        detail.appendChild(thumbsWrap);
+      }
+    } else if (isSelected && t.isParent && !isMobileView()) {
+      try {
+      // 親トリップ選択時: 子トリップの旅行記ボタン・動画ボタン・アニメサムネイルをインライン表示
+      const children = getOrderedTrips().filter(x => x.parentId === t.id);
+      const travelogueChildren = children.filter(c =>
+        (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0)
+      );
+      const videoChildren = children.filter(c => getTripVideoUrlsForTrip(c).length > 0);
+      const animeChildren = children.filter(c => ((c.generatedAnimes || c.animes || []).length > 0));
+      if (travelogueChildren.length > 0 || videoChildren.length > 0 || animeChildren.length > 0) {
+        const detail = document.createElement('div');
+        detail.className = 'trip-detail-inline trip-detail-parent';
+        if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
+
+        if (travelogueChildren.length > 0) {
+          const meta = document.createElement('p');
+          meta.className = 'trip-detail-meta';
+          const strong = document.createElement('strong');
+          strong.textContent = '旅行記: ';
+          meta.appendChild(strong);
+          travelogueChildren.forEach(c => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-travelogue btn-xs trip-detail-parent-btn';
+            const tName = c.name || '（無題）';
+            btn.textContent = '📖 ' + tName.slice(0, 8);
+            btn.title = tName;
+            btn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(c); };
+            meta.appendChild(btn);
+          });
+          detail.appendChild(meta);
+        }
+        if (videoChildren.length > 0) {
+          const meta = document.createElement('p');
+          meta.className = 'trip-detail-meta';
+          const strong = document.createElement('strong');
+          strong.textContent = '動画: ';
+          meta.appendChild(strong);
+          videoChildren.forEach(c => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-primary btn-xs trip-detail-parent-btn';
+            const vName = c.name || '（無題）';
+            btn.textContent = '🎬 ' + vName.slice(0, 5);
+            btn.title = vName;
+            btn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(c)); };
+            meta.appendChild(btn);
+          });
+          detail.appendChild(meta);
+        }
+        if (animeChildren.length > 0) {
+          animeChildren.forEach(c => {
+            const animes = c.generatedAnimes || c.animes || [];
+            const row = document.createElement('div');
+            row.className = 'trip-detail-parent-anime-row';
+            const label = document.createElement('span');
+            label.className = 'trip-detail-parent-anime-label';
+            label.textContent = c.name || '（無題）';
+            label.onclick = async (e) => { e.stopPropagation(); await loadTripById(c.id); };
+            row.appendChild(label);
+            const thumbs = document.createElement('div');
+            thumbs.className = 'trip-detail-parent-anime-thumbs';
+            animes.forEach((anime) => {
+              const img = document.createElement('img');
+              img.src = anime.url;
+              img.alt = anime.style || '';
+              img.title = (c.name ? c.name + ' - ' : '') + (anime.style || 'アニメ');
+              img.onclick = (e) => {
+                e.stopPropagation();
+                const list = c.generatedAnimes || c.animes || [];
+                const idx = list.findIndex(a => a.url === anime.url);
+                showAnimeImageViewer(list, idx >= 0 ? idx : 0, c.name);
+              };
+              thumbs.appendChild(img);
+            });
+            row.appendChild(thumbs);
+            detail.appendChild(row);
+          });
+        }
+        list.appendChild(detail);
+      }
+      } catch (err) {
+        console.error('親トリップインライン詳細エラー:', err);
+      }
     }
   });
 
@@ -3830,6 +4144,100 @@ function renderParentTripChildren(parentId) {
     listEl.appendChild(div);
   });
   addBtn.onclick = () => addChildTripUnder(parentId);
+
+  // 子トリップの旅行記・動画・アニメ一覧を表示
+  try {
+  const traveloguesWrap = document.getElementById('tripParentTraveloguesWrap');
+  const traveloguesEl = document.getElementById('tripParentTravelogues');
+  const videosWrap = document.getElementById('tripParentVideosWrap');
+  const videosEl = document.getElementById('tripParentVideos');
+  const animesWrap = document.getElementById('tripParentAnimesWrap');
+  const animesEl = document.getElementById('tripParentAnimes');
+
+  const travelogueChildren = children.filter(c =>
+    (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0)
+  );
+  if (traveloguesWrap && traveloguesEl) {
+    if (travelogueChildren.length > 0) {
+      traveloguesEl.innerHTML = '';
+      travelogueChildren.forEach(c => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-travelogue btn-sm trip-parent-detail-travelogue-btn';
+        const tName = c.name || '（無題）';
+        btn.textContent = '📖 ' + tName.slice(0, 8);
+        btn.title = tName;
+        btn.onclick = () => showTravelogueModal(c);
+        traveloguesEl.appendChild(btn);
+      });
+      traveloguesWrap.style.display = '';
+    } else {
+      traveloguesWrap.style.display = 'none';
+    }
+  }
+
+  const videoChildren = children.filter(c => getTripVideoUrlsForTrip(c).length > 0);
+  if (videosWrap && videosEl) {
+    if (videoChildren.length > 0) {
+      videosEl.innerHTML = '';
+      videoChildren.forEach(c => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-primary btn-sm trip-parent-detail-video-btn';
+        const vName = c.name || '（無題）';
+        btn.textContent = '🎬 ' + vName.slice(0, 5);
+        btn.title = vName;
+        btn.onclick = () => playVideoSequence(getTripVideoUrlsForTrip(c));
+        videosEl.appendChild(btn);
+      });
+      videosWrap.style.display = '';
+    } else {
+      videosWrap.style.display = 'none';
+    }
+  }
+
+  const animeChildren = children.filter(c => {
+    const animes = c.generatedAnimes || c.animes || [];
+    return animes.length > 0;
+  });
+  if (animesWrap && animesEl) {
+    if (animeChildren.length > 0) {
+      animesEl.innerHTML = '';
+      animeChildren.forEach(c => {
+        const animes = c.generatedAnimes || c.animes || [];
+        const item = document.createElement('div');
+        item.className = 'trip-parent-detail-anime-row';
+        const label = document.createElement('span');
+        label.className = 'trip-parent-detail-anime-label';
+        label.textContent = c.name || '（無題）';
+        label.onclick = async () => { await loadTripById(c.id); };
+        item.appendChild(label);
+        const thumbs = document.createElement('div');
+        thumbs.className = 'trip-parent-detail-anime-thumbs';
+        animes.forEach((anime) => {
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = anime.style || '';
+          img.title = c.name ? `${c.name} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+          img.onclick = (e) => {
+            e.stopPropagation();
+            const list = c.generatedAnimes || c.animes || [];
+            const idx = list.findIndex(a => a.url === anime.url);
+            showAnimeImageViewer(list, idx >= 0 ? idx : 0, c.name);
+          };
+          thumbs.appendChild(img);
+        });
+        item.appendChild(thumbs);
+        animesEl.appendChild(item);
+      });
+      animesWrap.style.display = '';
+    } else {
+      animesWrap.style.display = 'none';
+    }
+  }
+  } catch (err) {
+    console.error('親トリップ子一覧表示エラー:', err);
+  }
 }
 
 async function addChildTripUnder(parentId) {
@@ -5033,6 +5441,52 @@ function getSelectedAnimeStyle() {
   return (select && select.value) || 'chikyu-cover';
 }
 
+/** 旅行記を4分割し、指定ページ(1-4)の内容を取得。5コマ用に5セグメントに分割して返す */
+function getTravelogueContentForPagePanels(trip, pageIndex) {
+  const pageIndex0 = Math.max(0, Math.min(pageIndex - 1, 3)); // 1-4 → 0-3
+  let fullText = '';
+  let html = trip.travelogueHtml && trip.travelogueHtml.trim();
+  if (!html && trip.travelogueHistory?.length > 0) {
+    const sorted = [...trip.travelogueHistory].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const latest = sorted[0];
+    if (latest?.html) html = latest.html;
+  }
+  if (html) {
+    const sections = parseTravelogueSections(html);
+    fullText = sections.map(s => (s.title ? `【${s.title}】` : '') + s.text).join('\n\n');
+  }
+  if (!fullText.trim()) {
+    const parts = [];
+    if (trip.description) parts.push(trip.description);
+    const photos = trip.photos || [];
+    photos.forEach(p => {
+      if (p.placeName) parts.push(`${p.placeName}`);
+      if (p.name) parts.push(p.name);
+      if (p.description) parts.push(p.description);
+    });
+    fullText = parts.join('。').replace(/\s+/g, ' ') || trip.name || '旅行の思い出';
+  }
+  fullText = fullText.replace(/\s+/g, ' ').trim();
+  if (!fullText) return [];
+
+  const len = fullText.length;
+  const quarterLen = Math.ceil(len / 4);
+  const start = pageIndex0 * quarterLen;
+  const end = Math.min(start + quarterLen, len);
+  const quarterText = fullText.slice(start, end);
+  if (!quarterText.trim()) return [];
+
+  const segLen = Math.ceil(quarterText.length / 5);
+  const segments = [];
+  for (let i = 0; i < 5; i++) {
+    const s = i * segLen;
+    const e = Math.min(s + segLen, quarterText.length);
+    const seg = quarterText.slice(s, e).trim();
+    if (seg) segments.push(seg);
+  }
+  return segments;
+}
+
 function showAnimeLoading(visible, text = '生成中...') {
   const el = document.getElementById('animeLoading');
   const textEl = document.getElementById('animeLoadingText');
@@ -5239,16 +5693,70 @@ async function showAnimeModal() {
 
   const styleId = getSelectedAnimeStyle();
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
+  const isPageStyle = ['page1', 'page2', 'page3', 'page4'].includes(styleId);
 
   try {
     if (btn) btn.textContent = '画像生成中...';
     setStatus('アニメ画像を生成中...');
 
-    // トリップ名から代表的な地域名を抽出してタイトルを生成
+    const charImg = await getCharacterImageForGeneration();
+
+    // 個別ページ1/4〜4/4: 5コマアニメを生成
+    if (isPageStyle) {
+      const pageNum = parseInt(styleId.replace('page', ''), 10);
+      const segments = getTravelogueContentForPagePanels(trip, pageNum);
+      if (segments.length === 0) {
+        alert('旅行記または写真・説明がありません。まず旅行記を生成するか、写真に説明を追加してください。');
+        return;
+      }
+      if (btn) btn.textContent = `5コマ生成中 (1/${segments.length})...`;
+      const generatedAnimesToAdd = [];
+      for (let i = 0; i < segments.length; i++) {
+        setStatus(`5コマアニメ生成中 ${i + 1}/${segments.length}...`);
+        if (btn) btn.textContent = `5コマ生成中 (${i + 1}/${segments.length})...`;
+
+        const panelPrompt = [
+          'Create a single manga/comic panel in Chikyu no Arukikata (地球の歩き方) travel guide style.',
+          'Soft, warm illustration. 旅のスポット（観光地・名所旧跡）をキャラクターのセリフで説明する形式。',
+          '',
+          '【Style】地球の歩き方風 - ソフトなタッチ、親しみやすい旅行ガイドのイラスト。吹き出し付きマンガコマ。',
+          `【コマ ${i + 1}/5 の内容】${segments[i].slice(0, 400)}`,
+          '',
+          '【必須】',
+          '- キャラクターを主役に、その場のスポット・名所・景色を吹き出しのセリフで説明する。',
+          '- 背景に観光スポット、名所旧跡、風景を描く。',
+          '- 縦または正方形の単一コマ。吹き出し以外の文字は入れない。',
+          '- 柔らかい色調、読みやすい構図。実写感は残さずアニメ調。',
+          ''
+        ].join('\n');
+
+        const generatedDataUrl = await generateImageWithAI(panelPrompt, charImg, animeCfg);
+        if (generatedDataUrl) {
+          const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl);
+          generatedAnimesToAdd.push({
+            url: storageUrl,
+            timestamp: Date.now(),
+            style: `${styleId}-panel${i + 1}`
+          });
+        }
+      }
+
+      if (generatedAnimesToAdd.length > 0) {
+        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
+        currentTrip.generatedAnimes.push(...generatedAnimesToAdd);
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+        setStatus(`${generatedAnimesToAdd.length}コマのアニメを生成しました`);
+      } else {
+        alert('5コマアニメの生成に失敗しました。APIキーと旅行記の内容を確認してください。');
+      }
+      return;
+    }
+
+    // 表紙系スタイル: 単一画像を生成
     const tripName = trip.name || '旅行';
     let coverTitle = tripName;
 
-    // トリップ名から地域を抽出（例：「しまなみ海道サイクリング」→「しまなみ」）
     const regionPatterns = [
       /([ぁ-ん一-龥]{2,})(海道|街道|地方|エリア|地区)/,
       /([ぁ-ん一-龥]{2,})(旅行|観光|めぐり|巡り)/,
@@ -5263,16 +5771,13 @@ async function showAnimeModal() {
       }
     }
 
-    // パターンにマッチしない場合は最初の訪問地を使用
     const photos = trip.photos || [];
     const places = [...new Set(photos.filter(p => p.placeName).map(p => p.placeName))];
     if (coverTitle === tripName && places.length > 0) {
-      // 市町村名や観光地名を抽出（「〇〇市」「〇〇町」などを除去）
       const mainPlace = places[0].replace(/(市|町|村|区|県|府|道).*/, '');
       coverTitle = `${mainPlace}の歩き方`;
     }
 
-    // トリップの全情報を収集
     const promptParts = [
       style.prompt,
       `画像内に「${coverTitle}」というタイトルを大きく、読みやすく配置してください。`,
@@ -5281,8 +5786,7 @@ async function showAnimeModal() {
       `【旅行名】${tripName}`,
     ];
 
-    // キャラクター画像がある場合はプロンプトに追加
-    if (characterImageData) {
+    if (charImg) {
       promptParts.push('【メインキャラクター】アップロードされた人物の特徴（顔立ち、髪型、表情など）を保ちながら、優しく親しみやすいタッチのアニメキャラクターに変換してください。柔らかな線、温かみのある色彩、穏やかな表情で描いてください。このキャラクターを旅の主人公として、選択されたテーマスタイルに完全に合わせ、背景や他の要素と統一された画風で描いてください。写真のような実写感は残さず、全体が一つのアニメ作品として調和するように仕上げてください。');
     }
 
@@ -5294,7 +5798,6 @@ async function showAnimeModal() {
       promptParts.push('【ブログ】旅の詳細記録あり');
     }
 
-    // 写真情報を収集
     if (photos.length > 0) {
       if (places.length > 0) {
         promptParts.push(`【訪問地】${places.slice(0, 8).join('、')}`);
@@ -5312,7 +5815,6 @@ async function showAnimeModal() {
       }
     }
 
-    // 旅行記がある場合はサマリーを追加
     if (trip.travelogueHtml && trip.travelogueHtml.trim()) {
       const sections = parseTravelogueSections(trip.travelogueHtml);
       const summary = sections.map(s => s.text).join(' ').slice(0, 300);
@@ -5323,12 +5825,12 @@ async function showAnimeModal() {
 
     promptParts.push('');
     promptParts.push(`この旅行の魅力が一目で伝わる、「${coverTitle}」というタイトルの魅力的な表紙画像を作成してください。`);
-    if (characterImageData) {
+    if (charImg) {
       promptParts.push('人物は完全にアニメキャラクターとして描き直し、表紙全体が統一されたアニメ作品の一部として自然に調和するように仕上げてください。実写的な要素は一切残さないでください。');
     }
 
     const prompt = promptParts.join('\n');
-    const generatedDataUrl = await generateImageWithAI(prompt, characterImageData, animeCfg);
+    const generatedDataUrl = await generateImageWithAI(prompt, charImg, animeCfg);
 
     if (generatedDataUrl) {
       try {
@@ -5503,6 +6005,54 @@ function closeAnimeModal() {
   document.getElementById('animeModal').classList.remove('open');
   const btn = document.getElementById('animePlayBtn');
   if (btn) btn.textContent = '再生';
+}
+
+let animeImageViewerList = [];
+let animeImageViewerIndex = 0;
+
+function showAnimeImageViewer(animeList, startIndex = 0, tripName = '') {
+  if (!animeList || animeList.length === 0) return;
+  animeImageViewerList = animeList;
+  animeImageViewerIndex = Math.max(0, Math.min(startIndex, animeList.length - 1));
+  const modal = document.getElementById('animeImageViewerModal');
+  const imgEl = document.getElementById('animeImageViewerImage');
+  const counterEl = document.getElementById('animeImageViewerCounter');
+  const titleEl = document.getElementById('animeImageViewerTitle');
+  const prevBtn = document.getElementById('animeImageViewerPrev');
+  const nextBtn = document.getElementById('animeImageViewerNext');
+  if (!modal || !imgEl) return;
+  if (titleEl) titleEl.textContent = tripName ? `${tripName} - アニメ画像` : 'アニメ画像';
+  imgEl.src = animeImageViewerList[animeImageViewerIndex].url;
+  const showNav = animeImageViewerList.length > 1;
+  if (counterEl) {
+    counterEl.textContent = showNav ? `${animeImageViewerIndex + 1} / ${animeImageViewerList.length}` : '';
+    counterEl.style.display = showNav ? '' : 'none';
+  }
+  if (prevBtn) prevBtn.style.display = showNav ? '' : 'none';
+  if (nextBtn) nextBtn.style.display = showNav ? '' : 'none';
+  modal.classList.add('open');
+}
+
+function closeAnimeImageViewer() {
+  document.getElementById('animeImageViewerModal')?.classList.remove('open');
+}
+
+function animeImageViewerPrev() {
+  if (animeImageViewerList.length <= 1) return;
+  animeImageViewerIndex = (animeImageViewerIndex - 1 + animeImageViewerList.length) % animeImageViewerList.length;
+  const imgEl = document.getElementById('animeImageViewerImage');
+  const counterEl = document.getElementById('animeImageViewerCounter');
+  if (imgEl) imgEl.src = animeImageViewerList[animeImageViewerIndex].url;
+  if (counterEl) counterEl.textContent = `${animeImageViewerIndex + 1} / ${animeImageViewerList.length}`;
+}
+
+function animeImageViewerNext() {
+  if (animeImageViewerList.length <= 1) return;
+  animeImageViewerIndex = (animeImageViewerIndex + 1) % animeImageViewerList.length;
+  const imgEl = document.getElementById('animeImageViewerImage');
+  const counterEl = document.getElementById('animeImageViewerCounter');
+  if (imgEl) imgEl.src = animeImageViewerList[animeImageViewerIndex].url;
+  if (counterEl) counterEl.textContent = `${animeImageViewerIndex + 1} / ${animeImageViewerList.length}`;
 }
 
 function closeVideoOverlay() {
@@ -6271,6 +6821,15 @@ function initEventListeners() {
   if (animePlayBtn) animePlayBtn.onclick = () => toggleAnimePlay();
   if (animeModal) animeModal.onclick = (e) => { if (e.target === animeModal) closeAnimeModal(); };
 
+  const animeImageViewerModal = document.getElementById('animeImageViewerModal');
+  const animeImageViewerClose = document.getElementById('animeImageViewerClose');
+  const animeViewerPrevBtn = document.getElementById('animeImageViewerPrev');
+  const animeViewerNextBtn = document.getElementById('animeImageViewerNext');
+  if (animeImageViewerClose) animeImageViewerClose.onclick = closeAnimeImageViewer;
+  if (animeViewerPrevBtn) animeViewerPrevBtn.onclick = animeImageViewerPrev;
+  if (animeViewerNextBtn) animeViewerNextBtn.onclick = animeImageViewerNext;
+  if (animeImageViewerModal) animeImageViewerModal.onclick = (e) => { if (e.target === animeImageViewerModal) closeAnimeImageViewer(); };
+
   // キャラクター画像アップロード
   const uploadCharacterBtn = document.getElementById('uploadCharacterBtn');
   const characterImageInput = document.getElementById('characterImageInput');
@@ -6284,35 +6843,60 @@ function initEventListeners() {
       const file = e.target.files?.[0];
       if (!file) return;
 
-      try {
-        // 画像をBase64に変換
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const base64Data = event.target.result;
-          characterImageData = base64Data;
-
-          // プレビュー表示
-          if (characterPreviewImg && characterPreview) {
-            characterPreviewImg.src = base64Data;
-            characterPreview.style.display = 'flex';
-          }
-
-          setStatus('キャラクター画像を設定しました');
-        };
-        reader.readAsDataURL(file);
-      } catch (err) {
-        console.error('キャラクター画像読み込みエラー:', err);
-        alert('画像の読み込みに失敗しました');
+      if (!currentTrip || currentTrip.isParent) {
+        alert('子トリップを選択してからキャラクターをアップロードしてください');
+        return;
       }
+
+      try {
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (event) => resolve(event.target.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        setStatus('キャラクター画像を保存中...');
+        const url = await uploadCharacterImageToStorage(currentTrip.id, base64Data);
+        currentTrip.characterImageUrl = url;
+        characterImageData = base64Data;
+
+        if (characterPreviewImg && characterPreview) {
+          characterPreviewImg.src = base64Data;
+          characterPreview.style.display = 'flex';
+        }
+        await saveCharacterToTrip(currentTrip.id, url);
+        setStatus('キャラクター画像をこのトリップに保存しました');
+      } catch (err) {
+        console.error('キャラクター画像アップロードエラー:', err);
+        const msg = err?.message || String(err);
+        if (msg.includes('Photos or GPX required')) {
+          alert('トリップに写真またはGPXを追加してからキャラクターをアップロードしてください。');
+        } else if (msg.includes('Storage not ready')) {
+          alert('ストレージの準備ができていません。ログインしているか確認してください。');
+        } else {
+          alert('キャラクター画像のアップロードに失敗しました: ' + msg);
+        }
+      }
+      characterImageInput.value = '';
     };
   }
 
   if (removeCharacterBtn && characterPreview) {
-    removeCharacterBtn.onclick = () => {
+    removeCharacterBtn.onclick = async () => {
+      if (!currentTrip || currentTrip.isParent) return;
+      const tripId = currentTrip.id;
+      currentTrip.characterImageUrl = null;
       characterImageData = null;
       characterPreview.style.display = 'none';
       if (characterImageInput) characterImageInput.value = '';
-      setStatus('キャラクター画像を削除しました');
+      try {
+        await saveCharacterToTrip(tripId, null);
+        setStatus('キャラクター画像を削除しました');
+      } catch (err) {
+        console.error('キャラ削除エラー:', err);
+        alert('削除の保存に失敗しました: ' + (err?.message || err));
+      }
     };
   }
 

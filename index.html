@@ -120,6 +120,18 @@
           <label class="menu-label">アニメ画像</label>
           <div id="viewerAnimesList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;"></div>
         </div>
+        <div class="menu-field" id="viewerChildTraveloguesWrap" style="display:none;">
+          <label class="menu-label">旅行記一覧</label>
+          <div class="viewer-child-list" id="viewerChildTravelogues"></div>
+        </div>
+        <div class="menu-field" id="viewerChildVideosWrap" style="display:none;">
+          <label class="menu-label">動画一覧</label>
+          <div class="viewer-child-list" id="viewerChildVideos"></div>
+        </div>
+        <div class="menu-field" id="viewerChildAnimesWrap" style="display:none;">
+          <label class="menu-label">アニメ一覧</label>
+          <div class="viewer-child-animes" id="viewerChildAnimes"></div>
+        </div>
         <div class="menu-field" id="viewerChildTripsWrap" style="display:none;">
           <label class="menu-label">子トリップ</label>
           <div class="viewer-child-trips" id="viewerChildTrips"></div>
@@ -156,6 +168,20 @@
           </select>
         </div>
         <div class="menu-field" id="tripParentChildrenWrap" style="display:none">
+          <div class="trip-parent-detail-lists" id="tripParentDetailLists">
+            <div class="trip-parent-detail-item" id="tripParentTraveloguesWrap" style="display:none;">
+              <label class="menu-label">旅行記一覧</label>
+              <div class="trip-parent-detail-list" id="tripParentTravelogues"></div>
+            </div>
+            <div class="trip-parent-detail-item" id="tripParentVideosWrap" style="display:none;">
+              <label class="menu-label">動画一覧</label>
+              <div class="trip-parent-detail-list" id="tripParentVideos"></div>
+            </div>
+            <div class="trip-parent-detail-item" id="tripParentAnimesWrap" style="display:none;">
+              <label class="menu-label">アニメ一覧</label>
+              <div class="trip-parent-detail-animes" id="tripParentAnimes"></div>
+            </div>
+          </div>
           <label class="trip-children-label">子トリップ</label>
           <div class="trip-children-list" id="tripParentChildrenList"></div>
           <button type="button" class="btn btn-secondary btn-sm" id="addChildTripBtn">＋ 子トリップを追加</button>
@@ -279,6 +305,23 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="animeImageViewerModal">
+    <div class="modal modal-anime-viewer">
+      <div class="modal-header">
+        <h2 id="animeImageViewerTitle">アニメ画像</h2>
+        <span class="anime-viewer-counter" id="animeImageViewerCounter"></span>
+        <div class="modal-header-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="animeImageViewerPrev">前へ</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="animeImageViewerNext">次へ</button>
+          <button type="button" class="modal-close" id="animeImageViewerClose">&times;</button>
+        </div>
+      </div>
+      <div class="anime-viewer-body">
+        <img id="animeImageViewerImage" alt="アニメ画像" class="anime-viewer-display-img">
       </div>
     </div>
   </div>
