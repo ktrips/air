@@ -1999,8 +1999,8 @@ async function updateMapMarkers() {
       });
     }
 
-    // 親トリップ表示時: 各子トリップの旅行記・動画ボタンをGPSから少し離し、引き出し線で表示
-    if (currentTrip?.isParent && trip.parentId === currentTrip.id) {
+    // 親トリップ表示時: 各子トリップの旅行記・動画ボタンをGPSから少し離し、引き出し線で表示（デスクトップのみ）
+    if (currentTrip?.isParent && trip.parentId === currentTrip.id && !isMobileView()) {
       const hasTravelogue = (trip.travelogueHtml && trip.travelogueHtml.trim()) || trip.travelogueUrl || (trip.travelogueHistory?.length > 0);
       const hasVideo = getTripVideoUrlsForTrip(trip).length > 0;
       if (hasTravelogue || hasVideo) {
@@ -2019,9 +2019,9 @@ async function updateMapMarkers() {
           }
         }
         if (anchorLat != null && anchorLng != null) {
-          const offsetDeg = 0.005;
-          const minCardDist = 0.004;
-          const minRouteDist = 0.0025;
+          const offsetDeg = 0.015;
+          const minCardDist = 0.018;
+          const minRouteDist = 0.01;
 
           const dist = (a, b) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
           const distToSegment = (p, a, b) => {
@@ -2067,8 +2067,8 @@ async function updateMapMarkers() {
             }
           }
           if (cardLat == null) {
-            cardLat = anchorLat + 0.006;
-            cardLng = anchorLng + 0.006;
+            cardLat = anchorLat + 0.02;
+            cardLng = anchorLng + 0.02;
           }
           placedTripCards.push([cardLat, cardLng]);
           if (pts.length >= 2) routePolylines.push(pts);
@@ -4037,7 +4037,7 @@ function renderTripList() {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'btn btn-travelogue btn-xs trip-detail-parent-btn';
-            const tName = (c.name || '（無題）').replace(/\s/g, '').slice(0, 9);
+            const tName = (c.name || '（無題）').replace(/\s/g, '').slice(0, 8);
             btn.textContent = '📖 ' + tName;
             btn.title = c.name || '（無題）';
             btn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(c); };
