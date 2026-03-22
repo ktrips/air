@@ -53,7 +53,7 @@ function getAppTitle() {
   const host = window.location.hostname || '';
   if (/^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$/.test(host)) return 'Air.Jp';
   if (/^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) return 'Air.Global';
-  if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) return 'Ohenro';
+  if (/^ohenro\.ktrips\.net$/.test(host)) return 'Ohenro';
   return 'Air';
 }
 
@@ -1336,9 +1336,10 @@ function updateViewerSection() {
     }
   }
 
-  // 旅行記ボタン
+  // 旅行記ボタン（直近の旅行記があれば表示: travelogueUrl/Html または履歴の最新）
   if (travelogueBtn) {
-    const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
+    const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
+      (currentTrip.travelogueHistory?.length > 0);
     travelogueBtn.style.display = hasTravelogue ? '' : 'none';
   }
 
@@ -3271,9 +3272,24 @@ async function saveTrip(opts = {}) {
     }
     setStatus('保存しました');
     closeMenu();
+    const travelogueBeforeReload = {
+      travelogueUrl: currentTrip.travelogueUrl,
+      travelogueHistory: currentTrip.travelogueHistory,
+      travelogueGeneratedAt: currentTrip.travelogueGeneratedAt
+    };
     await loadMyTrips();
     const saved = myTrips.find(t => t.id === currentTrip.id);
-    if (saved) currentTrip = { ...saved, id: saved.id };
+    if (saved) {
+      currentTrip = { ...saved, id: saved.id };
+      // Firestoreのクエリが遅延する場合、直近保存した旅行記データを優先して保持
+      const savedHasTravelogue = saved.travelogueUrl || (saved.travelogueHistory?.length > 0);
+      const beforeHadTravelogue = travelogueBeforeReload.travelogueUrl || (travelogueBeforeReload.travelogueHistory?.length > 0);
+      if (!savedHasTravelogue && beforeHadTravelogue) {
+        currentTrip.travelogueUrl = travelogueBeforeReload.travelogueUrl;
+        currentTrip.travelogueHistory = travelogueBeforeReload.travelogueHistory;
+        currentTrip.travelogueGeneratedAt = travelogueBeforeReload.travelogueGeneratedAt;
+      }
+    }
     renderThumbnails();
     await updateMapMarkers();
     renderTripDetailPane();
@@ -3593,11 +3609,13 @@ function renderTripList() {
       }
       const hasLandmarks = (t.photos || []).some(p => p.landmarkNo);
       const hasVideos = getTripVideoUrlsForTrip(t).length > 0;
+      const hasTravelogue = (t.travelogueHtml && t.travelogueHtml.trim()) || t.travelogueUrl ||
+        (t.travelogueHistory?.length > 0);
       // ブログボタンは表示しない（説明にリンクをつけるため）
-      if (hasVideos || (t.travelogueHtml && t.travelogueHtml.trim()) || hasLandmarks) {
+      if (hasVideos || hasTravelogue || hasLandmarks) {
         html += '<div class="trip-detail-btns">';
         if (hasVideos) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">動画</button>`;
-        if (t.travelogueHtml && t.travelogueHtml.trim()) html += `<button type="button" class="btn btn-secondary btn-xs trip-detail-btn trip-detail-travelogue-btn">旅行記</button>`;
+        if (hasTravelogue) html += `<button type="button" class="btn btn-secondary btn-xs trip-detail-btn trip-detail-travelogue-btn">旅行記</button>`;
         if (hasLandmarks) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">スタンプ</button>`;
         html += '</div>';
       }
@@ -3615,7 +3633,7 @@ function renderTripList() {
         btn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(t)); };
       });
       detail.querySelectorAll('.trip-detail-travelogue-btn').forEach(btn => {
-        btn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(); };
+        btn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(t); };
       });
       detail.querySelectorAll('.trip-detail-stamp-rally-btn').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); showStampRallyModal(t); };
@@ -4391,34 +4409,44 @@ async function generateTravelogueWithAI() {
   const context = parts.join('\n');
   const tripColor = trip.color || '#e1306c';
 
-  // アニメ画像があれば取得（全ての画像をサマリーの後に表示）
+  // アニメ画像があれば取得（表紙用に1枚目を使用）
   const animeImages = trip.generatedAnimes && trip.generatedAnimes.length > 0 ? trip.generatedAnimes : [];
-  let animeImagesHtml = '';
-  if (animeImages.length > 0) {
-    animeImagesHtml = '<div style="text-align:center;margin:2rem 0;display:flex;gap:1rem;flex-wrap:wrap;justify-content:center;">';
-    animeImages.forEach(anime => {
-      animeImagesHtml += `<img src="${anime.url}" alt="AI生成画像" style="max-width:300px;width:100%;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);"/>`;
-    });
-    animeImagesHtml += '</div>';
+  const animeCoverUrl = animeImages.length > 0 ? animeImages[0].url : null;
+  let animeCoverHtml = '';
+  if (animeCoverUrl) {
+    animeCoverHtml = `<img src="${animeCoverUrl}" alt="旅行記の表紙" style="width:100%;max-width:400px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:block;"/>`;
   }
 
-  const hasAnimeImages = animeImagesHtml ? true : false;
+  const hasAnimeCover = !!animeCoverHtml;
 
   const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
 
-${parentTripInfo ? `【重要】この旅行記は「${parentTripInfo.name}」${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部です。旅行記全体で、この大きな旅の一環であることを意識して記述してください。例えば、親トリップが「ロードバイクでの自転車旅」なら、この子トリップも自転車旅の一区間として描写してください。` : ''}
+${parentTripInfo ? `【重要】この旅行記は「${parentTripInfo.name}」${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部です。親トリップの説明を参照するのはマイルストーン（ランドマーク）の写真のみにしてください。ランドマークでない写真では親の説明を参照しないでください。` : ''}
 
 出力形式（HTML）:
 
 1. 最初に旅の表題を魅力的に表記:
 <h2 class="travelogue-title">トリップ名とトリップ説明${parentTripInfo ? '、そして親トリップの情報' : ''}を元に、旅の魅力を表す表題を生成（例：「瀬戸内の風を感じる しまなみ海道サイクリング紀行」「古都を巡る 京都・奈良の寺社仏閣めぐり」など）${parentTripInfo ? '。親トリップの一部であることを表題に反映させてください。' : ''}</h2>
 
-2. 次にサマリーを250字程度で記述:
+2. 最初のセクション${hasAnimeCover ? '（アニメ表紙・要約・地図）' : ''}:
+${hasAnimeCover ? `アニメ画像の表紙と250字の旅の要約を横並びで配置し、その下にGPSルート地図用のコンテナを配置してください。
+<div class="travelogue-summary" style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;margin:2rem 0;">
+  <div style="flex:0 0 auto;min-width:200px;">
+${animeCoverHtml}
+  </div>
+  <div style="flex:1;min-width:250px;">
+    <p>旅の要約を250字程度で記述（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
+  </div>
+</div>
+<div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
+
+3` : `サマリーを250字程度で記述:
 <div class="travelogue-summary">
   <p>旅行のサマリー250字程度（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
 </div>
+<div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
 
-${animeImagesHtml ? `3. サマリーの後にAI生成の画像を表示:\n${animeImagesHtml}\n\n4` : '3'}. ランドマーク毎にセクション分けして記述:
+3`}. 各マイルストーン（ランドマーク）毎にセクション分けして旅行記を記述（マイルストーンの写真のみ、親トリップの説明を参照して旅の流れを反映可）:
 
 <div class="travelogue-landmark-section">
   <h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍 ランドマーク番号: ポイント名</h3>
@@ -4432,7 +4460,7 @@ ${animeImagesHtml ? `3. サマリーの後にAI生成の画像を表示:\n${anim
         <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;line-height:1.4;">[ポイント説明をここに記載]</div>
       </div>
       <div style="flex:1;min-width:250px;">
-        <p>100字程度の旅の情景（その場所での体験、見た景色、感じた雰囲気などを具体的に描写してください${parentTripInfo && parentTripInfo.description ? `。${parentTripInfo.description}の一環として、その移動手段や旅のスタイルを反映してください` : ''}）</p>
+        <p>100字程度の旅の情景（その場所での体験、見た景色、感じた雰囲気を、旅行記全体の流れを踏まえて描写。同じ表現の繰り返しを避け、各写真ごとに固有の描写を）</p>
       </div>
     </div>
   </div>
@@ -4446,9 +4474,9 @@ ${animeImagesHtml ? `3. サマリーの後にAI生成の画像を表示:\n${anim
   ※「（Wikipediaのtitleフィールドの値）について」の部分には、実際に取得したWikipedia記事のタイトルを使用してください（例：「観音寺について」「しまなみ海道について」など）
 </div>
 
-${animeImagesHtml ? '5' : '4'}. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）
+4. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）。※ランドマークでない写真では親トリップの説明は参照しないでください
 
-${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
+5. ランドマークがある場合、必ず最後に御朱印帳風のスタンプ一覧を表示してください:
 
 <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
   <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
@@ -4485,6 +4513,8 @@ ${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後
 - 写真の左上にポイント名をオーバーレイで配置
 - 写真の下部に[ポイント説明]をオーバーレイで配置（ブラケット付きで表示）
 - 写真の右側には100字程度の旅の情景を記述（その場所での体験、見た景色、感じた雰囲気など）
+- ⚠️旅行記全体を通して「ロードバイク」「お遍路」などの同じ言葉を繰り返さないでください。各写真ごとにその場面に特化した固有の説明を書き、同じフレーズの重複を避けてください
+- 親トリップの説明を参照するのはマイルストーン（ランドマーク）の写真のみ。ランドマークでない写真では参照しないでください
 - 写真毎のセクション分けは不要です（ランドマーク毎のみ）
 - Wikipedia情報は同じ内容を重複して書かないでください（ランドマークごとに1回のみ）
 - Wikipedia情報のタイトルは、実際に参照した地域名や観光名所の名前を使用してください（例：「観音寺について」「しまなみ海道について」など）
@@ -4607,6 +4637,7 @@ ${animeImagesHtml ? '6' : '5'}. ランドマークがある場合、必ず最後
     updateCoverPreview();
     updateTravelogueActionButtons();
     updateTravelogueHistoryLinks();
+    updateViewerSection();
     showTravelogueModal();
   } catch (err) {
     console.error('旅行記生成エラー:', err);
@@ -4722,19 +4753,36 @@ async function initTravelogueMap(trip) {
   }
 }
 
-async function showTravelogueModal() {
+async function showTravelogueModal(trip) {
   const modal = document.getElementById('travelogueModal');
   const content = document.getElementById('travelogueContent');
   const mapWrap = document.getElementById('travelogueMap');
   const modalTitle = document.querySelector('#travelogueModal .modal-blog-title');
   if (!modal || !content) return;
 
-  let html = currentTrip?.travelogueHtml;
+  const t = trip || currentTrip;
+  if (!t) return;
+
+  let html = t.travelogueHtml;
+  let travelogueUrl = t.travelogueUrl;
+
+  // 履歴があれば直近（最新タイムスタンプ）の旅行記を優先表示（3/21 21:22 のような直近生成を参照）
+  if (t.travelogueHistory?.length > 0) {
+    const sorted = [...t.travelogueHistory].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const latest = sorted[0];
+    if (latest?.url) {
+      travelogueUrl = latest.url;
+      html = null; // URL から取得するためクリア
+    } else if (latest?.html) {
+      html = latest.html;
+      travelogueUrl = null;
+    }
+  }
 
   // travelogueUrlがある場合はStorageから取得
-  if (!html && currentTrip?.travelogueUrl) {
+  if (!html && travelogueUrl) {
     try {
-      const response = await fetch(currentTrip.travelogueUrl);
+      const response = await fetch(travelogueUrl);
       html = await response.text();
     } catch (err) {
       console.error('旅行記の取得エラー:', err);
@@ -4752,24 +4800,25 @@ async function showTravelogueModal() {
     if (titleMatch && modalTitle) {
       modalTitle.textContent = titleMatch[1].replace(/<[^>]+>/g, ''); // HTMLタグを除去
     } else if (modalTitle) {
-      modalTitle.textContent = currentTrip?.name || '旅行記';
+      modalTitle.textContent = t?.name || '旅行記';
     }
 
-    // HTMLを挿入し、地図プレースホルダーを追加
-    // 古い旅行記との互換性のため、古い表記を変換
+    // HTMLを挿入（古い旅行記との互換性のため、古い表記を変換）
     let processedHtml = html.replace(/詳しい情報/g, '知っ得情報');
 
-    // サマリーセクションの後に地図プレースホルダーを挿入
-    const summaryEnd = processedHtml.indexOf('</div>', processedHtml.indexOf('class="travelogue-summary"'));
-    if (summaryEnd !== -1) {
-      const insertPos = summaryEnd + '</div>'.length;
-      const mapPlaceholder = '\n<div id="travelogueMapPlaceholder"></div>\n';
-      processedHtml = processedHtml.slice(0, insertPos) + mapPlaceholder + processedHtml.slice(insertPos);
+    // travelogue-map-containerが無い古い旅行記の場合のみ、サマリー後に地図プレースホルダーを挿入
+    if (!processedHtml.includes('id="travelogue-map-container"')) {
+      const summaryEnd = processedHtml.indexOf('</div>', processedHtml.indexOf('class="travelogue-summary"'));
+      if (summaryEnd !== -1) {
+        const insertPos = summaryEnd + '</div>'.length;
+        const mapPlaceholder = '\n<div id="travelogueMapPlaceholder"></div>\n';
+        processedHtml = processedHtml.slice(0, insertPos) + mapPlaceholder + processedHtml.slice(insertPos);
+      }
     }
 
     content.innerHTML = processedHtml;
 
-    if (currentTrip && (currentTrip.photos?.length || currentTrip.gpxData || currentTrip.gpxDataUrl)) {
+    if (t && (t.photos?.length || t.gpxData || t.gpxDataUrl)) {
       // 新しいtravelogue-map-containerがある場合はそれを使用
       const mapContainer = document.getElementById('travelogue-map-container');
       if (mapContainer) {
@@ -4778,7 +4827,7 @@ async function showTravelogueModal() {
           mapWrap.style.display = 'block';
           mapContainer.appendChild(mapWrap);
         }
-        setTimeout(() => initTravelogueMap(currentTrip), 100);
+        setTimeout(() => initTravelogueMap(t), 100);
       } else {
         // 古い形式：プレースホルダーを使用
         if (mapWrap) {
@@ -4789,7 +4838,7 @@ async function showTravelogueModal() {
             placeholder.remove();
           }
         }
-        setTimeout(() => initTravelogueMap(currentTrip), 100);
+        setTimeout(() => initTravelogueMap(t), 100);
       }
     } else if (mapWrap) {
       mapWrap.style.display = 'none';
@@ -5129,23 +5178,32 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
       throw new Error('Timeout');
     }
     if (provider === 'gemini') {
-      // Imagen 3.0 Fast Generate (リーズナブルで高速)
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-fast-generate-001:generateImages?key=${encodeURIComponent(cfg.apiKey)}`, {
+      // gemini-3.1-flash-image-preview (generateContent) を使用
+      // Imagen API はブラウザから CORS でブロックされるため、generateContent を使用
+      const parts = [];
+      if (imageUrl && imageUrl.startsWith('data:')) {
+        const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          parts.push({ inlineData: { mimeType: matches[1], data: matches[2] } });
+        }
+      }
+      parts.push({ text: prompt });
+
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: prompt,
-          numberOfImages: 1,
-          aspectRatio: "1:1"
+          contents: [{ parts }],
+          generationConfig: { temperature: 1.0, topK: 40, topP: 0.95 }
         })
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
 
-      // Imagen 3.0のレスポンス形式
-      const imageData = data.generatedImages?.[0]?.bytesBase64Encoded;
-      if (imageData) {
-        return 'data:image/png;base64,' + imageData;
+      const imagePart = data.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+      if (imagePart?.inlineData?.data) {
+        const mimeType = imagePart.inlineData.mimeType || 'image/jpeg';
+        return `data:${mimeType};base64,${imagePart.inlineData.data}`;
       }
       return null;
     }
@@ -5164,7 +5222,7 @@ async function showAnimeModal() {
   }
 
   const cfg = cachedAiConfig ?? (await loadUserAiConfig());
-  const apiKey = cfg?.travelogueApiKey?.trim();
+  const apiKey = cfg?.apiKey?.trim();
   if (!apiKey) {
     alert('AIアニメ生成にはGemini APIキーが必要です。AI設定でAPIキーを入力してください。');
     return;
@@ -5567,7 +5625,8 @@ async function updateHeaderInfo() {
   }
   const name = currentTrip.name || '（無題）';
   const url = currentTrip.url;
-  const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
+  const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
+    (currentTrip.travelogueHistory?.length > 0);
 
   // デスクトップ用のトリップ名HTML（旅行記優先、次にブログURL）
   let nameHtml;
@@ -5580,9 +5639,9 @@ async function updateHeaderInfo() {
   }
 
   if (isMobileView()) {
-    const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl;
-
-    if (hasTravelogue) {
+    const hasTravelogueMobile = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
+      (currentTrip.travelogueHistory?.length > 0);
+    if (hasTravelogueMobile) {
       // 旅行記がある場合は旅行記へのリンク
       line1.innerHTML = `<a href="#" class="header-trip-link header-travelogue-link-mobile">${escapeHtml(name)}</a>`;
     } else if (url) {
