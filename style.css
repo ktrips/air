@@ -1186,6 +1186,59 @@ body.app-playing .thumbnail-close-btn {
   border: none !important;
 }
 
+/* 親トリップ表示時の地図上の各トリップの旅行記・動画ボタン */
+.map-trip-action-marker {
+  background: none !important;
+  border: none !important;
+}
+.map-trip-action-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  border: 2px solid var(--trip-color, #e1306c);
+  min-width: 80px;
+  text-align: center;
+  font-size: 0.8rem;
+}
+.map-trip-action-name {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+.map-trip-action-btns {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.map-trip-action-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: var(--trip-color, #e1306c);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: opacity 0.2s;
+}
+.map-trip-action-label {
+  font-size: 0.65rem;
+  font-weight: 500;
+}
+.map-trip-action-btn:hover {
+  opacity: 0.9;
+}
+
 .map-photo-marker-img {
   width: 40px;
   height: 40px;

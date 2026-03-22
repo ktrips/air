@@ -10,6 +10,7 @@ let currentTrip = null;
 let currentPhotoIndex = 0;
 let markers = [];
 let gpxLayers = [];
+let tripLeaderLayers = [];
 let playTimer = null;
 let playIntervalMs = 3000;
 let playbackPhotos = []; // 再生中の写真配列
@@ -304,6 +305,28 @@ function initMap() {
 
   // レイヤー切り替えコントロールを追加
   addLayerControl();
+
+  // 親トリップ表示時の地図上の旅行記・動画ボタン用イベント委譲
+  const mapContainer = map.getContainer();
+  if (mapContainer) {
+    mapContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('.map-trip-action-travelogue, .map-trip-action-video');
+      if (!btn) return;
+      const card = e.target.closest('.map-trip-action-card');
+      if (!card) return;
+      const tripId = card.dataset.tripId;
+      if (!tripId) return;
+      const trip = (myTrips || []).find(t => t.id === tripId);
+      if (!trip) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.classList.contains('map-trip-action-travelogue')) {
+        showTravelogueModal(trip);
+      } else if (btn.classList.contains('map-trip-action-video')) {
+        playVideoSequence(getTripVideoUrlsForTrip(trip));
+      }
+    });
+  }
 }
 
 function addLayerControl() {
@@ -1806,6 +1829,12 @@ async function updateMapMarkers() {
     console.warn('GPXレイヤー削除エラー:', e);
   }
   gpxLayers = [];
+  try {
+    tripLeaderLayers.forEach(l => map.removeLayer(l));
+  } catch (e) {
+    console.warn('引き出し線レイヤー削除エラー:', e);
+  }
+  tripLeaderLayers = [];
 
   const tripsToShow = [];
   if (currentTrip?.isParent) {
@@ -1819,6 +1848,8 @@ async function updateMapMarkers() {
   if (tripsToShow.length === 0) return;
 
   const allLatLngs = []; // 地図の表示範囲決定用（写真マーカーのみ）
+  const placedTripCards = []; // 親トリップ時: 各旅行記ボタンの配置位置（かぶり回避用）
+  const routePolylines = []; // 親トリップ時: 他トリップのルート（かぶり回避用）
   let globalIdx = 0;
   for (let tripIdx = 0; tripIdx < tripsToShow.length; tripIdx++) {
     const trip = tripsToShow[tripIdx];
@@ -1966,6 +1997,114 @@ async function updateMapMarkers() {
         markers.push(marker);
         allLatLngs.push(latLng);
       });
+    }
+
+    // 親トリップ表示時: 各子トリップの旅行記・動画ボタンをGPSから少し離し、引き出し線で表示
+    if (currentTrip?.isParent && trip.parentId === currentTrip.id) {
+      const hasTravelogue = (trip.travelogueHtml && trip.travelogueHtml.trim()) || trip.travelogueUrl || (trip.travelogueHistory?.length > 0);
+      const hasVideo = getTripVideoUrlsForTrip(trip).length > 0;
+      if (hasTravelogue || hasVideo) {
+        let anchorLat, anchorLng;
+        if (pts.length > 0) {
+          anchorLat = pts[0][0];
+          anchorLng = pts[0][1];
+        } else {
+          const firstPhoto = (trip.photos || []).find(p => p.lat != null && p.lng != null);
+          if (firstPhoto) {
+            const c = ensureLatLng(firstPhoto.lat, firstPhoto.lng);
+            if (c) {
+              anchorLat = c.lat;
+              anchorLng = c.lng;
+            }
+          }
+        }
+        if (anchorLat != null && anchorLng != null) {
+          const offsetDeg = 0.005;
+          const minCardDist = 0.004;
+          const minRouteDist = 0.0025;
+
+          const dist = (a, b) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
+          const distToSegment = (p, a, b) => {
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const len = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+            const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (len * len)));
+            const proj = [a[0] + t * dx, a[1] + t * dy];
+            return dist(p, proj);
+          };
+          const tooCloseToRoute = (clat, clng) => {
+            const p = [clat, clng];
+            if (pts.length >= 2) {
+              for (let i = 0; i < pts.length - 1; i++) {
+                if (distToSegment(p, pts[i], pts[i + 1]) < minRouteDist) return true;
+              }
+            } else if (pts.length === 1 && dist(p, pts[0]) < minRouteDist) return true;
+            for (const r of routePolylines) {
+              for (let i = 0; i < r.length - 1; i++) {
+                if (distToSegment(p, r[i], r[i + 1]) < minRouteDist) return true;
+              }
+            }
+            return false;
+          };
+          const tooCloseToCards = (clat, clng) => placedTripCards.some(c => dist([clat, clng], c) < minCardDist);
+
+          let cardLat, cardLng;
+          const dirs = [];
+          if (pts.length >= 2) {
+            const dx = pts[1][1] - pts[0][1], dy = pts[1][0] - pts[0][0];
+            const len = Math.sqrt(dx * dx + dy * dy) || 1;
+            dirs.push([dy / len, -dx / len], [-dy / len, dx / len]);
+          }
+          for (const [dlat, dlng] of [[1, 1], [-1, 1], [-1, -1], [1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            if (dirs.every(d => d[0] !== dlat || d[1] !== dlng)) dirs.push([dlat, dlng]);
+          }
+          for (const [dlat, dlng] of dirs) {
+            const clat = anchorLat + dlat * offsetDeg;
+            const clng = anchorLng + dlng * offsetDeg;
+            if (!tooCloseToRoute(clat, clng) && !tooCloseToCards(clat, clng)) {
+              cardLat = clat;
+              cardLng = clng;
+              break;
+            }
+          }
+          if (cardLat == null) {
+            cardLat = anchorLat + 0.006;
+            cardLng = anchorLng + 0.006;
+          }
+          placedTripCards.push([cardLat, cardLng]);
+          if (pts.length >= 2) routePolylines.push(pts);
+
+          const tripName = escapeHtml(trip.name || '（無題）');
+          const tripId = trip.id;
+          const tripMarkerHtml = `
+            <div class="map-trip-action-card" style="--trip-color:${color}" data-trip-id="${escapeHtml(tripId)}">
+              <div class="map-trip-action-name">${tripName}</div>
+              <div class="map-trip-action-btns">
+                ${hasTravelogue ? '<button type="button" class="map-trip-action-btn map-trip-action-travelogue" title="旅行記"><span class="map-trip-action-label">旅行記</span>📖</button>' : ''}
+                ${hasVideo ? '<button type="button" class="map-trip-action-btn map-trip-action-video" title="動画">🎬</button>' : ''}
+              </div>
+            </div>`;
+          const leaderLine = L.polyline([[anchorLat, anchorLng], [cardLat, cardLng]], {
+            color: color,
+            weight: 2,
+            opacity: 0.8
+          });
+          leaderLine.addTo(map);
+          tripLeaderLayers.push(leaderLine);
+
+          const tripMarker = L.marker([cardLat, cardLng], {
+            icon: L.divIcon({
+              className: 'map-trip-action-marker',
+              html: tripMarkerHtml,
+              iconSize: [120, 60],
+              iconAnchor: [60, 50]
+            })
+          });
+          tripMarker.addTo(map);
+          markers.push(tripMarker);
+          allLatLngs.push([cardLat, cardLng]);
+          allLatLngs.push([anchorLat, anchorLng]);
+        }
+      }
     }
   }
   if (allLatLngs.length > 0) {
@@ -5794,18 +5933,20 @@ async function showAnimeModal() {
 
         const quarterContent = getDetail4PagesQuarterContent(trip, page);
         const pagePrompt = [
-          `このトリップ「${tripName}」の旅行記と写真・説明を元に、4ページのうち${page}ページ目を生成します。`,
-          '4枚の画像でそのトリップ全体をトータルにカバーするよう、各ページは旅の1/4の内容を担当します。',
+          `この旅行「${tripName}」の旅行記と写真・説明を元に、4ページのうち${page}ページ目を生成します。`,
+          '4枚の画像で旅行全体をカバーするよう、各ページは旅の1/4の内容を担当します。',
           '',
-          '以下の内容を1枚の画像内に5コマのマンガ形式で表現してください。出力は必ず全て日本語で。',
+          '以下の内容を1枚の画像内に5コマのマンガ形式で表現してください。',
           '',
-          '【スタイル】地球の歩き方風の旅行ガイド - ソフトで温かみのあるイラスト。柔らかい色調、アニメ調。',
+          '【重要】画像内のすべての言葉・説明・吹き出しのセリフ・ラベル・タイトルは必ず日本語のみで記述してください。英語は一切使用しないでください。',
+          '',
+          '【スタイル】地球の歩き方風の旅行ガイド。ソフトで温かみのあるイラスト、柔らかい色調、アニメ調。',
           '',
           '【必須】',
-          '- 1枚のJPG画像内に5コマを縦に並べた旅行記ページレイアウト。',
+          '- 1枚の画像内に5コマを縦に並べた旅行記ページのレイアウト。',
           '- アップロードされたキャラクターを主人公として、全5コマに登場させる。',
-          '- 各コマでキャラクターが吹き出しで旅のスポット・名所・情景を日本語で説明。',
-          '- 旅行記と写真の説明を踏まえ、この区間の旅の内容を5コマで要約して順に説明。',
+          '- 各コマでキャラクターが吹き出しで旅のスポット・名所・情景を説明する。吹き出しの言葉は全て日本語。',
+          '- 旅行記と写真の説明を踏まえ、この区間の旅の内容を5コマで要約して順に説明する。',
           '- 4ページ全体で旅の流れが繋がるように表現。実写感は残さずアニメ調で統一。',
           '',
           `【ページ${page}/4の内容 - 5コマで要約して順に説明】`,
