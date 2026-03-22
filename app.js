@@ -2019,9 +2019,9 @@ async function updateMapMarkers() {
           }
         }
         if (anchorLat != null && anchorLng != null) {
-          const offsetDeg = 0.015;
-          const minCardDist = 0.018;
-          const minRouteDist = 0.01;
+          const offsetDeg = 0.025;
+          const minCardDist = 0.03;
+          const minRouteDist = 0.02;
 
           const dist = (a, b) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
           const distToSegment = (p, a, b) => {
