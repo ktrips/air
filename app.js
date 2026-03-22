@@ -5606,10 +5606,18 @@ async function updateHeaderInfo() {
     if (videoBtn) videoBtn.style.display = 'none';
     const stampBtn = document.getElementById('headerStampBtn');
     if (stampBtn) stampBtn.style.display = 'none';
+    const travelogueBtn = document.getElementById('headerTravelogueBtn');
+    if (travelogueBtn) travelogueBtn.style.display = 'none';
     return;
   }
   if (videoBtn) {
     videoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
+  }
+  const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
+    (currentTrip.travelogueHistory?.length > 0);
+  const travelogueBtn = document.getElementById('headerTravelogueBtn');
+  if (travelogueBtn) {
+    travelogueBtn.style.display = (hasTravelogue && isMobileView()) ? '' : 'none';
   }
   const stampBtn = document.getElementById('headerStampBtn');
   if (stampBtn) {
@@ -5625,8 +5633,6 @@ async function updateHeaderInfo() {
   }
   const name = currentTrip.name || '（無題）';
   const url = currentTrip.url;
-  const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
-    (currentTrip.travelogueHistory?.length > 0);
 
   // デスクトップ用のトリップ名HTML（旅行記優先、次にブログURL）
   let nameHtml;
@@ -5786,8 +5792,16 @@ function updateMapTripNameOverlay() {
     // クリックイベントを追加
     const card = document.getElementById('mapTripNameCard');
     if (card) {
+      const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
+        (currentTrip.travelogueHistory?.length > 0);
+      card.style.cursor = 'pointer';
+      card.title = hasTravelogue ? '旅行記を表示' : '地図を全体表示';
       card.onclick = () => {
-        // 全てのスポットが収まるように地図を表示
+        if (hasTravelogue) {
+          showTravelogueModal();
+          return;
+        }
+        // 旅行記が無い場合は従来の動作：全てのスポットが収まるように地図を表示
         const photos = getDisplayPhotos();
         if (photos.length > 0 && map) {
           const bounds = [];
@@ -6204,6 +6218,10 @@ function initEventListeners() {
     if (playTimer) stopPlay();
     const urls = getTripVideoUrls();
     if (urls.length > 0) playVideoSequence(urls);
+  };
+  const headerTravelogueBtn = document.getElementById('headerTravelogueBtn');
+  if (headerTravelogueBtn) headerTravelogueBtn.onclick = () => {
+    if (currentTrip) showTravelogueModal();
   };
   const headerStampBtn = document.getElementById('headerStampBtn');
   if (headerStampBtn) headerStampBtn.onclick = () => {

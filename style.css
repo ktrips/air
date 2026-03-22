@@ -2786,6 +2786,7 @@ body.app-playing .play-stop-btn-mobile::before {
 
   /* モバイルではアイコンのみの小さいボタンに */
   .header-video-btn,
+  .header-travelogue-btn,
   .header-stamp-btn {
     width: 32px;
     height: 32px;
@@ -2798,6 +2799,10 @@ body.app-playing .play-stop-btn-mobile::before {
   }
   .header-video-btn::before {
     content: '🎬';
+    font-size: 1.1rem;
+  }
+  .header-travelogue-btn::before {
+    content: '📖';
     font-size: 1.1rem;
   }
   .header-stamp-btn::before {
