@@ -5518,6 +5518,43 @@ function getTravelogueQuarterContent(trip, pageIndex) {
   return fullText.slice(start, end).trim();
 }
 
+/** 詳細4ページ用: 旅行記1/4 + 対応する写真・説明をまとめて返す（そのトリップをトータルにカバー） */
+function getDetail4PagesQuarterContent(trip, pageIndex) {
+  const pageIndex0 = Math.max(0, Math.min(pageIndex - 1, 3));
+  const parts = [];
+
+  // 旅行記の1/4
+  const quarterText = getTravelogueQuarterContent(trip, pageIndex);
+  if (quarterText) {
+    parts.push('【旅行記の内容】');
+    parts.push(quarterText);
+  }
+
+  // 写真を4区間に分割し、このページに対応する写真の情報を追加
+  const photos = trip.photos || [];
+  if (photos.length > 0) {
+    const qSize = Math.ceil(photos.length / 4);
+    const startIdx = pageIndex0 * qSize;
+    const endIdx = Math.min(startIdx + qSize, photos.length);
+    const quarterPhotos = photos.slice(startIdx, endIdx);
+    if (quarterPhotos.length > 0) {
+      parts.push('');
+      parts.push('【この区間の写真と説明】');
+      quarterPhotos.forEach((p, i) => {
+        const items = [];
+        if (p.placeName) items.push(`場所: ${p.placeName}`);
+        if (p.name) items.push(`ポイント: ${p.name}`);
+        if (p.description) items.push(`説明: ${p.description}`);
+        if (p.landmarkNo) items.push(`ランドマーク: 📍${p.landmarkNo}`);
+        if (items.length > 0) parts.push(`  ${i + 1}. ${items.join(' / ')}`);
+      });
+    }
+  }
+
+  const result = parts.join('\n').trim();
+  return result || (trip.name || '旅行の思い出');
+}
+
 function showAnimeLoading(visible, text = '生成中...') {
   const el = document.getElementById('animeLoading');
   const textEl = document.getElementById('animeLoadingText');
@@ -5573,7 +5610,8 @@ async function generateImageWithNanoBananaPro2(prompt, cfg, characterImage = nul
         generationConfig: {
           temperature: 1.0,
           topK: 40,
-          topP: 0.95
+          topP: 0.95,
+          imageConfig: { aspectRatio: '3:4' }
         }
       })
     });
@@ -5624,7 +5662,7 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
           model: 'dall-e-3',
           prompt: prompt,
           n: 1,
-          size: '1024x1024',
+          size: '1024x1792',
           quality: 'hd'
         })
       });
@@ -5679,7 +5717,12 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: { temperature: 1.0, topK: 40, topP: 0.95 }
+          generationConfig: {
+            temperature: 1.0,
+            topK: 40,
+            topP: 0.95,
+            imageConfig: { aspectRatio: '3:4' }
+          }
         })
       });
       const data = await res.json();
@@ -5738,31 +5781,35 @@ async function showAnimeModal() {
         alert('詳細4ページではキャラ画像が必須です。キャラ画像をアップロードしてください。');
         return;
       }
-      const hasContent = [1, 2, 3, 4].some(p => getTravelogueQuarterContent(trip, p));
+      const hasContent = [1, 2, 3, 4].some(p => getDetail4PagesQuarterContent(trip, p));
       if (!hasContent) {
         alert('旅行記または写真・説明がありません。まず旅行記を生成するか、写真に説明を追加してください。');
         return;
       }
       const generatedAnimesToAdd = [];
+      const tripName = trip.name || '旅行';
       for (let page = 1; page <= 4; page++) {
         setStatus(`詳細4ページ生成中 ${page}/4...`);
         if (btn) btn.textContent = `詳細4ページ生成中 (${page}/4)...`;
 
-        let quarterText = getTravelogueQuarterContent(trip, page);
-        if (!quarterText) quarterText = getTravelogueQuarterContent(trip, 1) || (trip.name || '旅行の思い出');
+        const quarterContent = getDetail4PagesQuarterContent(trip, page);
         const pagePrompt = [
-          'Create a single manga/comic PAGE image containing exactly 5 panels in one layout.',
-          'Style: Chikyu no Arukikata (地球の歩き方) travel guide - soft, warm illustration.',
+          `このトリップ「${tripName}」の旅行記と写真・説明を元に、4ページのうち${page}ページ目を生成します。`,
+          '4枚の画像でそのトリップ全体をトータルにカバーするよう、各ページは旅の1/4の内容を担当します。',
+          '',
+          '以下の内容を1枚の画像内に5コマのマンガ形式で表現してください。出力は必ず全て日本語で。',
+          '',
+          '【スタイル】地球の歩き方風の旅行ガイド - ソフトで温かみのあるイラスト。柔らかい色調、アニメ調。',
           '',
           '【必須】',
-          '- 1枚の画像内に5コマを縦または適切に配置。旅行ガイドのページレイアウト風。',
-          '- アップロードされたキャラクターを主人公として、全コマに登場させる。',
-          '- 各コマでキャラクターが旅のスポット・名所・風景を吹き出しで説明する形式。',
-          '- 旅行記の写真と説明を元に、旅の内容を説明するアニメ画像。',
-          '- ソフトなタッチ、柔らかい色調。実写感は残さずアニメ調。',
+          '- 1枚のJPG画像内に5コマを縦に並べた旅行記ページレイアウト。',
+          '- アップロードされたキャラクターを主人公として、全5コマに登場させる。',
+          '- 各コマでキャラクターが吹き出しで旅のスポット・名所・情景を日本語で説明。',
+          '- 旅行記と写真の説明を踏まえ、この区間の旅の内容を5コマで要約して順に説明。',
+          '- 4ページ全体で旅の流れが繋がるように表現。実写感は残さずアニメ調で統一。',
           '',
-          `【このページ（${page}/4）の旅行記内容 - 5コマで順に説明】`,
-          quarterText.slice(0, 800),
+          `【ページ${page}/4の内容 - 5コマで要約して順に説明】`,
+          quarterContent.slice(0, 1100),
           ''
         ].join('\n');
 
