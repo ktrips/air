@@ -6649,6 +6649,13 @@ async function updateHeaderInfo() {
     if (headerTripNameMobile) headerTripNameMobile.textContent = 'トリップを選択';
     const headerTabTravelogue = document.getElementById('headerTabTravelogue');
     if (headerTabTravelogue) headerTabTravelogue.style.display = 'none';
+    // モバイル地図タブ用のボタンも非表示
+    const mobileMapVideoBtn = document.getElementById('mobileMapVideoBtn');
+    if (mobileMapVideoBtn) mobileMapVideoBtn.style.display = 'none';
+    const mobileMapAnimeBtn = document.getElementById('mobileMapAnimeBtn');
+    if (mobileMapAnimeBtn) mobileMapAnimeBtn.style.display = 'none';
+    const mobileMapStampBtn = document.getElementById('mobileMapStampBtn');
+    if (mobileMapStampBtn) mobileMapStampBtn.style.display = 'none';
     return;
   }
   if (videoBtn) {
@@ -6671,6 +6678,28 @@ async function updateHeaderInfo() {
       hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
     }
     stampBtn.style.display = hasStamps ? '' : 'none';
+  }
+
+  // モバイル地図タブ用のボタン表示制御
+  const mobileMapVideoBtn = document.getElementById('mobileMapVideoBtn');
+  if (mobileMapVideoBtn) {
+    mobileMapVideoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
+  }
+  const mobileMapAnimeBtn = document.getElementById('mobileMapAnimeBtn');
+  if (mobileMapAnimeBtn) {
+    const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+    mobileMapAnimeBtn.style.display = animes.length > 0 ? '' : 'none';
+  }
+  const mobileMapStampBtn = document.getElementById('mobileMapStampBtn');
+  if (mobileMapStampBtn) {
+    let hasStamps = false;
+    if (currentTrip.isParent) {
+      const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
+      hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
+    } else {
+      hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
+    }
+    mobileMapStampBtn.style.display = hasStamps ? '' : 'none';
   }
   const name = currentTrip.name || '（無題）';
   const url = currentTrip.url;
@@ -7364,6 +7393,27 @@ function initEventListeners() {
         showAnimeImageViewer(animes, 0, currentTrip.name);
       }
     }
+  };
+
+  // モバイル地図タブ用のボタン
+  const mobileMapVideoBtn = document.getElementById('mobileMapVideoBtn');
+  if (mobileMapVideoBtn) mobileMapVideoBtn.onclick = () => {
+    const urls = getTripVideoUrls();
+    if (urls.length > 0) playVideoSequence(urls);
+  };
+  const mobileMapAnimeBtn = document.getElementById('mobileMapAnimeBtn');
+  if (mobileMapAnimeBtn) mobileMapAnimeBtn.onclick = () => {
+    if (currentTrip) {
+      const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+      if (animes.length > 0) {
+        showAnimeImageViewer(animes, 0, currentTrip.name);
+      }
+    }
+  };
+  const mobileMapStampBtn = document.getElementById('mobileMapStampBtn');
+  if (mobileMapStampBtn) mobileMapStampBtn.onclick = () => {
+    if (playTimer) stopPlay();
+    if (currentTrip) showStampRallyModal(currentTrip);
   };
 
   // 閲覧者用のボタン
