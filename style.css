@@ -181,7 +181,7 @@ body {
 }
 
 .header-mobile-trip-name {
-  max-width: 100px;
+  max-width: 70px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2642,10 +2642,16 @@ body:not(.editor) .viewer-only { display: block; }
 
 /* アニメ画像ビューア（サムネイルクリック時の前へ/次へ付き表示） */
 .modal-anime-viewer {
-  max-width: 90vw;
+  max-width: 75vw;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
+}
+
+@media (max-width: 768px) {
+  .modal-anime-viewer {
+    max-width: 90vw;
+  }
 }
 
 .modal-anime-viewer .modal-header {

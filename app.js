@@ -5331,7 +5331,10 @@ async function showTravelogueModal(trip) {
       console.error('旅行記の取得エラー:', err);
       content.innerHTML = '<p class="travelogue-empty">旅行記の読み込みに失敗しました。</p>';
       if (mapWrap) mapWrap.style.display = 'none';
-      if (modalTitle) modalTitle.textContent = '旅行記';
+      if (modalTitle) {
+        const tripName = t?.name || '';
+        modalTitle.textContent = tripName ? `${tripName} - 旅行記` : '旅行記';
+      }
       modal.classList.add('open');
       return;
     }
@@ -5343,7 +5346,8 @@ async function showTravelogueModal(trip) {
     if (titleMatch && modalTitle) {
       modalTitle.textContent = titleMatch[1].replace(/<[^>]+>/g, ''); // HTMLタグを除去
     } else if (modalTitle) {
-      modalTitle.textContent = t?.name || '旅行記';
+      const tripName = t?.name || '';
+      modalTitle.textContent = tripName ? `${tripName} - 旅行記` : '旅行記';
     }
 
     // HTMLを挿入（古い旅行記との互換性のため、古い表記を変換）
@@ -5751,15 +5755,16 @@ function showStampRallyModal(trip) {
   if (!modal || !content) return;
 
   const allPhotos = getStampListForTrip(trip);
+  const tripName = trip?.name || '';
 
   if (allPhotos.length === 0) {
-    if (titleEl) titleEl.textContent = 'スタンプ';
+    if (titleEl) titleEl.textContent = tripName ? `${tripName} - スタンプ一覧` : 'スタンプ一覧';
     if (countEl) countEl.textContent = '';
     content.innerHTML = '<p class="stamp-rally-empty">スタンプがありません。写真のポップアップで「スタンプ」にチェックを入れてください。</p>';
   } else {
     const stampedCount = allPhotos.filter(p => p.url && p.url.trim()).length;
     const totalCount = allPhotos.length;
-    if (titleEl) titleEl.textContent = 'スタンプ一覧';
+    if (titleEl) titleEl.textContent = tripName ? `${tripName} - スタンプ一覧` : 'スタンプ一覧';
     if (countEl) countEl.textContent = `スタンプ済み ${stampedCount} / ${totalCount}`;
     content.innerHTML = allPhotos.map((p, i) => {
       const stamped = !!(p.url && p.url.trim());
@@ -6492,7 +6497,7 @@ function showAnimeImageViewer(animeList, tripName = '') {
   const nextBtn = document.getElementById('animeImageViewerNext');
   if (!modal || !bodyEl) return;
 
-  if (titleEl) titleEl.textContent = tripName ? `${tripName} - アニメ画像` : 'アニメ画像';
+  if (titleEl) titleEl.textContent = tripName ? `${tripName} - アニメ` : 'アニメ';
 
   // カウンター表示
   if (counterEl) {
@@ -6751,9 +6756,10 @@ async function updateHeaderInfo() {
 
     // モバイル旅行記ボタンの表示制御
     if (headerMobileTravelogueBtn && headerMobileTripNameShort) {
-      // トリップ名を短縮して表示（最大8文字）
+      // トリップ名を短縮して表示（スペースを除いた最初の8文字）
       const tripName = currentTrip.name || '（無題）';
-      const shortName = tripName.length > 8 ? tripName.substring(0, 8) + '…' : tripName;
+      const nameWithoutSpaces = tripName.replace(/\s+/g, '');
+      const shortName = nameWithoutSpaces.length > 8 ? nameWithoutSpaces.substring(0, 8) + '…' : nameWithoutSpaces;
       headerMobileTripNameShort.textContent = shortName;
 
       // トリップカラーを適用
