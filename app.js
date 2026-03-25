@@ -5543,16 +5543,22 @@ async function switchMobileTab(tab, tripToShow) {
     if (headerMobileMapControls) headerMobileMapControls.style.display = 'flex';
     if (headerMobileTravelogueControls) headerMobileTravelogueControls.style.display = 'none';
   } else if (tab === 'travelogue') {
-    // 旅行記タブ
-    headerTabMap?.classList.remove('active');
-    headerTabTravelogue?.classList.add('active');
-
-    // コントロールを切り替え
-    if (headerMobileMapControls) headerMobileMapControls.style.display = 'none';
-    if (headerMobileTravelogueControls) headerMobileTravelogueControls.style.display = 'flex';
-
+    // 旅行記タブ → モーダルで表示
     const tripToDisplay = tripToShow || currentTrip;
-    if (mobileTravelogueView && mobileTravelogueContent && tripToDisplay) {
+    if (tripToDisplay) {
+      // 地図タブに戻す（UI状態）
+      headerTabMap?.classList.add('active');
+      headerTabTravelogue?.classList.remove('active');
+      if (headerMobileMapControls) headerMobileMapControls.style.display = 'flex';
+      if (headerMobileTravelogueControls) headerMobileTravelogueControls.style.display = 'none';
+
+      // 旅行記モーダルを開く
+      await showTravelogueModal(tripToDisplay);
+    }
+    return; // 以降の処理をスキップ
+
+    // 以下は旧実装（モバイル専用ビュー）のため無効化
+    if (mobileTravelogueView && mobileTravelogueContent && tripToDisplay && false) {
       // タイトルを設定
       if (mobileTravelogueTitle) {
         mobileTravelogueTitle.textContent = tripToDisplay.name || '旅行記';
@@ -6776,9 +6782,10 @@ async function updateHeaderInfo() {
   const headerMobileTravelogueControls = document.getElementById('headerMobileTravelogueControls');
 
   if (isMobileView()) {
-    if (headerTripNameMobile && currentTrip) {
-      headerTripNameMobile.textContent = currentTrip.name || '（無題）';
-    }
+    // トリップ名は表示しない（削除済み）
+    // if (headerTripNameMobile && currentTrip) {
+    //   headerTripNameMobile.textContent = currentTrip.name || '（無題）';
+    // }
     if (headerTabTravelogue) {
       if (hasTravelogue) {
         headerTabTravelogue.style.display = '';
@@ -7351,8 +7358,11 @@ function initEventListeners() {
   };
   const mobileAnimeBtn = document.getElementById('mobileAnimeBtn');
   if (mobileAnimeBtn) mobileAnimeBtn.onclick = () => {
-    if (currentTrip && currentTrip.generatedAnimes?.length > 0) {
-      openAnimeImageViewer(currentTrip.generatedAnimes, 0, currentTrip.name);
+    if (currentTrip) {
+      const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+      if (animes.length > 0) {
+        showAnimeImageViewer(animes, 0, currentTrip.name);
+      }
     }
   };
 
