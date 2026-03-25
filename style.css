@@ -72,6 +72,80 @@ body {
   text-align: right;
 }
 
+.header-mobile-content {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.header-trip-name-mobile {
+  flex: 0 1 auto;
+  min-width: 60px;
+  max-width: 40%;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.header-tabs-mobile {
+  flex-shrink: 0;
+  display: flex;
+  gap: 0.25rem;
+  background: var(--bg);
+  padding: 0.25rem;
+  border-radius: var(--radius-sm);
+}
+
+.header-mobile-controls {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.header-mobile-map-controls,
+.header-mobile-travelogue-controls {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.header-tab {
+  padding: 0.4rem 0.8rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.header-tab:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.header-tab.active {
+  background: var(--bg-card);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+.header-tab-label {
+  display: inline;
+}
+
 .header-controls {
   flex-shrink: 0;
   display: flex;
@@ -201,6 +275,99 @@ body {
 .map-container {
   flex: 1;
   position: relative;
+}
+
+.mobile-travelogue-view {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-travelogue-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  gap: 0.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.mobile-travelogue-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  text-align: center;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.mobile-travelogue-nav-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s;
+  border-radius: 50%;
+}
+
+.mobile-travelogue-nav-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  transform: scale(1.1);
+}
+
+.mobile-travelogue-nav-btn:active {
+  transform: scale(0.95);
+}
+
+.mobile-travelogue-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.mobile-travelogue-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 1rem;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  min-height: 0;
+}
+
+/* 旅行記表示時はトリップシートとサムネイルを非表示 */
+body:has(.mobile-travelogue-view[style*="display: block"]) .trip-sheet-trigger-container,
+body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-container {
+  display: none !important;
+}
+
+.map-nav-controls {
+  display: none !important;
 }
 
 /* 地図のattribution（Leaflet | © Esri等）を常に非表示 */
@@ -562,13 +729,15 @@ body {
 .map-container.map-showing-video .leaflet-control,
 .map-container.map-showing-video .leaflet-top,
 .map-container.map-showing-video .leaflet-bottom,
-.map-container.map-showing-video .play-stop-btn-mobile {
+.map-container.map-showing-video .map-nav-controls,
+.map-container.map-showing-video .map-playback-controls {
   display: none !important;
 }
 
 /* メニューが開いているときは再生ボタンを非表示 */
 body:has(.menu-panel.open) #playBtn,
-body:has(.menu-panel.open) .play-stop-btn-mobile {
+body:has(.menu-panel.open) .map-nav-controls,
+body:has(.menu-panel.open) .map-playback-controls {
   display: none !important;
 }
 
@@ -2550,6 +2719,12 @@ body:not(.editor) .viewer-only { display: block; }
   white-space: nowrap;
 }
 
+.travelogue-nav-btn {
+  flex-shrink: 0;
+  min-width: 44px;
+  padding: 0.5rem 0.75rem;
+}
+
 .modal-header-actions {
   display: flex;
   align-items: center;
@@ -2995,13 +3170,19 @@ body:not(.editor) .viewer-only { display: block; }
   display: none;
 }
 
-.play-stop-btn-mobile {
-  display: flex;
+.map-playback-controls {
   position: absolute;
   bottom: 30px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.play-stop-btn-mobile {
+  display: flex;
   width: 64px;
   height: 64px;
   border-radius: 50%;
@@ -3019,14 +3200,42 @@ body:not(.editor) .viewer-only { display: block; }
   transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
+.map-photo-nav-btn {
+  display: flex;
+  width: auto;
+  height: auto;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font-size: 2.5rem;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6), 0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.2s, color 0.2s, text-shadow 0.2s;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
 .play-stop-btn-mobile:hover {
-  transform: translateX(-50%) translateY(-3px) scale(1.05);
+  transform: translateY(-3px) scale(1.05);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25), 0 4px 14px rgba(0, 0, 0, 0.18);
   background: rgba(255, 255, 255, 1);
 }
 
 .play-stop-btn-mobile:active {
-  transform: translateX(-50%) translateY(-1px) scale(1.02);
+  transform: translateY(-1px) scale(1.02);
+}
+
+.map-photo-nav-btn:hover {
+  transform: scale(1.2);
+  color: rgba(255, 255, 255, 1);
+  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.8), 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.map-photo-nav-btn:active {
+  transform: scale(1.1);
 }
 
 .play-stop-btn-mobile::before {
@@ -3036,6 +3245,10 @@ body:not(.editor) .viewer-only { display: block; }
   line-height: 1;
   margin-left: 4px;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+body.app-playing .map-playback-controls {
+  bottom: 10%;
 }
 
 body.app-playing .play-stop-btn-mobile {
@@ -3054,9 +3267,27 @@ body.app-playing .play-stop-btn-mobile::before {
   filter: none;
 }
 
+body.app-playing .map-photo-nav-btn {
+  display: none;
+}
+
+
 @media (max-width: 768px) {
   /* モバイルでは検索窓を非表示 */
   .map-search {
+    display: none;
+  }
+
+  /* モバイルではトリップ名とタブを表示 */
+  .header-mobile-content {
+    display: flex !important;
+  }
+
+  .header-info {
+    display: none;
+  }
+
+  .header-controls {
     display: none;
   }
 
@@ -3178,6 +3409,68 @@ body.app-playing .play-stop-btn-mobile::before {
     right: 0;
     bottom: calc(60px + env(safe-area-inset-bottom, 0px));
   }
+
+  /* モバイルでは地図ナビゲーションを非表示 */
+  .map-nav-controls {
+    display: none;
+  }
+
+  /* モバイルでは丸い再生ボタンと前後ボタンを表示 */
+  .map-playback-controls {
+    position: fixed;
+    bottom: calc(75px + env(safe-area-inset-bottom, 0px));
+    z-index: 1100;
+  }
+
+  /* モバイルでの旅行記ビュー - map-container内でフルスクリーン */
+  .mobile-travelogue-view {
+    bottom: 0 !important;
+  }
+
+  .mobile-travelogue-header {
+    position: sticky;
+    top: 0;
+  }
+
+  .mobile-travelogue-content {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 20px));
+  }
+
+  /* 旅行記表示時は map-container を画面下まで拡大 */
+  body:has(.mobile-travelogue-view[style*="display: block"]) .map-container {
+    bottom: 0 !important;
+  }
+
+  .play-stop-btn-mobile {
+    width: 54px;
+    height: 54px;
+  }
+
+  .play-stop-btn-mobile::before {
+    font-size: 1.3rem;
+    margin-left: 3px;
+  }
+
+  .map-photo-nav-btn {
+    font-size: 2rem;
+  }
+
+  /* モバイルの自動再生時は停止ボタンをシンプルに、下から1/10上の位置に */
+  body.app-playing .map-playback-controls {
+    bottom: 10%;
+  }
+
+  body.app-playing .play-stop-btn-mobile {
+    width: 32px;
+    height: 32px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+
+  body.app-playing .play-stop-btn-mobile::before {
+    font-size: 0.8rem;
+  }
   /* 自動再生時は地図を画面下まで拡大 */
   body.app-playing .map-container {
     bottom: 0;
@@ -3242,29 +3535,6 @@ body.app-playing .play-stop-btn-mobile::before {
   }
   .trip-sheet-trigger:active {
     background: var(--bg);
-  }
-  .play-stop-btn-mobile {
-    position: fixed;
-    bottom: calc(75px + env(safe-area-inset-bottom, 0px));
-    width: 54px;
-    height: 54px;
-    z-index: 1100;
-  }
-  .play-stop-btn-mobile::before {
-    font-size: 1.3rem;
-    margin-left: 3px;
-  }
-  /* モバイルの自動再生時は停止ボタンをシンプルに、下から1/10上の位置に */
-  body.app-playing .play-stop-btn-mobile {
-    width: 32px;
-    height: 32px;
-    bottom: 10%;
-    background: rgba(0, 0, 0, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-  }
-  body.app-playing .play-stop-btn-mobile::before {
-    font-size: 0.8rem;
   }
   .trip-sheet-trigger-handle {
     width: 40px;
