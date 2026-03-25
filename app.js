@@ -6629,6 +6629,7 @@ async function updateHeaderInfo() {
   const headerInfo = document.querySelector('.header-info');
   const videoBtn = document.getElementById('headerVideoBtn');
   const headerLogo = document.getElementById('headerLogo');
+  const headerMobileTravelogueBtn = document.getElementById('headerMobileTravelogueBtn');
   if (!line1 || !line2) return;
   if (!currentTrip) {
     line1.textContent = 'トリップを選択';
@@ -6666,11 +6667,14 @@ async function updateHeaderInfo() {
       if (headerMobileControls) headerMobileControls.style.display = 'none';
     }
 
-    // ロゴを表示
+    // トリップが選択されていない時は、ウェブでもモバイルでもロゴを表示
     if (headerLogo) headerLogo.classList.remove('hidden');
     return;
   }
-  // ロゴの表示制御：ウェブは常に表示、モバイルはトリップ選択時に非表示
+
+  // トリップが選択されている時のロゴ表示制御
+  // - ウェブ: 常にロゴを表示
+  // - モバイル: ロゴを非表示（旅行記ボタンがある場合があるため）
   if (headerLogo) {
     if (isMobileView()) {
       headerLogo.classList.add('hidden');
@@ -6732,13 +6736,14 @@ async function updateHeaderInfo() {
   const headerControls = document.getElementById('headerControls');
   const headerMobileContent = document.getElementById('headerMobileContent');
   const headerMobileControls = document.getElementById('headerMobileControls');
-  const headerMobileTravelogueBtn = document.getElementById('headerMobileTravelogueBtn');
   const headerMobileTripNameShort = document.getElementById('headerMobileTripNameShort');
 
   if (isMobileView()) {
     // モバイル表示
     if (headerControls) headerControls.style.display = 'none';
-    if (headerMobileContent) headerMobileContent.style.display = 'flex';
+    if (headerMobileContent) {
+      headerMobileContent.style.display = 'flex';
+    }
     if (headerMobileControls) headerMobileControls.style.display = 'flex';
 
     // headerInfoは非表示（モバイル旅行記ボタンを使用）
@@ -6746,14 +6751,23 @@ async function updateHeaderInfo() {
 
     // モバイル旅行記ボタンの表示制御
     if (headerMobileTravelogueBtn && headerMobileTripNameShort) {
+      // トリップ名を短縮して表示（最大8文字）
+      const tripName = currentTrip.name || '（無題）';
+      const shortName = tripName.length > 8 ? tripName.substring(0, 8) + '…' : tripName;
+      headerMobileTripNameShort.textContent = shortName;
+
+      // トリップカラーを適用
+      const tripColor = currentTrip.color || '#e1306c';
+      headerMobileTravelogueBtn.style.color = tripColor;
+      headerMobileTravelogueBtn.style.borderColor = tripColor;
+
       if (hasTravelogue) {
-        // 旅行記がある場合、ボタンを表示
+        // 旅行記がある場合、ボタンを表示して有効化
         headerMobileTravelogueBtn.style.display = 'flex';
-        // トリップ名を短縮して表示（最大8文字）
-        const tripName = currentTrip.name || '（無題）';
-        const shortName = tripName.length > 8 ? tripName.substring(0, 8) + '…' : tripName;
-        headerMobileTripNameShort.textContent = shortName;
+        headerMobileTravelogueBtn.disabled = false;
+        headerMobileTravelogueBtn.style.opacity = '1';
       } else {
+        // 旅行記がない場合は非表示
         headerMobileTravelogueBtn.style.display = 'none';
       }
     }

@@ -79,8 +79,7 @@ body {
   flex-wrap: nowrap;
   align-items: center;
   gap: 0.5rem;
-  order: -1;
-  margin-right: auto;
+  z-index: 10;
 }
 
 .header-trip-name-mobile {
@@ -149,53 +148,85 @@ body {
 
 .header-mobile-travelogue-btn {
   flex-shrink: 0;
-  display: flex;
+  display: none;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.65rem 1rem;
-  background: linear-gradient(135deg, var(--accent) 0%, #d12050 100%);
-  color: white;
-  border: none;
+  padding: 0.5rem 0.85rem;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--accent);
+  border: 2px solid currentColor;
   border-radius: var(--radius);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 3px 10px rgba(225, 39, 108, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: all 0.2s;
   white-space: nowrap;
 }
 
-.header-mobile-travelogue-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 15px rgba(225, 39, 108, 0.6);
+.header-mobile-travelogue-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
-.header-mobile-travelogue-btn:active {
+.header-mobile-travelogue-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 1);
+}
+
+.header-mobile-travelogue-btn:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 3px 10px rgba(225, 39, 108, 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .header-mobile-trip-name {
-  max-width: 120px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
+  color: inherit;
 }
 
-.header-mobile-travelogue-label {
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  font-size: 1rem;
+.header-mobile-travelogue-icon {
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .header-logo.hidden {
   display: none;
 }
 
+/* モバイルビューでのヘッダー調整 */
+@media (max-width: 768px) {
+  .header {
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .header-logo {
+    font-size: 1.25rem;
+  }
+
+  .header-logo.hidden {
+    display: none;
+  }
+
+  .header-mobile-content {
+    flex: 1 1 auto;
+    max-width: 50%;
+  }
+
+  .header-right {
+    flex: 0 1 auto;
+    gap: 0.5rem;
+  }
+}
+
 .header-mobile-controls {
   flex-shrink: 0;
-  display: flex;
+  display: none;
   align-items: center;
   gap: 0.35rem;
 }

@@ -16,16 +16,16 @@
   <div class="app">
     <header class="header" id="appHeader">
       <div class="header-logo" id="headerLogo" role="button" tabindex="0" aria-label="トリップ一覧に戻る">Air</div>
+      <div class="header-mobile-content" id="headerMobileContent">
+        <button type="button" class="header-mobile-travelogue-btn" id="headerMobileTravelogueBtn">
+          <span class="header-mobile-trip-name" id="headerMobileTripNameShort"></span>
+          <span class="header-mobile-travelogue-icon">📖</span>
+        </button>
+      </div>
       <div class="header-right">
         <div class="header-info">
           <div class="header-line1" id="headerLine1"></div>
           <div class="header-line2" id="headerLine2"></div>
-        </div>
-        <div class="header-mobile-content" id="headerMobileContent" style="display:none">
-          <button type="button" class="header-mobile-travelogue-btn" id="headerMobileTravelogueBtn" style="display:none">
-            <span class="header-mobile-trip-name" id="headerMobileTripNameShort"></span>
-            <span class="header-mobile-travelogue-label">📖 旅行記</span>
-          </button>
         </div>
         <div class="header-controls" id="headerControls">
           <button type="button" class="btn btn-secondary btn-sm" id="photoPrevBtn">前</button>
@@ -35,7 +35,7 @@
           <button type="button" id="headerAnimeBtn" class="btn btn-secondary btn-sm header-anime-btn" style="display:none">🖼️ アニメ</button>
           <button type="button" id="headerStampBtn" class="btn btn-stamp btn-sm header-stamp-btn" style="display:none">🎫 スタンプ</button>
         </div>
-        <div class="header-mobile-controls" id="headerMobileControls" style="display:none">
+        <div class="header-mobile-controls" id="headerMobileControls">
           <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoPrevBtn" title="前の写真">◀︎</button>
           <button type="button" class="btn btn-primary btn-xs" id="mobilePlayBtn" title="再生/停止">▶</button>
           <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoNextBtn" title="次の写真">▶︎</button>
