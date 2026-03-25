@@ -5525,40 +5525,23 @@ function closeTravelogueModal() {
 
 /** モバイルタブを切り替え（地図⇔旅行記） */
 async function switchMobileTab(tab, tripToShow) {
-  const headerTabMap = document.getElementById('headerTabMap');
-  const headerTabTravelogue = document.getElementById('headerTabTravelogue');
+  // 新実装：タブ切り替えは廃止、旅行記はモーダルで表示
   const mobileTravelogueView = document.getElementById('mobileTravelogueView');
-  const mobileTravelogueContent = document.getElementById('mobileTravelogueContent');
-  const mobileTravelogueTitle = document.getElementById('mobileTravelogueTitle');
-  const headerMobileMapControls = document.getElementById('headerMobileMapControls');
-  const headerMobileTravelogueControls = document.getElementById('headerMobileTravelogueControls');
 
   if (tab === 'map') {
-    // 地図タブ
-    headerTabMap?.classList.add('active');
-    headerTabTravelogue?.classList.remove('active');
+    // 地図タブ（モバイル専用ビューを非表示）
     if (mobileTravelogueView) mobileTravelogueView.style.display = 'none';
-
-    // コントロールを切り替え
-    if (headerMobileMapControls) headerMobileMapControls.style.display = 'flex';
-    if (headerMobileTravelogueControls) headerMobileTravelogueControls.style.display = 'none';
   } else if (tab === 'travelogue') {
-    // 旅行記タブ → モーダルで表示
+    // 旅行記 → モーダルで表示
     const tripToDisplay = tripToShow || currentTrip;
     if (tripToDisplay) {
-      // 地図タブに戻す（UI状態）
-      headerTabMap?.classList.add('active');
-      headerTabTravelogue?.classList.remove('active');
-      if (headerMobileMapControls) headerMobileMapControls.style.display = 'flex';
-      if (headerMobileTravelogueControls) headerMobileTravelogueControls.style.display = 'none';
-
-      // 旅行記モーダルを開く
       await showTravelogueModal(tripToDisplay);
     }
-    return; // 以降の処理をスキップ
+  }
 
-    // 以下は旧実装（モバイル専用ビュー）のため無効化
-    if (mobileTravelogueView && mobileTravelogueContent && tripToDisplay && false) {
+  // 以下は旧実装（モバイル専用ビュー）のため無効化
+  /*
+  if (false) {
       // タイトルを設定
       if (mobileTravelogueTitle) {
         mobileTravelogueTitle.textContent = tripToDisplay.name || '旅行記';
@@ -5721,6 +5704,7 @@ async function switchMobileTab(tab, tripToShow) {
       }
     }
   }
+  */ // コメントアウト終了
 }
 
 /** スタンプチェックがついた写真一覧を取得（スタンプボタン・旅行記で共通利用） */
@@ -6497,26 +6481,35 @@ function closeAnimeModal() {
 let animeImageViewerList = [];
 let animeImageViewerIndex = 0;
 
-function showAnimeImageViewer(animeList, startIndex = 0, tripName = '') {
+function showAnimeImageViewer(animeList, tripName = '') {
   if (!animeList || animeList.length === 0) return;
   animeImageViewerList = animeList;
-  animeImageViewerIndex = Math.max(0, Math.min(startIndex, animeList.length - 1));
   const modal = document.getElementById('animeImageViewerModal');
-  const imgEl = document.getElementById('animeImageViewerImage');
+  const bodyEl = document.querySelector('#animeImageViewerModal .anime-viewer-body');
   const counterEl = document.getElementById('animeImageViewerCounter');
   const titleEl = document.getElementById('animeImageViewerTitle');
   const prevBtn = document.getElementById('animeImageViewerPrev');
   const nextBtn = document.getElementById('animeImageViewerNext');
-  if (!modal || !imgEl) return;
+  if (!modal || !bodyEl) return;
+
   if (titleEl) titleEl.textContent = tripName ? `${tripName} - アニメ画像` : 'アニメ画像';
-  imgEl.src = animeImageViewerList[animeImageViewerIndex].url;
-  const showNav = animeImageViewerList.length > 1;
+
+  // カウンター表示
   if (counterEl) {
-    counterEl.textContent = showNav ? `${animeImageViewerIndex + 1} / ${animeImageViewerList.length}` : '';
-    counterEl.style.display = showNav ? '' : 'none';
+    counterEl.textContent = `全 ${animeList.length} 枚`;
+    counterEl.style.display = '';
   }
-  if (prevBtn) prevBtn.style.display = showNav ? '' : 'none';
-  if (nextBtn) nextBtn.style.display = showNav ? '' : 'none';
+
+  // 前後ボタンを非表示（スクロール表示のため不要）
+  if (prevBtn) prevBtn.style.display = 'none';
+  if (nextBtn) nextBtn.style.display = 'none';
+
+  // すべてのアニメ画像を縦にスクロール表示
+  bodyEl.innerHTML = animeList.map((anime, index) => {
+    const styleLabel = anime.style ? ` (${escapeHtml(anime.style)})` : '';
+    return `<img src="${escapeHtml(anime.url)}" alt="アニメ画像 ${index + 1}${styleLabel}" class="anime-viewer-display-img" loading="lazy">`;
+  }).join('');
+
   modal.classList.add('open');
 }
 
@@ -6635,71 +6628,92 @@ async function updateHeaderInfo() {
   const line2 = document.getElementById('headerLine2');
   const headerInfo = document.querySelector('.header-info');
   const videoBtn = document.getElementById('headerVideoBtn');
+  const headerLogo = document.getElementById('headerLogo');
   if (!line1 || !line2) return;
   if (!currentTrip) {
     line1.textContent = 'トリップを選択';
     line2.textContent = '';
-    if (headerInfo) headerInfo.classList.remove('header-info-mobile');
+    if (headerInfo) {
+      headerInfo.classList.remove('header-info-mobile');
+      headerInfo.style.display = ''; // 表示
+    }
+
+    // すべてのボタンを非表示
     if (videoBtn) videoBtn.style.display = 'none';
+    const animeBtn = document.getElementById('headerAnimeBtn');
+    if (animeBtn) animeBtn.style.display = 'none';
     const stampBtn = document.getElementById('headerStampBtn');
     if (stampBtn) stampBtn.style.display = 'none';
-    const travelogueBtn = document.getElementById('headerTravelogueBtn');
-    if (travelogueBtn) travelogueBtn.style.display = 'none';
-    const headerTripNameMobile = document.getElementById('headerTripNameMobile');
-    if (headerTripNameMobile) headerTripNameMobile.textContent = 'トリップを選択';
-    const headerTabTravelogue = document.getElementById('headerTabTravelogue');
-    if (headerTabTravelogue) headerTabTravelogue.style.display = 'none';
-    // モバイル地図タブ用のボタンも非表示
-    const mobileMapVideoBtn = document.getElementById('mobileMapVideoBtn');
-    if (mobileMapVideoBtn) mobileMapVideoBtn.style.display = 'none';
-    const mobileMapAnimeBtn = document.getElementById('mobileMapAnimeBtn');
-    if (mobileMapAnimeBtn) mobileMapAnimeBtn.style.display = 'none';
-    const mobileMapStampBtn = document.getElementById('mobileMapStampBtn');
-    if (mobileMapStampBtn) mobileMapStampBtn.style.display = 'none';
+    if (headerMobileTravelogueBtn) headerMobileTravelogueBtn.style.display = 'none';
+    const mobileVideoBtn = document.getElementById('mobileVideoBtn');
+    if (mobileVideoBtn) mobileVideoBtn.style.display = 'none';
+    const mobileAnimeBtn = document.getElementById('mobileAnimeBtn');
+    if (mobileAnimeBtn) mobileAnimeBtn.style.display = 'none';
+    const mobileStampBtn = document.getElementById('mobileStampBtn');
+    if (mobileStampBtn) mobileStampBtn.style.display = 'none';
+
+    // ヘッダーコントロールの表示制御
+    const headerControls = document.getElementById('headerControls');
+    const headerMobileContent = document.getElementById('headerMobileContent');
+    const headerMobileControls = document.getElementById('headerMobileControls');
+    if (isMobileView()) {
+      if (headerControls) headerControls.style.display = 'none';
+      if (headerMobileContent) headerMobileContent.style.display = 'none';
+      if (headerMobileControls) headerMobileControls.style.display = 'none';
+    } else {
+      if (headerControls) headerControls.style.display = 'flex';
+      if (headerMobileContent) headerMobileContent.style.display = 'none';
+      if (headerMobileControls) headerMobileControls.style.display = 'none';
+    }
+
+    // ロゴを表示
+    if (headerLogo) headerLogo.classList.remove('hidden');
     return;
   }
-  if (videoBtn) {
-    videoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
+  // ロゴの表示制御：ウェブは常に表示、モバイルはトリップ選択時に非表示
+  if (headerLogo) {
+    if (isMobileView()) {
+      headerLogo.classList.add('hidden');
+    } else {
+      headerLogo.classList.remove('hidden');
+    }
   }
   const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
     (currentTrip.travelogueHistory?.length > 0);
-  const travelogueBtn = document.getElementById('headerTravelogueBtn');
-  if (travelogueBtn) {
-    travelogueBtn.style.display = (hasTravelogue && isMobileView()) ? '' : 'none';
+  const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+  let hasStamps = false;
+  if (currentTrip.isParent) {
+    const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
+    hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
+  } else {
+    hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
+  }
+
+  // デスクトップボタンの表示制御
+  if (videoBtn) {
+    videoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
+  }
+  const animeBtn = document.getElementById('headerAnimeBtn');
+  if (animeBtn) {
+    animeBtn.style.display = animes.length > 0 ? '' : 'none';
   }
   const stampBtn = document.getElementById('headerStampBtn');
   if (stampBtn) {
-    // スタンプがある場合に表示（親トリップの場合は子トリップも含む）
-    let hasStamps = false;
-    if (currentTrip.isParent) {
-      const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
-      hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
-    } else {
-      hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
-    }
     stampBtn.style.display = hasStamps ? '' : 'none';
   }
 
-  // モバイル地図タブ用のボタン表示制御
-  const mobileMapVideoBtn = document.getElementById('mobileMapVideoBtn');
-  if (mobileMapVideoBtn) {
-    mobileMapVideoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
+  // モバイルボタンの表示制御
+  const mobileVideoBtn = document.getElementById('mobileVideoBtn');
+  if (mobileVideoBtn) {
+    mobileVideoBtn.style.display = getTripVideoUrls().length > 0 ? '' : 'none';
   }
-  const mobileMapAnimeBtn = document.getElementById('mobileMapAnimeBtn');
-  if (mobileMapAnimeBtn) {
-    const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
-    mobileMapAnimeBtn.style.display = animes.length > 0 ? '' : 'none';
+  const mobileAnimeBtn = document.getElementById('mobileAnimeBtn');
+  if (mobileAnimeBtn) {
+    mobileAnimeBtn.style.display = animes.length > 0 ? '' : 'none';
   }
-  const mobileMapStampBtn = document.getElementById('mobileMapStampBtn');
-  if (mobileMapStampBtn) {
-    let hasStamps = false;
-    if (currentTrip.isParent) {
-      const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
-      hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
-    } else {
-      hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
-    }
-    mobileMapStampBtn.style.display = hasStamps ? '' : 'none';
+  const mobileStampBtn = document.getElementById('mobileStampBtn');
+  if (mobileStampBtn) {
+    mobileStampBtn.style.display = hasStamps ? '' : 'none';
   }
   const name = currentTrip.name || '（無題）';
   const url = currentTrip.url;
@@ -6714,33 +6728,44 @@ async function updateHeaderInfo() {
     nameHtml = escapeHtml(name);
   }
 
+  // ヘッダーコントロールの表示切り替え
+  const headerControls = document.getElementById('headerControls');
+  const headerMobileContent = document.getElementById('headerMobileContent');
+  const headerMobileControls = document.getElementById('headerMobileControls');
+  const headerMobileTravelogueBtn = document.getElementById('headerMobileTravelogueBtn');
+  const headerMobileTripNameShort = document.getElementById('headerMobileTripNameShort');
+
   if (isMobileView()) {
-    const hasTravelogueMobile = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
-      (currentTrip.travelogueHistory?.length > 0);
-    if (hasTravelogueMobile) {
-      // 旅行記がある場合は旅行記へのリンク
-      line1.innerHTML = `<a href="#" class="header-trip-link header-travelogue-link-mobile">${escapeHtml(name)}</a>`;
-    } else if (url) {
-      // 旅行記がなくブログURLがある場合はブログへのリンク
-      line1.innerHTML = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(name)}</a>`;
-    } else {
-      // リンクなし
-      line1.innerHTML = escapeHtml(name);
-    }
+    // モバイル表示
+    if (headerControls) headerControls.style.display = 'none';
+    if (headerMobileContent) headerMobileContent.style.display = 'flex';
+    if (headerMobileControls) headerMobileControls.style.display = 'flex';
 
-    line2.textContent = '';
-    if (headerInfo) headerInfo.classList.add('header-info-mobile');
+    // headerInfoは非表示（モバイル旅行記ボタンを使用）
+    if (headerInfo) headerInfo.style.display = 'none';
 
-    // 旅行記リンクにクリックイベントを追加
-    const travelogueLinkMobile = line1.querySelector('.header-travelogue-link-mobile');
-    if (travelogueLinkMobile) {
-      travelogueLinkMobile.addEventListener('click', (e) => {
-        e.preventDefault();
-        showTravelogueModal();
-      });
+    // モバイル旅行記ボタンの表示制御
+    if (headerMobileTravelogueBtn && headerMobileTripNameShort) {
+      if (hasTravelogue) {
+        // 旅行記がある場合、ボタンを表示
+        headerMobileTravelogueBtn.style.display = 'flex';
+        // トリップ名を短縮して表示（最大8文字）
+        const tripName = currentTrip.name || '（無題）';
+        const shortName = tripName.length > 8 ? tripName.substring(0, 8) + '…' : tripName;
+        headerMobileTripNameShort.textContent = shortName;
+      } else {
+        headerMobileTravelogueBtn.style.display = 'none';
+      }
     }
   } else {
-    if (headerInfo) headerInfo.classList.remove('header-info-mobile');
+    // デスクトップ表示
+    if (headerControls) headerControls.style.display = 'flex';
+    if (headerMobileContent) headerMobileContent.style.display = 'none';
+    if (headerMobileControls) headerMobileControls.style.display = 'none';
+    if (headerInfo) {
+      headerInfo.classList.remove('header-info-mobile');
+      headerInfo.style.display = ''; // 表示
+    }
     const gpxInfo = await getGpsInfo();
     const photos = currentTrip.isParent ? [] : (currentTrip.photos || []);
     let line1Html = nameHtml;
@@ -6803,30 +6828,6 @@ async function updateHeaderInfo() {
 
   // 旅行記履歴リンクを更新
   updateTravelogueHistoryLinks();
-
-  // モバイルタブの表示制御
-  const headerTabTravelogue = document.getElementById('headerTabTravelogue');
-  const headerTripNameMobile = document.getElementById('headerTripNameMobile');
-  const headerMobileMapControls = document.getElementById('headerMobileMapControls');
-  const headerMobileTravelogueControls = document.getElementById('headerMobileTravelogueControls');
-
-  if (isMobileView()) {
-    // トリップ名は表示しない（削除済み）
-    // if (headerTripNameMobile && currentTrip) {
-    //   headerTripNameMobile.textContent = currentTrip.name || '（無題）';
-    // }
-    if (headerTabTravelogue) {
-      if (hasTravelogue) {
-        headerTabTravelogue.style.display = '';
-      } else {
-        headerTabTravelogue.style.display = 'none';
-      }
-    }
-
-    // モバイルコントロールの初期状態を設定（地図タブがデフォルト）
-    if (headerMobileMapControls) headerMobileMapControls.style.display = 'flex';
-    if (headerMobileTravelogueControls) headerMobileTravelogueControls.style.display = 'none';
-  }
 }
 
 function updateTripSheetTriggerLabel() {
@@ -7339,9 +7340,14 @@ function initEventListeners() {
     const urls = getTripVideoUrls();
     if (urls.length > 0) playVideoSequence(urls);
   };
-  const headerTravelogueBtn = document.getElementById('headerTravelogueBtn');
-  if (headerTravelogueBtn) headerTravelogueBtn.onclick = () => {
-    if (currentTrip) showTravelogueModal();
+  const headerAnimeBtn = document.getElementById('headerAnimeBtn');
+  if (headerAnimeBtn) headerAnimeBtn.onclick = () => {
+    if (currentTrip) {
+      const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+      if (animes.length > 0) {
+        showAnimeImageViewer(animes, currentTrip.name);
+      }
+    }
   };
   const headerStampBtn = document.getElementById('headerStampBtn');
   if (headerStampBtn) headerStampBtn.onclick = () => {
@@ -7349,17 +7355,13 @@ function initEventListeners() {
     if (currentTrip) showStampRallyModal(currentTrip);
   };
 
-  // モバイルタブの切り替え
-  const headerTabMap = document.getElementById('headerTabMap');
-  const headerTabTravelogue = document.getElementById('headerTabTravelogue');
-  if (headerTabMap) {
-    headerTabMap.onclick = () => {
-      switchMobileTab('map');
-    };
-  }
-  if (headerTabTravelogue) {
-    headerTabTravelogue.onclick = () => {
-      switchMobileTab('travelogue');
+  // モバイル旅行記ボタン
+  const headerMobileTravelogueBtn = document.getElementById('headerMobileTravelogueBtn');
+  if (headerMobileTravelogueBtn) {
+    headerMobileTravelogueBtn.onclick = () => {
+      if (currentTrip) {
+        showTravelogueModal(currentTrip);
+      }
     };
   }
 
@@ -7380,38 +7382,23 @@ function initEventListeners() {
       }
     };
   }
-  const mobileStampBtn = document.getElementById('mobileStampBtn');
-  if (mobileStampBtn) mobileStampBtn.onclick = () => {
-    if (playTimer) stopPlay();
-    if (currentTrip) showStampRallyModal(currentTrip);
+  // モバイル用のボタン
+  const mobileVideoBtn = document.getElementById('mobileVideoBtn');
+  if (mobileVideoBtn) mobileVideoBtn.onclick = () => {
+    const urls = getTripVideoUrls();
+    if (urls.length > 0) playVideoSequence(urls);
   };
   const mobileAnimeBtn = document.getElementById('mobileAnimeBtn');
   if (mobileAnimeBtn) mobileAnimeBtn.onclick = () => {
     if (currentTrip) {
       const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
       if (animes.length > 0) {
-        showAnimeImageViewer(animes, 0, currentTrip.name);
+        showAnimeImageViewer(animes, currentTrip.name);
       }
     }
   };
-
-  // モバイル地図タブ用のボタン
-  const mobileMapVideoBtn = document.getElementById('mobileMapVideoBtn');
-  if (mobileMapVideoBtn) mobileMapVideoBtn.onclick = () => {
-    const urls = getTripVideoUrls();
-    if (urls.length > 0) playVideoSequence(urls);
-  };
-  const mobileMapAnimeBtn = document.getElementById('mobileMapAnimeBtn');
-  if (mobileMapAnimeBtn) mobileMapAnimeBtn.onclick = () => {
-    if (currentTrip) {
-      const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
-      if (animes.length > 0) {
-        showAnimeImageViewer(animes, 0, currentTrip.name);
-      }
-    }
-  };
-  const mobileMapStampBtn = document.getElementById('mobileMapStampBtn');
-  if (mobileMapStampBtn) mobileMapStampBtn.onclick = () => {
+  const mobileStampBtn = document.getElementById('mobileStampBtn');
+  if (mobileStampBtn) mobileStampBtn.onclick = () => {
     if (playTimer) stopPlay();
     if (currentTrip) showStampRallyModal(currentTrip);
   };

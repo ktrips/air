@@ -22,36 +22,26 @@
           <div class="header-line2" id="headerLine2"></div>
         </div>
         <div class="header-mobile-content" id="headerMobileContent" style="display:none">
-          <div class="header-tabs-mobile" id="headerTabsMobile">
-            <button type="button" class="header-tab active" id="headerTabMap" data-tab="map">
-              <span class="header-tab-label">地図</span>
-            </button>
-            <button type="button" class="header-tab" id="headerTabTravelogue" data-tab="travelogue" style="display:none">
-              <span class="header-tab-label">旅行記</span>
-            </button>
-          </div>
-          <div class="header-mobile-controls" id="headerMobileControls">
-            <div class="header-mobile-map-controls" id="headerMobileMapControls">
-              <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoPrevBtn" title="前の写真">◀︎</button>
-              <button type="button" class="btn btn-primary btn-xs" id="mobilePlayBtn" title="再生/停止">▶</button>
-              <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoNextBtn" title="次の写真">▶︎</button>
-              <button type="button" class="btn btn-primary btn-xs" id="mobileMapVideoBtn" style="display:none" title="動画">🎬</button>
-              <button type="button" class="btn btn-secondary btn-xs" id="mobileMapAnimeBtn" style="display:none" title="アニメ画像">🖼️</button>
-              <button type="button" class="btn btn-stamp btn-xs" id="mobileMapStampBtn" style="display:none" title="スタンプラリー">🎫</button>
-            </div>
-            <div class="header-mobile-travelogue-controls" id="headerMobileTravelogueControls" style="display:none">
-              <button type="button" class="btn btn-stamp btn-xs" id="mobileStampBtn" style="display:none" title="スタンプラリー">🎫</button>
-              <button type="button" class="btn btn-secondary btn-xs" id="mobileAnimeBtn" style="display:none" title="アニメ画像">🖼️</button>
-            </div>
-          </div>
+          <button type="button" class="header-mobile-travelogue-btn" id="headerMobileTravelogueBtn" style="display:none">
+            <span class="header-mobile-trip-name" id="headerMobileTripNameShort"></span>
+            <span class="header-mobile-travelogue-label">📖 旅行記</span>
+          </button>
         </div>
         <div class="header-controls" id="headerControls">
           <button type="button" class="btn btn-secondary btn-sm" id="photoPrevBtn">前</button>
           <button type="button" class="btn btn-primary btn-sm" id="playBtn">▶ 再生</button>
           <button type="button" class="btn btn-secondary btn-sm" id="photoNextBtn">次</button>
           <button type="button" id="headerVideoBtn" class="btn btn-primary btn-sm header-video-btn" style="display:none">🎬 動画</button>
-          <button type="button" id="headerTravelogueBtn" class="btn btn-travelogue btn-sm header-travelogue-btn" style="display:none" title="旅行記">📖 旅行記</button>
+          <button type="button" id="headerAnimeBtn" class="btn btn-secondary btn-sm header-anime-btn" style="display:none">🖼️ アニメ</button>
           <button type="button" id="headerStampBtn" class="btn btn-stamp btn-sm header-stamp-btn" style="display:none">🎫 スタンプ</button>
+        </div>
+        <div class="header-mobile-controls" id="headerMobileControls" style="display:none">
+          <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoPrevBtn" title="前の写真">◀︎</button>
+          <button type="button" class="btn btn-primary btn-xs" id="mobilePlayBtn" title="再生/停止">▶</button>
+          <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoNextBtn" title="次の写真">▶︎</button>
+          <button type="button" class="btn btn-primary btn-xs" id="mobileVideoBtn" style="display:none" title="動画">🎬</button>
+          <button type="button" class="btn btn-secondary btn-xs" id="mobileAnimeBtn" style="display:none" title="アニメ">🖼️</button>
+          <button type="button" class="btn btn-stamp btn-xs" id="mobileStampBtn" style="display:none" title="スタンプ">🎫</button>
         </div>
         <button type="button" class="hamburger-btn" id="hamburgerBtn" aria-label="メニュー">
           <span></span><span></span><span></span>
