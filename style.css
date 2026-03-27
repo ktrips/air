@@ -212,26 +212,39 @@ body {
       top: 0;
       left: 0;
       right: 0;
-      height: 24px;
+      height: 32px;
       z-index: 999;
       opacity: 0;
       transition: opacity 0.3s;
       pointer-events: none;
       cursor: pointer;
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, transparent 100%);
     }
 
     .mobile-header-pulldown-bar::before {
       content: '';
       position: absolute;
-      top: 0;
+      top: 8px;
       left: 50%;
       transform: translateX(-50%);
-      width: 60px;
-      height: 4px;
-      background: rgba(255, 255, 255, 0.4);
-      border-radius: 0 0 4px 4px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      transition: background 0.2s;
+      width: 80px;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 3px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3), 0 1px 4px rgba(0, 0, 0, 0.2);
+      transition: all 0.2s;
+    }
+
+    .mobile-header-pulldown-bar::after {
+      content: '↓';
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      color: rgba(255, 255, 255, 0.7);
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      transition: opacity 0.2s;
     }
 
     body.header-hidden .mobile-header-pulldown-bar {
@@ -241,7 +254,18 @@ body {
 
     /* プルダウン中のアニメーション */
     body.header-pulling .mobile-header-pulldown-bar::before {
-      background: rgba(255, 255, 255, 0.7);
+      background: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 3px 16px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3);
+    }
+
+    body.header-pulling .mobile-header-pulldown-bar::after {
+      opacity: 1;
+      animation: pulldown-bounce 0.5s ease-in-out infinite;
+    }
+
+    @keyframes pulldown-bounce {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(2px); }
     }
   }
 

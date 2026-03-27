@@ -3174,7 +3174,7 @@ function hidePlayOverlay() {
 }
 
 /** 自動再生中の停止ボタン: 動画再生中なら動画を止めて次へ、そうでなければ再生を停止 */
-function handlePlaybackStop() {
+async function handlePlaybackStop() {
   if (playbackVideoEndCallback) {
     const cb = playbackVideoEndCallback;
     playbackVideoEndCallback = null;
@@ -3193,6 +3193,35 @@ function handlePlaybackStop() {
     cb();
   } else {
     stopPlay();
+    // スタンプ一覧を表示せず、トリップ全体を再表示
+    await showTripOverview();
+  }
+}
+
+/** トリップ全体を地図に表示 */
+async function showTripOverview() {
+  if (!currentTrip) return;
+
+  await updateMapMarkers();
+
+  // 全てのポイントが見えるように地図を調整
+  const photos = getDisplayPhotos();
+  if (photos.length > 0 && map) {
+    const bounds = [];
+    photos.forEach(p => {
+      if (p.lat != null && p.lng != null) {
+        bounds.push([p.lat, p.lng]);
+      }
+    });
+    if (bounds.length > 0) {
+      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
+    }
+  }
+
+  // サムネイルを表示
+  if (!thumbnailsVisible) {
+    thumbnailsVisible = true;
+    renderThumbnails();
   }
 }
 
