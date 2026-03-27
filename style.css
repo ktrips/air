@@ -41,9 +41,15 @@ body {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
   box-shadow: var(--shadow);
+  position: relative;
+  z-index: 1000;
+  transition: transform 0.3s ease;
 }
 .header.hidden {
   display: none;
+}
+.header.header-auto-hidden {
+  transform: translateY(-100%);
 }
 
 .header-logo {
@@ -203,14 +209,62 @@ body {
   .header {
     gap: 0.5rem;
     padding: 0.75rem 1rem;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+  }
+
+  .main {
+    height: 100vh;
+  }
+
+  .map-container {
+    padding-top: 60px;
+    transition: padding-top 0.3s ease;
+  }
+
+  body.header-hidden .map-container {
+    padding-top: 0;
+  }
+
+  /* プルダウンインジケーター */
+  .header::after {
+    content: '↓';
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.6);
+    background: rgba(0, 0, 0, 0.3);
+    width: 30px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0 0 8px 8px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+
+  body.header-hidden .header::after {
+    opacity: 0;
+  }
+
+  .header:not(.header-auto-hidden)::after {
+    opacity: 0;
   }
 
   .header-logo {
     font-size: 1.25rem;
+    display: block !important;
   }
 
   .header-logo.hidden {
-    display: none;
+    display: block !important;
   }
 
   .header-mobile-content {
@@ -263,6 +317,15 @@ body {
 }
 .header-trip-link:hover {
   text-decoration: underline;
+}
+.header-blog-icon {
+  font-size: 0.85rem;
+  text-decoration: none;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.header-blog-icon:hover {
+  opacity: 1;
 }
 
 .header-gpx {
@@ -1463,6 +1526,10 @@ body.app-playing .thumbnail-close-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 110px;
+}
+.map-trip-action-name-clickable:hover {
+  color: var(--trip-color, #e1306c);
+  text-decoration: underline;
 }
 .map-trip-action-btns {
   display: flex;

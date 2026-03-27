@@ -306,10 +306,26 @@ function initMap() {
   // レイヤー切り替えコントロールを追加
   addLayerControl();
 
-  // 親トリップ表示時の地図上の旅行記・動画・アニメボタン用イベント委譲
+  // 親トリップ表示時の地図上の旅行記・動画・アニメボタン、トリップ名クリック用イベント委譲
   const mapContainer = map.getContainer();
   if (mapContainer) {
     mapContainer.addEventListener('click', (e) => {
+      // トリップ名のクリック（子トリップへの遷移）
+      const tripNameEl = e.target.closest('.map-trip-action-name-clickable');
+      if (tripNameEl) {
+        const card = e.target.closest('.map-trip-action-card');
+        if (!card) return;
+        const tripId = card.dataset.tripId;
+        if (!tripId) return;
+        const trip = (myTrips || []).find(t => t.id === tripId);
+        if (!trip) return;
+        e.preventDefault();
+        e.stopPropagation();
+        loadTripById(tripId);
+        return;
+      }
+
+      // ボタンのクリック（旅行記・動画・アニメ表示）
       const btn = e.target.closest('.map-trip-action-travelogue, .map-trip-action-video, .map-trip-action-anime');
       if (!btn) return;
       const card = e.target.closest('.map-trip-action-card');
@@ -2057,8 +2073,8 @@ async function updateMapMarkers() {
           }
         }
         if (anchorLat != null && anchorLng != null) {
-          const offsetDeg = 0.04;
-          const minCardDist = 0.05;
+          const offsetDeg = 0.06;
+          const minCardDist = 0.08;
           const minRouteDist = 0.035;
 
           const dist = (a, b) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2);
@@ -2105,8 +2121,8 @@ async function updateMapMarkers() {
             }
           }
           if (cardLat == null) {
-            cardLat = anchorLat + 0.045;
-            cardLng = anchorLng + 0.045;
+            cardLat = anchorLat + 0.065;
+            cardLng = anchorLng + 0.065;
           }
           placedTripCards.push([cardLat, cardLng]);
           if (pts.length >= 2) routePolylines.push(pts);
@@ -2115,7 +2131,7 @@ async function updateMapMarkers() {
           const tripId = trip.id;
           const tripMarkerHtml = `
             <div class="map-trip-action-card" style="--trip-color:${color}" data-trip-id="${escapeHtml(tripId)}">
-              <div class="map-trip-action-name">${tripName}</div>
+              <div class="map-trip-action-name map-trip-action-name-clickable" style="cursor:pointer;" title="このトリップを表示">${tripName}</div>
               <div class="map-trip-action-btns">
                 ${hasTravelogue ? '<button type="button" class="map-trip-action-btn map-trip-action-travelogue" title="旅行記"><span class="map-trip-action-label">旅行記</span>📖</button>' : ''}
                 ${hasVideo ? '<button type="button" class="map-trip-action-btn map-trip-action-video" title="動画">🎬</button>' : ''}
@@ -5576,7 +5592,7 @@ async function showTravelogueModal(trip) {
       stampSection.className = 'travelogue-stamp-section';
       stampSection.innerHTML = `
         <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
-          <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
+          <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 スタンプ一覧</h3>
           <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
           <div class="stamp-rally-grid" style="background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;padding:2rem;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">${stampPhotos.map((p, i) => {
             const stamped = !!(p.url && p.url.trim());
@@ -5842,7 +5858,7 @@ async function switchMobileTab(tab, tripToShow) {
           stampSection.className = 'travelogue-stamp-section';
           stampSection.innerHTML = `
             <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
-              <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 御朱印帳</h3>
+              <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 スタンプ一覧</h3>
               <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
               <div class="stamp-rally-grid" style="background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;padding:2rem;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">${stampPhotos.map((p, i) => {
                 const stamped = !!(p.url && p.url.trim());
@@ -6878,18 +6894,9 @@ async function updateHeaderInfo() {
       (c.travelogueHistory?.length > 0)
     );
   }
-  // - ウェブ: 常にロゴを表示
-  // - モバイル: 旅行記がある場合はロゴを非表示、旅行記がない場合はロゴを表示
+  // ロゴは常に表示（ウェブ・モバイル共通）
   if (headerLogo) {
-    if (isMobileView()) {
-      if (hasTravelogue) {
-        headerLogo.classList.add('hidden');
-      } else {
-        headerLogo.classList.remove('hidden');
-      }
-    } else {
-      headerLogo.classList.remove('hidden');
-    }
+    headerLogo.classList.remove('hidden');
   }
   let animes = [];
   if (currentTrip.isParent) {
@@ -6939,14 +6946,14 @@ async function updateHeaderInfo() {
   const name = currentTrip.name || '（無題）';
   const url = currentTrip.url;
 
-  // デスクトップ用のトリップ名HTML（旅行記優先、次にブログURL）
+  // デスクトップ用のトリップ名HTML（クリックで地図表示に遷移）
   let nameHtml;
-  if (hasTravelogue) {
-    nameHtml = `<a href="#" class="header-trip-link header-travelogue-link-desktop">${escapeHtml(name)}</a>`;
-  } else if (url) {
-    nameHtml = `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-trip-link">${escapeHtml(name)}</a>`;
+  if (url) {
+    // ブログURLがある場合は、トリップ名はクリック可能（地図遷移）、URLアイコンを追加
+    nameHtml = `<a href="#" class="header-trip-link header-trip-map-link">${escapeHtml(name)}</a> <a href="${escapeHtml(url)}" target="_blank" rel="noopener" class="header-blog-icon" title="ブログを開く">🔗</a>`;
   } else {
-    nameHtml = escapeHtml(name);
+    // クリックで地図表示に遷移
+    nameHtml = `<a href="#" class="header-trip-link header-trip-map-link">${escapeHtml(name)}</a>`;
   }
 
   // ヘッダーコントロールの表示切り替え
@@ -7033,12 +7040,14 @@ async function updateHeaderInfo() {
       });
     }
 
-    // デスクトップの旅行記リンクにクリックイベントを追加
-    const travelogueLinkDesktop = line1.querySelector('.header-travelogue-link-desktop');
-    if (travelogueLinkDesktop) {
-      travelogueLinkDesktop.addEventListener('click', (e) => {
+    // デスクトップのトリップ名リンクにクリックイベントを追加（地図表示に遷移）
+    const tripMapLink = line1.querySelector('.header-trip-map-link');
+    if (tripMapLink) {
+      tripMapLink.addEventListener('click', (e) => {
         e.preventDefault();
-        showTravelogueModal();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
       });
     }
 
@@ -7105,11 +7114,28 @@ function updateMapTripNameOverlay() {
 
   if (currentTrip && currentTrip.name) {
     const tripColor = currentTrip.color || '#e1306c';
-    overlay.innerHTML = `
-      <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
-        <div class="map-trip-name-text">${escapeHtml(currentTrip.name)}</div>
-      </div>
-    `;
+    const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
+      (currentTrip.travelogueHistory?.length > 0);
+    const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+    const hasAnime = animes.length > 0;
+
+    if (isMobileView()) {
+      // モバイル：左に旅行記ボタン、中央にトリップ名、右にアニメボタン
+      overlay.innerHTML = `
+        <div class="map-trip-name-card map-trip-name-card-mobile" style="--trip-color: ${tripColor}" id="mapTripNameCard">
+          ${hasTravelogue ? '<button type="button" class="map-trip-name-btn map-trip-name-btn-travelogue" title="旅行記">📖</button>' : '<div class="map-trip-name-spacer"></div>'}
+          <div class="map-trip-name-text" id="mapTripNameText">${escapeHtml(currentTrip.name)}</div>
+          ${hasAnime ? '<button type="button" class="map-trip-name-btn map-trip-name-btn-anime" title="アニメ">🎨</button>' : '<div class="map-trip-name-spacer"></div>'}
+        </div>
+      `;
+    } else {
+      // デスクトップ：従来通り
+      overlay.innerHTML = `
+        <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
+          <div class="map-trip-name-text">${escapeHtml(currentTrip.name)}</div>
+        </div>
+      `;
+    }
     overlay.classList.add('visible');
 
     // 再生ボタンにもトリップカラーを適用
@@ -7121,37 +7147,69 @@ function updateMapTripNameOverlay() {
     }
 
     // クリックイベントを追加
-    const card = document.getElementById('mapTripNameCard');
-    if (card) {
-      const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
-        (currentTrip.travelogueHistory?.length > 0);
-      card.style.cursor = 'pointer';
-      card.title = hasTravelogue ? '旅行記を表示' : '地図を全体表示';
-      card.onclick = () => {
-        if (hasTravelogue) {
+    if (isMobileView()) {
+      // モバイル：各ボタンとトリップ名に個別のイベント
+      const travelogueBtn = overlay.querySelector('.map-trip-name-btn-travelogue');
+      if (travelogueBtn) {
+        travelogueBtn.onclick = (e) => {
+          e.stopPropagation();
           showTravelogueModal();
-          return;
-        }
-        // 旅行記が無い場合は従来の動作：全てのスポットが収まるように地図を表示
-        const photos = getDisplayPhotos();
-        if (photos.length > 0 && map) {
-          const bounds = [];
-          photos.forEach(p => {
-            if (p.lat != null && p.lng != null) {
-              bounds.push([p.lat, p.lng]);
-            }
-          });
-          if (bounds.length > 0) {
-            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
-          }
-        }
+        };
+      }
 
-        // サムネイルを表示
-        if (!thumbnailsVisible) {
-          thumbnailsVisible = true;
-          renderThumbnails();
-        }
-      };
+      const animeBtn = overlay.querySelector('.map-trip-name-btn-anime');
+      if (animeBtn) {
+        animeBtn.onclick = (e) => {
+          e.stopPropagation();
+          const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
+          if (animes.length > 0) {
+            showAnimeImageViewer(animes, currentTrip.name);
+          }
+        };
+      }
+
+      const tripNameText = document.getElementById('mapTripNameText');
+      if (tripNameText) {
+        tripNameText.style.cursor = 'pointer';
+        tripNameText.title = '地図を再読み込み';
+        tripNameText.onclick = () => {
+          if (currentTrip) {
+            loadTripById(currentTrip.id);
+          }
+        };
+      }
+    } else {
+      // デスクトップ：従来の動作
+      const card = document.getElementById('mapTripNameCard');
+      if (card) {
+        card.style.cursor = 'pointer';
+        card.title = hasTravelogue ? '旅行記を表示' : '地図を全体表示';
+        card.onclick = () => {
+          if (hasTravelogue) {
+            showTravelogueModal();
+            return;
+          }
+          // 旅行記が無い場合は従来の動作：全てのスポットが収まるように地図を表示
+          const photos = getDisplayPhotos();
+          if (photos.length > 0 && map) {
+            const bounds = [];
+            photos.forEach(p => {
+              if (p.lat != null && p.lng != null) {
+                bounds.push([p.lat, p.lng]);
+              }
+            });
+            if (bounds.length > 0) {
+              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+            }
+          }
+
+          // サムネイルを表示
+          if (!thumbnailsVisible) {
+            thumbnailsVisible = true;
+            renderThumbnails();
+          }
+        };
+      }
     }
   } else {
     overlay.classList.remove('visible');
@@ -7878,6 +7936,107 @@ function init() {
     loadTripsAndRender();
   } else {
     window.addEventListener('firebase-ready', loadTripsAndRender);
+  }
+
+  // モバイルでのヘッダー自動非表示
+  initMobileHeaderAutoHide();
+}
+
+function initMobileHeaderAutoHide() {
+  if (!isMobileView()) return;
+
+  const header = document.getElementById('appHeader');
+  if (!header) return;
+
+  let hasInteracted = false;
+  let isHeaderShowing = false;
+
+  const hideHeader = () => {
+    if (hasInteracted && isMobileView()) {
+      header.classList.add('header-auto-hidden');
+      document.body.classList.add('header-hidden');
+      isHeaderShowing = false;
+    }
+  };
+
+  const showHeader = () => {
+    header.classList.remove('header-auto-hidden');
+    document.body.classList.remove('header-hidden');
+    isHeaderShowing = true;
+  };
+
+  // 操作時にヘッダーを隠す
+  const markInteracted = () => {
+    if (!hasInteracted) {
+      hasInteracted = true;
+      setTimeout(hideHeader, 300);
+    } else if (isHeaderShowing) {
+      // プルダウンで表示した後、次の操作で隠す
+      setTimeout(hideHeader, 300);
+    }
+  };
+
+  // 地図クリック
+  if (map) {
+    map.on('click', markInteracted);
+  }
+
+  // 写真切り替えボタン
+  const photoNextBtn = document.getElementById('photoNextBtn');
+  const photoPrevBtn = document.getElementById('photoPrevBtn');
+  const mobilePhotoNextBtn = document.getElementById('mobilePhotoNextBtn');
+  const mobilePhotoPrevBtn = document.getElementById('mobilePhotoPrevBtn');
+  if (photoNextBtn) photoNextBtn.addEventListener('click', markInteracted);
+  if (photoPrevBtn) photoPrevBtn.addEventListener('click', markInteracted);
+  if (mobilePhotoNextBtn) mobilePhotoNextBtn.addEventListener('click', markInteracted);
+  if (mobilePhotoPrevBtn) mobilePhotoPrevBtn.addEventListener('click', markInteracted);
+
+  // 再生ボタン
+  const playBtn = document.getElementById('playBtn');
+  const mobilePlayBtn = document.getElementById('mobilePlayBtn');
+  if (playBtn) playBtn.addEventListener('click', markInteracted);
+  if (mobilePlayBtn) mobilePlayBtn.addEventListener('click', markInteracted);
+
+  // ヘッダー内のボタンをクリックした時の処理
+  header.addEventListener('click', (e) => {
+    if (e.target.closest('button, a')) {
+      // ボタンをクリックしてもヘッダーは表示状態を維持
+      if (header.classList.contains('header-auto-hidden')) {
+        showHeader();
+      }
+    }
+  });
+
+  // プルダウンでヘッダーを表示
+  let touchStartY = 0;
+  let touchCurrentY = 0;
+  let isPulling = false;
+
+  const mapContainer = document.querySelector('.map-container');
+  if (mapContainer) {
+    mapContainer.addEventListener('touchstart', (e) => {
+      if (!isMobileView() || !hasInteracted) return;
+      touchStartY = e.touches[0].clientY;
+      // 画面上部50pxからのスワイプで反応
+      if (touchStartY < 50) {
+        isPulling = true;
+      }
+    }, { passive: true });
+
+    mapContainer.addEventListener('touchmove', (e) => {
+      if (!isPulling) return;
+      touchCurrentY = e.touches[0].clientY;
+      const deltaY = touchCurrentY - touchStartY;
+      // 下方向に30px以上スワイプしたらヘッダーを表示
+      if (deltaY > 30) {
+        showHeader();
+        isPulling = false;
+      }
+    }, { passive: true });
+
+    mapContainer.addEventListener('touchend', () => {
+      isPulling = false;
+    }, { passive: true });
   }
 }
 
