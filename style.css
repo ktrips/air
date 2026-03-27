@@ -152,52 +152,23 @@ body {
   display: inline;
 }
 
-.header-mobile-travelogue-btn {
-  flex-shrink: 0;
+.header-mobile-content {
+  flex: 1;
   display: none;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.45rem 0.7rem;
-  background: rgba(255, 255, 255, 0.95);
-  color: var(--accent);
-  border: 2px solid currentColor;
-  border-radius: var(--radius);
-  font-size: 0.75rem;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-.header-mobile-travelogue-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.header-mobile-travelogue-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  background: rgba(255, 255, 255, 1);
-}
-
-.header-mobile-travelogue-btn:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  min-width: 0;
 }
 
 .header-mobile-trip-name {
-  max-width: 70px;
+  display: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.75rem;
-  color: inherit;
-}
-
-.header-mobile-travelogue-icon {
-  font-size: 1.1rem;
-  line-height: 1;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
 }
 
 .header-logo.hidden {
@@ -229,33 +200,49 @@ body {
     padding-top: 0;
   }
 
-  /* プルダウンインジケーター */
-  .header::after {
-    content: '↓';
-    position: absolute;
-    bottom: -20px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 1rem;
-    color: rgba(255, 255, 255, 0.6);
-    background: rgba(0, 0, 0, 0.3);
-    width: 30px;
-    height: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 0 0 8px 8px;
-    opacity: 0;
-    transition: opacity 0.3s;
-    pointer-events: none;
+  /* プルダウンバー */
+  .mobile-header-pulldown-bar {
+    display: none;
   }
 
-  body.header-hidden .header::after {
-    opacity: 0;
-  }
+  @media (max-width: 768px) {
+    .mobile-header-pulldown-bar {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 24px;
+      z-index: 999;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      cursor: pointer;
+    }
 
-  .header:not(.header-auto-hidden)::after {
-    opacity: 0;
+    .mobile-header-pulldown-bar::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 60px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.4);
+      border-radius: 0 0 4px 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      transition: background 0.2s;
+    }
+
+    body.header-hidden .mobile-header-pulldown-bar {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* プルダウン中のアニメーション */
+    body.header-pulling .mobile-header-pulldown-bar::before {
+      background: rgba(255, 255, 255, 0.7);
+    }
   }
 
   .header-logo {
@@ -264,6 +251,14 @@ body {
   }
 
   .header-logo.hidden {
+    display: block !important;
+  }
+
+  .header-mobile-content {
+    display: flex !important;
+  }
+
+  .header-mobile-trip-name {
     display: block !important;
   }
 

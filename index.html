@@ -17,10 +17,7 @@
     <header class="header" id="appHeader">
       <div class="header-logo" id="headerLogo" role="button" tabindex="0" aria-label="トリップ一覧に戻る">Air</div>
       <div class="header-mobile-content" id="headerMobileContent">
-        <button type="button" class="header-mobile-travelogue-btn" id="headerMobileTravelogueBtn">
-          <span class="header-mobile-trip-name" id="headerMobileTripNameShort"></span>
-          <span class="header-mobile-travelogue-icon">📖</span>
-        </button>
+        <div class="header-mobile-trip-name" id="headerMobileTripName"></div>
       </div>
       <div class="header-right">
         <div class="header-info">
@@ -51,6 +48,7 @@
 
     <div class="main">
       <div class="map-container">
+        <div class="mobile-header-pulldown-bar" id="mobileHeaderPulldownBar"></div>
         <div id="map3d" class="map-3d-layer" aria-hidden="true"></div>
         <div id="map"></div>
         <div class="map-trip-name-overlay" id="mapTripNameOverlay"></div>
