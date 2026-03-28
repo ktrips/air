@@ -3174,7 +3174,7 @@ function hidePlayOverlay() {
 }
 
 /** 自動再生中の停止ボタン: 動画再生中なら動画を止めて次へ、そうでなければ再生を停止 */
-async function handlePlaybackStop() {
+function handlePlaybackStop() {
   if (playbackVideoEndCallback) {
     const cb = playbackVideoEndCallback;
     playbackVideoEndCallback = null;
@@ -3194,34 +3194,38 @@ async function handlePlaybackStop() {
   } else {
     stopPlay();
     // スタンプ一覧を表示せず、トリップ全体を再表示
-    await showTripOverview();
+    showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
   }
 }
 
 /** トリップ全体を地図に表示 */
 async function showTripOverview() {
-  if (!currentTrip) return;
+  try {
+    if (!currentTrip) return;
 
-  await updateMapMarkers();
+    await updateMapMarkers();
 
-  // 全てのポイントが見えるように地図を調整
-  const photos = getDisplayPhotos();
-  if (photos.length > 0 && map) {
-    const bounds = [];
-    photos.forEach(p => {
-      if (p.lat != null && p.lng != null) {
-        bounds.push([p.lat, p.lng]);
+    // 全てのポイントが見えるように地図を調整
+    const photos = getDisplayPhotos();
+    if (photos.length > 0 && map) {
+      const bounds = [];
+      photos.forEach(p => {
+        if (p.lat != null && p.lng != null) {
+          bounds.push([p.lat, p.lng]);
+        }
+      });
+      if (bounds.length > 0) {
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
       }
-    });
-    if (bounds.length > 0) {
-      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
     }
-  }
 
-  // サムネイルを表示
-  if (!thumbnailsVisible) {
-    thumbnailsVisible = true;
-    renderThumbnails();
+    // サムネイルを表示
+    if (!thumbnailsVisible) {
+      thumbnailsVisible = true;
+      renderThumbnails();
+    }
+  } catch (err) {
+    console.error('showTripOverview エラー:', err);
   }
 }
 
@@ -4099,10 +4103,6 @@ function renderTripList() {
       if (animes.length > 0) {
         const thumbsWrap = document.createElement('div');
         thumbsWrap.className = 'trip-detail-anime-thumbs';
-        const label = document.createElement('span');
-        label.className = 'trip-detail-anime-label';
-        label.textContent = 'アニメ: ';
-        thumbsWrap.appendChild(label);
         animes.forEach((anime, idx) => {
           const img = document.createElement('img');
           img.src = anime.url;
@@ -4118,74 +4118,78 @@ function renderTripList() {
       }
     } else if (isSelected && t.isParent && !isMobileView()) {
       try {
-      // 親トリップ選択時: 子トリップの旅行記ボタン・動画ボタン・スタンプボタン・アニメサムネイルをインライン表示
+      // 親トリップ選択時: アニメサムネイル表示、トリップ名の横に旅行記・動画ボタン
       const children = getOrderedTrips().filter(x => x.parentId === t.id);
-      const travelogueChildren = children.filter(c =>
-        (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0)
-      );
-      const videoChildren = children.filter(c => getTripVideoUrlsForTrip(c).length > 0);
       const animeChildren = children.filter(c => ((c.generatedAnimes || c.animes || []).length > 0));
       const hasStamps = children.some(c => (c.photos || []).some(p => p.isStamp));
-      if (travelogueChildren.length > 0 || videoChildren.length > 0 || animeChildren.length > 0 || hasStamps) {
+
+      if (animeChildren.length > 0 || hasStamps) {
         const detail = document.createElement('div');
         detail.className = 'trip-detail-inline trip-detail-parent';
         if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
 
-        // ボタン用のコンテナ
-        const buttonsContainer = document.createElement('p');
-        buttonsContainer.className = 'trip-detail-meta';
-        buttonsContainer.style.display = 'flex';
-        buttonsContainer.style.gap = '0.5rem';
-        buttonsContainer.style.flexWrap = 'wrap';
-
-        // 全ての旅行記ボタン
-        if (travelogueChildren.length > 0) {
-          const parentBtn = document.createElement('button');
-          parentBtn.type = 'button';
-          parentBtn.className = 'btn btn-travelogue btn-sm trip-detail-btn';
-          parentBtn.textContent = '📖 全ての旅行記';
-          parentBtn.title = '子トリップの旅行記から選択';
-          parentBtn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(t); };
-          buttonsContainer.appendChild(parentBtn);
-        }
-        // 動画ボタン（複数）
-        if (videoChildren.length > 0) {
-          videoChildren.forEach(c => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'btn btn-primary btn-sm trip-detail-btn';
-            const vName = c.name || '（無題）';
-            btn.textContent = '🎬 ' + vName;
-            btn.title = vName;
-            btn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(c)); };
-            buttonsContainer.appendChild(btn);
-          });
-        }
-
         // スタンプボタン
         if (hasStamps) {
+          const stampRow = document.createElement('div');
+          stampRow.style.marginBottom = '0.75rem';
           const stampBtn = document.createElement('button');
           stampBtn.type = 'button';
           stampBtn.className = 'btn btn-stamp btn-sm trip-detail-btn';
           stampBtn.textContent = '🎫 スタンプ一覧';
           stampBtn.title = 'スタンプラリー';
           stampBtn.onclick = (e) => { e.stopPropagation(); showStampRallyModal(t); };
-          buttonsContainer.appendChild(stampBtn);
+          stampRow.appendChild(stampBtn);
+          detail.appendChild(stampRow);
         }
 
-        if (buttonsContainer.children.length > 0) {
-          detail.appendChild(buttonsContainer);
-        }
         if (animeChildren.length > 0) {
           animeChildren.forEach(c => {
             const animes = c.generatedAnimes || c.animes || [];
             const row = document.createElement('div');
             row.className = 'trip-detail-parent-anime-row';
+
+            // トリップ名とボタンを含むヘッダー
+            const header = document.createElement('div');
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            header.style.gap = '0.5rem';
+            header.style.marginBottom = '0.5rem';
+
             const label = document.createElement('span');
             label.className = 'trip-detail-parent-anime-label';
             label.textContent = c.name || '（無題）';
             label.onclick = async (e) => { e.stopPropagation(); await loadTripById(c.id); };
-            row.appendChild(label);
+            header.appendChild(label);
+
+            // 旅行記ボタン
+            const hasTravelogue = (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0);
+            if (hasTravelogue) {
+              const travelogueBtn = document.createElement('button');
+              travelogueBtn.type = 'button';
+              travelogueBtn.className = 'btn btn-travelogue btn-xs';
+              travelogueBtn.style.fontSize = '0.7rem';
+              travelogueBtn.style.padding = '0.2rem 0.4rem';
+              travelogueBtn.textContent = '📖';
+              travelogueBtn.title = '旅行記';
+              travelogueBtn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(c); };
+              header.appendChild(travelogueBtn);
+            }
+
+            // 動画ボタン
+            const hasVideo = getTripVideoUrlsForTrip(c).length > 0;
+            if (hasVideo) {
+              const videoBtn = document.createElement('button');
+              videoBtn.type = 'button';
+              videoBtn.className = 'btn btn-primary btn-xs';
+              videoBtn.style.fontSize = '0.7rem';
+              videoBtn.style.padding = '0.2rem 0.4rem';
+              videoBtn.textContent = '🎬';
+              videoBtn.title = '動画';
+              videoBtn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(c)); };
+              header.appendChild(videoBtn);
+            }
+
+            row.appendChild(header);
             const thumbs = document.createElement('div');
             thumbs.className = 'trip-detail-parent-anime-thumbs';
             animes.forEach((anime) => {
@@ -8043,57 +8047,80 @@ function initMobileHeaderAutoHide() {
       e.stopPropagation();
       showMobileHeader();
     });
-  }
 
-  // プルダウンでヘッダーを表示
-  let touchStartY = 0;
-  let touchCurrentY = 0;
-  let isPulling = false;
+    // プルダウンバーでのスワイプ検出
+    let touchStartY = 0;
+    let touchCurrentY = 0;
+    let isPulling = false;
 
-  // プルダウンバーとマップコンテナでのスワイプ検出
-  const handleTouchStart = (e) => {
-    if (!isMobileView() || !mobileHeaderInteractionState.hasInteracted) return;
-    touchStartY = e.touches[0].clientY;
-    // 画面上部50pxからのスワイプで反応
-    if (touchStartY < 50) {
+    pulldownBar.addEventListener('touchstart', (e) => {
+      if (!isMobileView() || !mobileHeaderInteractionState.hasInteracted) return;
+      touchStartY = e.touches[0].clientY;
       isPulling = true;
-    }
-  };
+    }, { passive: true });
 
-  const handleTouchMove = (e) => {
-    if (!isPulling) return;
-    touchCurrentY = e.touches[0].clientY;
-    const deltaY = touchCurrentY - touchStartY;
+    pulldownBar.addEventListener('touchmove', (e) => {
+      if (!isPulling) return;
+      touchCurrentY = e.touches[0].clientY;
+      const deltaY = touchCurrentY - touchStartY;
 
-    // プル中の視覚フィードバック
-    if (deltaY > 10) {
-      document.body.classList.add('header-pulling');
-    }
+      // プル中の視覚フィードバック
+      if (deltaY > 10) {
+        document.body.classList.add('header-pulling');
+      }
 
-    // 下方向に30px以上スワイプしたらヘッダーを表示
-    if (deltaY > 30) {
-      showMobileHeader();
+      // 下方向に30px以上スワイプしたらヘッダーを表示
+      if (deltaY > 30) {
+        showMobileHeader();
+        isPulling = false;
+        document.body.classList.remove('header-pulling');
+      }
+    }, { passive: true });
+
+    pulldownBar.addEventListener('touchend', () => {
       isPulling = false;
       document.body.classList.remove('header-pulling');
-    }
-  };
-
-  const handleTouchEnd = () => {
-    isPulling = false;
-    document.body.classList.remove('header-pulling');
-  };
-
-  const mapContainer = document.querySelector('.map-container');
-  if (mapContainer) {
-    mapContainer.addEventListener('touchstart', handleTouchStart, { passive: true });
-    mapContainer.addEventListener('touchmove', handleTouchMove, { passive: true });
-    mapContainer.addEventListener('touchend', handleTouchEnd, { passive: true });
+    }, { passive: true });
   }
 
-  if (pulldownBar) {
-    pulldownBar.addEventListener('touchstart', handleTouchStart, { passive: true });
-    pulldownBar.addEventListener('touchmove', handleTouchMove, { passive: true });
-    pulldownBar.addEventListener('touchend', handleTouchEnd, { passive: true });
+  // マップコンテナでの上部スワイプ検出
+  const mapContainer = document.querySelector('.map-container');
+  if (mapContainer) {
+    let touchStartY = 0;
+    let touchCurrentY = 0;
+    let isPulling = false;
+
+    mapContainer.addEventListener('touchstart', (e) => {
+      if (!isMobileView() || !mobileHeaderInteractionState.hasInteracted) return;
+      touchStartY = e.touches[0].clientY;
+      // 画面上部50pxからのスワイプで反応
+      if (touchStartY < 50) {
+        isPulling = true;
+      }
+    }, { passive: true });
+
+    mapContainer.addEventListener('touchmove', (e) => {
+      if (!isPulling) return;
+      touchCurrentY = e.touches[0].clientY;
+      const deltaY = touchCurrentY - touchStartY;
+
+      // プル中の視覚フィードバック
+      if (deltaY > 10) {
+        document.body.classList.add('header-pulling');
+      }
+
+      // 下方向に30px以上スワイプしたらヘッダーを表示
+      if (deltaY > 30) {
+        showMobileHeader();
+        isPulling = false;
+        document.body.classList.remove('header-pulling');
+      }
+    }, { passive: true });
+
+    mapContainer.addEventListener('touchend', () => {
+      isPulling = false;
+      document.body.classList.remove('header-pulling');
+    }, { passive: true });
   }
 }
 
