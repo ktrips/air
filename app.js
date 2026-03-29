@@ -31,6 +31,7 @@ const gpxCache = {};
 const LAST_TRIP_ID_KEY = 'air-last-trip-id';
 let corsWarningShown = false;
 let characterImageData = null; // キャラクター画像（Base64形式・メモリキャッシュ）
+let pendingMarkerDrag = null; // マーカードラッグ中の保留データ { tripRef, photoIdx, originalLat, originalLng, originalPlaceName }
 
 /** アニメ生成用のキャラ画像を取得（トリップ保存分またはメモリ） */
 async function getCharacterImageForGeneration() {
@@ -2016,13 +2017,15 @@ async function updateMapMarkers() {
           });
         }
         if (isEditor() && m.dragging) {
-          m.on('dragend', async () => {
+          m.on('dragend', () => {
             const pos = m.getLatLng();
             if (tripRef.photos?.[photoIdx]) {
+              const originalLat = tripRef.photos[photoIdx].lat;
+              const originalLng = tripRef.photos[photoIdx].lng;
+              const originalPlaceName = tripRef.photos[photoIdx].placeName;
               tripRef.photos[photoIdx].lat = parseFloat(pos.lat.toFixed(6));
               tripRef.photos[photoIdx].lng = parseFloat(pos.lng.toFixed(6));
-              tripRef.photos[photoIdx].placeName = await reverseGeocode(pos.lat, pos.lng);
-              setStatus('位置を更新しました。保存してください');
+              showMarkerSaveBar({ tripRef, photoIdx, originalLat, originalLng, originalPlaceName });
               updateHeaderInfo();
             }
           });
@@ -4721,26 +4724,29 @@ async function loadTripById(id) {
 }
 
 async function deleteTrip() {
-  if (!isEditor() || !currentTrip || !window.firebaseDb || !window.firebaseAuth?.currentUser) return;
-  if (currentTrip.userId !== window.firebaseAuth.currentUser.uid) return;
+  if (!isEditor() || !window.firebaseDb || !window.firebaseAuth?.currentUser) return;
+  if (!currentTrip) { setStatus('削除するトリップが選択されていません'); return; }
+  if (currentTrip.userId !== window.firebaseAuth.currentUser.uid) { setStatus('このトリップを削除する権限がありません'); return; }
   if (!confirm(`本当に「${currentTrip.name}」を削除しますか？\nこの操作は取り消せません。`)) return;
   const idToDelete = currentTrip.id;
   const tripToDelete = { ...currentTrip };
   try {
-    // Storageから全ての関連ファイルを削除
     await deleteAllTripFiles(tripToDelete);
-
     await window.firebaseDb.collection('trips').doc(idToDelete).delete();
     currentTrip = null;
     currentPhotoIndex = 0;
     thumbnailsVisible = false;
+    const newOrder = tripOrder.filter(x => x !== idToDelete);
+    await saveTripOrder(newOrder);
     renderThumbnails();
     await updateMapMarkers();
     await updateTripInputs();
     await renderTripDetailPane();
-    await loadMyTrips();
-    const newOrder = tripOrder.filter(x => x !== idToDelete);
-    await saveTripOrder(newOrder);
+    try {
+      await loadMyTrips();
+    } catch (err) {
+      console.warn('削除後のトリップ一覧再読み込みに失敗（削除自体は成功）:', err);
+    }
     renderTripList();
     refreshTripSelect();
     setStatus('削除しました');
@@ -6819,6 +6825,26 @@ function setStatus(msg, isError = false) {
   console.log(msg);
 }
 
+function showMarkerSaveBar(pending) {
+  pendingMarkerDrag = pending;
+  const bar = document.getElementById('mapMarkerSaveBar');
+  const label = document.getElementById('mapMarkerSaveLabel');
+  if (!bar) return;
+  const name = pending.tripRef?.photos?.[pending.photoIdx]?.name;
+  if (label) label.textContent = name ? `📍 「${name}」の位置を移動中` : '📍 GPS位置を移動中';
+  bar.style.display = '';
+}
+
+function hideMarkerSaveBar() {
+  pendingMarkerDrag = null;
+  const bar = document.getElementById('mapMarkerSaveBar');
+  if (bar) bar.style.display = 'none';
+  const saveBtn = document.getElementById('mapMarkerSaveBtn');
+  const cancelBtn = document.getElementById('mapMarkerCancelBtn');
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
+  if (cancelBtn) cancelBtn.disabled = false;
+}
+
 async function getGpsInfo() {
   let gpxStats = null;
   const gpxText = await getGpxContent(currentTrip);
@@ -7496,6 +7522,51 @@ function initEventListeners() {
   }
 
   document.getElementById('saveTripBtn').onclick = saveTrip;
+
+  // マーカードラッグ後の保存バー
+  const mapMarkerSaveBtn = document.getElementById('mapMarkerSaveBtn');
+  const mapMarkerCancelBtn = document.getElementById('mapMarkerCancelBtn');
+  if (mapMarkerSaveBtn) {
+    mapMarkerSaveBtn.onclick = async () => {
+      if (!pendingMarkerDrag) return;
+      mapMarkerSaveBtn.disabled = true;
+      mapMarkerSaveBtn.textContent = '保存中...';
+      if (mapMarkerCancelBtn) mapMarkerCancelBtn.disabled = true;
+      const { tripRef, photoIdx } = pendingMarkerDrag;
+      try {
+        if (tripRef.photos?.[photoIdx]) {
+          const lat = tripRef.photos[photoIdx].lat;
+          const lng = tripRef.photos[photoIdx].lng;
+          tripRef.photos[photoIdx].placeName = await reverseGeocode(lat, lng);
+        }
+        await saveTrip({ silent: true });
+        await updateMapMarkers();
+        setStatus('✓ GPS位置を保存しました');
+        hideMarkerSaveBar();
+      } catch (err) {
+        console.error('GPS位置の保存に失敗:', err);
+        alert('保存に失敗しました: ' + (err.message || err));
+        mapMarkerSaveBtn.disabled = false;
+        mapMarkerSaveBtn.textContent = '保存';
+        if (mapMarkerCancelBtn) mapMarkerCancelBtn.disabled = false;
+      }
+    };
+  }
+  if (mapMarkerCancelBtn) {
+    mapMarkerCancelBtn.onclick = () => {
+      if (!pendingMarkerDrag) return;
+      const { tripRef, photoIdx, originalLat, originalLng, originalPlaceName } = pendingMarkerDrag;
+      if (tripRef.photos?.[photoIdx]) {
+        tripRef.photos[photoIdx].lat = originalLat;
+        tripRef.photos[photoIdx].lng = originalLng;
+        tripRef.photos[photoIdx].placeName = originalPlaceName;
+      }
+      hideMarkerSaveBar();
+      updateMapMarkers();
+      setStatus('位置の変更を元に戻しました');
+    };
+  }
+
   document.getElementById('newTripBtn').onclick = async () => {
     if (!isEditor()) return;
 

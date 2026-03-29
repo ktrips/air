@@ -777,6 +777,34 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   z-index: 1000;
 }
 
+/* マーカードラッグ後の保存バー */
+.map-marker-save-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  background: rgba(20, 20, 30, 0.92);
+  color: #fff;
+  padding: 0.55rem 1rem;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  animation: slideUpFadeIn 0.2s ease;
+}
+.map-marker-save-label {
+  font-size: 0.88rem;
+  opacity: 0.9;
+}
+@keyframes slideUpFadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 .map-search-input {
   padding: 0.35rem 0.75rem;
   border-radius: 18px;
