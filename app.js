@@ -1524,7 +1524,7 @@ function updateViewerSection() {
       }
     }
 
-    // アニメ一覧（generatedAnimes または animes）
+    // アニメ一覧（全子トリップのアニメをまとめて表示）
     const animeChildren = childTrips.filter(c => {
       const animes = c.generatedAnimes || c.animes || [];
       return animes.length > 0;
@@ -1532,32 +1532,23 @@ function updateViewerSection() {
     if (childAnimesWrap && childAnimesEl) {
       if (animeChildren.length > 0) {
         childAnimesEl.innerHTML = '';
-        animeChildren.forEach(c => {
-          const animes = c.generatedAnimes || c.animes || [];
-          const item = document.createElement('div');
-          item.className = 'viewer-child-anime-row';
-          const label = document.createElement('span');
-          label.className = 'viewer-child-anime-label';
-          label.textContent = c.name || '（無題）';
-          label.onclick = async () => { await loadTripById(c.id); };
-          item.appendChild(label);
-          const thumbs = document.createElement('div');
-          thumbs.className = 'viewer-child-anime-thumbs';
-          animes.forEach((anime, idx) => {
-            const img = document.createElement('img');
-            img.src = anime.url;
-            img.alt = anime.style || '';
-            img.title = c.name ? `${c.name} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
-            img.onclick = (e) => {
-              e.stopPropagation();
-              const list = c.generatedAnimes || c.animes || [];
-              showAnimeImageViewer(list, c.name);
-            };
-            thumbs.appendChild(img);
-          });
-          item.appendChild(thumbs);
-          childAnimesEl.appendChild(item);
+        const allAnimes = animeChildren.flatMap(c =>
+          (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name }))
+        );
+        const thumbs = document.createElement('div');
+        thumbs.className = 'viewer-child-anime-thumbs';
+        allAnimes.forEach((anime) => {
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = anime.style || '';
+          img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+          img.onclick = (e) => {
+            e.stopPropagation();
+            showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), currentTrip?.name || '');
+          };
+          thumbs.appendChild(img);
         });
+        childAnimesEl.appendChild(thumbs);
         childAnimesWrap.style.display = '';
       } else {
         childAnimesWrap.style.display = 'none';
@@ -3232,7 +3223,7 @@ async function showTripOverview() {
   }
 }
 
-/** 再生完了時: スタンプ一覧を5秒表示後、全ポイントを含む地図に戻る */
+/** 再生完了時: 全ポイントを含む地図に戻る */
 async function onPlaybackComplete() {
   if (playTimer) {
     clearTimeout(playTimer);
@@ -3245,11 +3236,6 @@ async function onPlaybackComplete() {
     playbackVideoTimer = null;
   }
   hidePlaybackPhotoOverlay();
-  if (currentTrip) {
-    showStampRallyModal(currentTrip);
-  }
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  closeStampRallyModal();
   stopPlay();
   await updateMapMarkers();
   await updateHeaderInfo();
@@ -4146,71 +4132,23 @@ function renderTripList() {
         }
 
         if (animeChildren.length > 0) {
-          animeChildren.forEach(c => {
-            const animes = c.generatedAnimes || c.animes || [];
-            const row = document.createElement('div');
-            row.className = 'trip-detail-parent-anime-row';
-
-            // トリップ名とボタンを含むヘッダー
-            const header = document.createElement('div');
-            header.style.display = 'flex';
-            header.style.alignItems = 'center';
-            header.style.gap = '0.5rem';
-            header.style.marginBottom = '0.5rem';
-
-            const label = document.createElement('span');
-            label.className = 'trip-detail-parent-anime-label';
-            label.textContent = c.name || '（無題）';
-            label.onclick = async (e) => { e.stopPropagation(); await loadTripById(c.id); };
-            header.appendChild(label);
-
-            // 旅行記ボタン
-            const hasTravelogue = (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0);
-            if (hasTravelogue) {
-              const travelogueBtn = document.createElement('button');
-              travelogueBtn.type = 'button';
-              travelogueBtn.className = 'btn btn-travelogue btn-xs';
-              travelogueBtn.style.fontSize = '0.7rem';
-              travelogueBtn.style.padding = '0.2rem 0.4rem';
-              travelogueBtn.textContent = '📖';
-              travelogueBtn.title = '旅行記';
-              travelogueBtn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(c); };
-              header.appendChild(travelogueBtn);
-            }
-
-            // 動画ボタン
-            const hasVideo = getTripVideoUrlsForTrip(c).length > 0;
-            if (hasVideo) {
-              const videoBtn = document.createElement('button');
-              videoBtn.type = 'button';
-              videoBtn.className = 'btn btn-primary btn-xs';
-              videoBtn.style.fontSize = '0.7rem';
-              videoBtn.style.padding = '0.2rem 0.4rem';
-              videoBtn.textContent = '🎬';
-              videoBtn.title = '動画';
-              videoBtn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(c)); };
-              header.appendChild(videoBtn);
-            }
-
-            row.appendChild(header);
-            const thumbs = document.createElement('div');
-            thumbs.className = 'trip-detail-parent-anime-thumbs';
-            animes.forEach((anime) => {
-              const img = document.createElement('img');
-              img.src = anime.url;
-              img.alt = anime.style || '';
-              img.title = (c.name ? c.name + ' - ' : '') + (anime.style || 'アニメ');
-              img.onclick = (e) => {
-                e.stopPropagation();
-                const list = c.generatedAnimes || c.animes || [];
-                const idx = list.findIndex(a => a.url === anime.url);
-                showAnimeImageViewer(list, c.name);
-              };
-              thumbs.appendChild(img);
-            });
-            row.appendChild(thumbs);
-            detail.appendChild(row);
+          const allAnimes = animeChildren.flatMap(c =>
+            (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name, _tripId: c.id }))
+          );
+          const thumbsWrap = document.createElement('div');
+          thumbsWrap.className = 'trip-detail-parent-anime-thumbs';
+          allAnimes.forEach((anime) => {
+            const img = document.createElement('img');
+            img.src = anime.url;
+            img.alt = anime.style || '';
+            img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+            img.onclick = (e) => {
+              e.stopPropagation();
+              showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), t.name || '');
+            };
+            thumbsWrap.appendChild(img);
           });
+          detail.appendChild(thumbsWrap);
         }
         list.appendChild(detail);
       }
@@ -4465,33 +4403,23 @@ function renderParentTripChildren(parentId) {
   if (animesWrap && animesEl) {
     if (animeChildren.length > 0) {
       animesEl.innerHTML = '';
-      animeChildren.forEach(c => {
-        const animes = c.generatedAnimes || c.animes || [];
-        const item = document.createElement('div');
-        item.className = 'trip-parent-detail-anime-row';
-        const label = document.createElement('span');
-        label.className = 'trip-parent-detail-anime-label';
-        label.textContent = c.name || '（無題）';
-        label.onclick = async () => { await loadTripById(c.id); };
-        item.appendChild(label);
-        const thumbs = document.createElement('div');
-        thumbs.className = 'trip-parent-detail-anime-thumbs';
-        animes.forEach((anime) => {
-          const img = document.createElement('img');
-          img.src = anime.url;
-          img.alt = anime.style || '';
-          img.title = c.name ? `${c.name} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
-          img.onclick = (e) => {
-            e.stopPropagation();
-            const list = c.generatedAnimes || c.animes || [];
-            const idx = list.findIndex(a => a.url === anime.url);
-            showAnimeImageViewer(list, c.name);
-          };
-          thumbs.appendChild(img);
-        });
-        item.appendChild(thumbs);
-        animesEl.appendChild(item);
+      const allAnimes = animeChildren.flatMap(c =>
+        (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name }))
+      );
+      const thumbs = document.createElement('div');
+      thumbs.className = 'trip-parent-detail-anime-thumbs';
+      allAnimes.forEach((anime) => {
+        const img = document.createElement('img');
+        img.src = anime.url;
+        img.alt = anime.style || '';
+        img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+        img.onclick = (e) => {
+          e.stopPropagation();
+          showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), currentTrip?.name || '');
+        };
+        thumbs.appendChild(img);
       });
+      animesEl.appendChild(thumbs);
       animesWrap.style.display = '';
     } else {
       animesWrap.style.display = 'none';
@@ -4771,15 +4699,20 @@ function escapeHtml(s) {
 function getTripVideoUrlsForTrip(trip) {
   if (!trip) return [];
   const urls = [];
-  if (trip.videoUrl && trip.videoUrl.trim()) {
-    urls.push(trip.videoUrl.trim());
-  }
-  const photos = trip.isParent
-    ? (getOrderedTrips().filter(t => t.parentId === trip.id) || []).flatMap(t => (t.photos || []))
-    : (trip.photos || []);
-  for (const p of photos) {
-    if (p.videoUrl && p.videoUrl.trim()) {
-      urls.push(p.videoUrl.trim());
+  if (trip.isParent) {
+    // 親トリップ: 親のvideoUrl → 子トリップのvideoUrl → 子トリップのポイントvideoUrl の順で連続収集
+    if (trip.videoUrl && trip.videoUrl.trim()) urls.push(trip.videoUrl.trim());
+    const children = getOrderedTrips().filter(t => t.parentId === trip.id);
+    for (const c of children) {
+      if (c.videoUrl && c.videoUrl.trim()) urls.push(c.videoUrl.trim());
+      for (const p of (c.photos || [])) {
+        if (p.videoUrl && p.videoUrl.trim()) urls.push(p.videoUrl.trim());
+      }
+    }
+  } else {
+    if (trip.videoUrl && trip.videoUrl.trim()) urls.push(trip.videoUrl.trim());
+    for (const p of (trip.photos || [])) {
+      if (p.videoUrl && p.videoUrl.trim()) urls.push(p.videoUrl.trim());
     }
   }
   return urls;
@@ -5493,7 +5426,10 @@ async function showTravelogueModal(trip) {
     childrenWithTravelogue.forEach(c => {
       const childName = escapeHtml(c.name || '（無題）');
       const childColor = c.color || t.color || '#e1306c';
+      const hasVideo = getTripVideoUrlsForTrip(c).length > 0;
+      listHtml += `<div style="display:flex;align-items:stretch;gap:0.5rem;">`;
       listHtml += `<button type="button" class="child-travelogue-btn" data-trip-id="${c.id}" style="
+        flex:1;
         display:flex;
         align-items:center;
         gap:0.6rem;
@@ -5508,11 +5444,29 @@ async function showTravelogueModal(trip) {
         box-shadow:0 2px 8px rgba(0,0,0,0.1);
         transition:all 0.2s;
         text-align:left;
-        width:100%;
       ">
         <span style="font-size:1.3rem;">📖</span>
         <span style="flex:1;">${childName}</span>
       </button>`;
+      if (hasVideo) {
+        listHtml += `<button type="button" class="child-video-btn" data-trip-id="${c.id}" style="
+          min-width:52px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:0.75rem;
+          background:rgba(255,255,255,0.95);
+          color:#405de6;
+          border:2px solid #405de6;
+          border-radius:8px;
+          font-size:1.3rem;
+          cursor:pointer;
+          box-shadow:0 2px 8px rgba(0,0,0,0.1);
+          transition:all 0.2s;
+          flex-shrink:0;
+        " title="動画を再生">🎬</button>`;
+      }
+      listHtml += '</div>';
     });
 
     listHtml += '</div></div>';
@@ -5526,6 +5480,21 @@ async function showTravelogueModal(trip) {
         if (childTrip) {
           await showTravelogueModal(childTrip);
         }
+      });
+      btn.addEventListener('mouseenter', (e) => {
+        e.target.style.transform = 'translateY(-2px)';
+        e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+      });
+      btn.addEventListener('mouseleave', (e) => {
+        e.target.style.transform = 'translateY(0)';
+        e.target.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+      });
+    });
+    content.querySelectorAll('.child-video-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const childId = btn.dataset.tripId;
+        const childTrip = children.find(c => c.id === childId);
+        if (childTrip) playVideoSequence(getTripVideoUrlsForTrip(childTrip));
       });
       btn.addEventListener('mouseenter', (e) => {
         e.target.style.transform = 'translateY(-2px)';

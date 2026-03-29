@@ -623,8 +623,8 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  width: 540px;
-  max-width: 540px;
+  width: 594px;
+  max-width: 594px;
   animation: fadeInSlide 0.4s ease-out;
 }
 /* 動画カード（下半分） */
@@ -667,10 +667,10 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   height: 100%;
 }
 .playback-photo-card img {
-  width: 540px;
+  width: 594px;
   height: auto;
   display: block;
-  max-height: 360px;
+  max-height: 396px;
   object-fit: cover;
 }
 /* 動画カード内の動画ラッパー */
@@ -717,11 +717,11 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   }
   /* モバイルの自動再生時は写真を10%大きく表示 */
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card {
-    width: 66vw;
-    max-width: 66vw;
+    width: 73vw;
+    max-width: 73vw;
   }
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card img {
-    max-height: 38.5vh;
+    max-height: 42.5vh;
   }
   .playback-photo-overlay.playback-video-fullscreen {
     top: 50%;
@@ -1776,14 +1776,14 @@ body.app-playing .thumbnail-close-btn {
   top: 8px;
   left: 8px;
   padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.56);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   border-radius: 6px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24), 0 1px 3px rgba(0, 0, 0, 0.16);
   z-index: 2;
   pointer-events: none;
 }
@@ -1802,9 +1802,9 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-overlay-top .photo-popup-name {
   color: white;
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 700;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.24), 0 0 8px rgba(0, 0, 0, 0.16);
   letter-spacing: 0.4px;
 }
 
@@ -3539,7 +3539,7 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 body.app-playing .map-playback-controls {
-  bottom: 10%;
+  bottom: 4%;
 }
 
 body.app-playing .play-stop-btn-mobile {
@@ -3746,9 +3746,9 @@ body.app-playing .map-photo-nav-btn {
     font-size: 2rem;
   }
 
-  /* モバイルの自動再生時は停止ボタンをシンプルに、下から1/10上の位置に */
+  /* モバイルの自動再生時は停止ボタンをシンプルに、下寄りに配置 */
   body.app-playing .map-playback-controls {
-    bottom: 10%;
+    bottom: 4%;
   }
 
   body.app-playing .play-stop-btn-mobile {
