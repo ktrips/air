@@ -2339,10 +2339,110 @@ body.editor .menu-section-bottom {
 .btn-sm { padding: 0.4rem 0.85rem; font-size: 0.85rem; }
 .btn-xs { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 
+/* サムネイル表示（右側メニュー） */
+.trip-menu-thumbnails-container {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.trip-menu-thumbnails {
+  flex: 1;
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+  min-height: 60px;
+}
+
+.trip-menu-thumbnail-item {
+  flex-shrink: 0;
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: move;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.trip-menu-thumbnail-item.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.trip-menu-thumbnail-item.drag-over {
+  transform: scale(1.05);
+}
+
+.trip-menu-thumbnails img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+  display: block;
+}
+
+.trip-menu-thumbnail-item:hover img {
+  border-color: var(--accent);
+}
+
+.trip-menu-thumbnail-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.trip-menu-thumbnail-item:hover .trip-menu-thumbnail-delete {
+  display: flex;
+}
+
+.trip-menu-thumbnail-delete:hover {
+  background: #d32f2f;
+}
+
+.trip-menu-gps-add-btn {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid var(--accent);
+  border-radius: 20px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.trip-menu-gps-add-btn:hover {
+  background: rgba(225, 48, 108, 0.1);
+}
+
+.trip-menu-gps-add-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .upload-zone {
   border: 2px dashed var(--border);
   border-radius: var(--radius);
-  padding: 1.5rem;
+  padding: 0.75rem;
   text-align: center;
   cursor: pointer;
   margin-bottom: 0.5rem;
@@ -2359,6 +2459,11 @@ body.editor .menu-section-bottom {
   display: block;
   margin-bottom: 0.5rem;
   opacity: 0.7;
+}
+
+#uploadSection .upload-icon {
+  font-size: 1.4rem;
+  margin-bottom: 0.25rem;
 }
 
 .editor-only { display: none; }

@@ -7,7 +7,7 @@
   z-index: 500;
   pointer-events: auto;
   opacity: 0;
-  transition: opacity 0.5s ease;
+  transition: opacity 0.5s ease, top 0.3s ease;
 }
 
 .map-trip-name-overlay.visible {
@@ -102,7 +102,7 @@
 
 @media (max-width: 768px) {
   .map-trip-name-overlay {
-    top: 10px;
+    top: calc(10px + 10vh);
   }
 
   .map-trip-name-card {
@@ -114,8 +114,21 @@
     border-radius: 20px;
   }
 
+  .map-trip-name-card-mobile .map-trip-name-btn:first-child {
+    width: 36px;
+    height: 36px;
+    font-size: 1.1rem;
+  }
+
   .map-trip-name-text {
     font-size: 0.765rem;
+  }
+}
+
+/* ヘッダーが隠れたときはトリップ名を上に移動 */
+@media (max-width: 768px) {
+  body.header-hidden .map-trip-name-overlay {
+    top: 8px;
   }
 }
 
