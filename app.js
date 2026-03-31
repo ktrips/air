@@ -1,7 +1,7 @@
 /* Air — 地図と写真でエア旅行（Firebase + Firestore） */
 
-// 12色: ピンク〜濃い紫のレインボー順（地図マーカー・ルート線の色分け用）
-const TRIP_COLORS = ['#e1306c', '#fd1d1d', '#f56040', '#ffdc80', '#fcaf45', '#f77737', '#c13584', '#833ab4', '#5851db', '#405de6', '#4facfe', '#00f2fe'];
+// 15色: ピンク〜シアンのレインボー順＋緑系（地図マーカー・ルート線の色分け用）
+const TRIP_COLORS = ['#e1306c', '#fd1d1d', '#f56040', '#ffdc80', '#fcaf45', '#f77737', '#17bf63', '#2ecc71', '#1abc9c', '#c13584', '#833ab4', '#5851db', '#405de6', '#4facfe', '#00f2fe'];
 
 let map = null;
 let travelogueMap = null;
@@ -2517,6 +2517,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
       photoWrap.appendChild(playerDiv);
 
       // YouTube Playerを作成
+      let checkVideoEndInterval = null;
       currentYouTubePlayer = new YT.Player('playbackYoutubePlayer', {
         videoId: youtubeId,
         width: '100%',
@@ -2527,14 +2528,49 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
           controls: 1,
           modestbranding: 1,
           rel: 0,
-          playsinline: 1
+          playsinline: 1,
+          start: 0
+        },
+        events: {
+          onReady: (event) => {
+            // プレイヤーが準備できたら再生開始
+            event.target.playVideo();
+
+            // YouTube動画の終了を検知して次へ進む
+            if (onVideoEnd) {
+              checkVideoEndInterval = setInterval(() => {
+                if (!currentYouTubePlayer) {
+                  clearInterval(checkVideoEndInterval);
+                  return;
+                }
+                try {
+                  const state = currentYouTubePlayer.getPlayerState();
+                  // 0=終了, 1=再生中, 2=一時停止, 3=バッファリング, 5=動画開始
+                  if (state === 0) {  // 動画が終了したら
+                    clearInterval(checkVideoEndInterval);
+                    if (playbackVideoTimer) clearTimeout(playbackVideoTimer);
+                    onVideoEnd();
+                  }
+                } catch (e) {
+                  clearInterval(checkVideoEndInterval);
+                }
+              }, 100);
+              // 安全ため最大3分のタイムアウト
+              playbackVideoTimer = setTimeout(() => {
+                if (checkVideoEndInterval) clearInterval(checkVideoEndInterval);
+                onVideoEnd();
+              }, 180000);
+            }
+          },
+          onError: (event) => {
+            console.error('YouTube再生エラー:', event.data);
+            if (onVideoEnd) {
+              if (checkVideoEndInterval) clearInterval(checkVideoEndInterval);
+              onVideoEnd();
+            }
+          }
         }
       });
-
-      // 30秒後に次へ進む
-      if (onVideoEnd) {
-        playbackVideoTimer = setTimeout(onVideoEnd, 30000);
-      }
     } else {
       // Vimeoやその他の動画
       const embedUrl = getVideoEmbedUrl(p.videoUrl);
@@ -2546,9 +2582,9 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
         iframe.allowFullscreen = true;
         photoWrap.appendChild(iframe);
 
-        // 30秒後に次へ進む
+        // Vimeoやその他の動画は最大3分で次へ進む（ユーザーが戻るボタンで手動で次へも可能）
         if (onVideoEnd) {
-          playbackVideoTimer = setTimeout(onVideoEnd, 30000);
+          playbackVideoTimer = setTimeout(onVideoEnd, 180000);
         }
       }
     }
@@ -4230,24 +4266,51 @@ function renderTripList() {
         detail.className = 'trip-detail-inline trip-detail-parent';
         if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
 
+        // ボタン行（スタンプ・アニメ）
+        const buttonRow = document.createElement('div');
+        buttonRow.style.marginBottom = '0.75rem';
+        buttonRow.style.display = 'flex';
+        buttonRow.style.gap = '0.5rem';
+
         // スタンプボタン
         if (hasStamps) {
-          const stampRow = document.createElement('div');
-          stampRow.style.marginBottom = '0.75rem';
           const stampBtn = document.createElement('button');
           stampBtn.type = 'button';
           stampBtn.className = 'btn btn-stamp btn-sm trip-detail-btn';
           stampBtn.textContent = '🎫 スタンプ一覧';
           stampBtn.title = 'スタンプラリー';
           stampBtn.onclick = (e) => { e.stopPropagation(); showStampRallyModal(t); };
-          stampRow.appendChild(stampBtn);
-          detail.appendChild(stampRow);
+          buttonRow.appendChild(stampBtn);
         }
 
+        // アニメ一覧ボタン
         if (animeChildren.length > 0) {
+          const animeBtn = document.createElement('button');
+          animeBtn.type = 'button';
+          animeBtn.className = 'btn btn-secondary btn-sm trip-detail-btn';
+          animeBtn.textContent = '🖼️ アニメ一覧';
+          animeBtn.title = 'アニメ画像を表示';
           const allAnimes = animeChildren.flatMap(c =>
             (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name, _tripId: c.id }))
           );
+          animeBtn.onclick = (e) => {
+            e.stopPropagation();
+            showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), t.name || '');
+          };
+          buttonRow.appendChild(animeBtn);
+        }
+
+        if (hasStamps || animeChildren.length > 0) {
+          detail.appendChild(buttonRow);
+        }
+
+        if (animeChildren.length > 0) {
+          const allAnimes = animeChildren
+            .map(c => {
+              const first = (c.generatedAnimes || c.animes || [])[0];
+              return first ? { ...first, _tripName: c.name, _tripId: c.id } : null;
+            })
+            .filter(Boolean);
           const thumbsWrap = document.createElement('div');
           thumbsWrap.className = 'trip-detail-parent-anime-thumbs';
           allAnimes.forEach((anime) => {
@@ -4516,9 +4579,12 @@ function renderParentTripChildren(parentId) {
   if (animesWrap && animesEl) {
     if (animeChildren.length > 0) {
       animesEl.innerHTML = '';
-      const allAnimes = animeChildren.flatMap(c =>
-        (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name }))
-      );
+      const allAnimes = animeChildren
+        .map(c => {
+          const first = (c.generatedAnimes || c.animes || [])[0];
+          return first ? { ...first, _tripName: c.name } : null;
+        })
+        .filter(Boolean);
       const thumbs = document.createElement('div');
       thumbs.className = 'trip-parent-detail-anime-thumbs';
       allAnimes.forEach((anime) => {
@@ -5321,6 +5387,51 @@ ${detailAnimeHtml}
     }
 
     navHtml += '</div>';
+
+    // 旅行記に目次を追加
+    // ランドマークセクション（h3タグ）を抽出して目次を生成
+    const landmarks = [];
+    const landmarkRegex = /<div class="travelogue-landmark-section"[^>]*>\s*<h3[^>]*>([^<]*)<\/h3>/gi;
+    let match;
+    while ((match = landmarkRegex.exec(finalHtml)) !== null) {
+      const landmarkTitle = match[1].replace(/<[^>]+>/g, ''); // HTMLタグを除去
+      const landmarkId = `landmark-${landmarks.length + 1}`;
+      landmarks.push({ id: landmarkId, title: landmarkTitle });
+    }
+
+    // ランドマークセクションのdivにidを追加
+    if (landmarks.length > 0) {
+      let landmarkCount = 0;
+      finalHtml = finalHtml.replace(/<div class="travelogue-landmark-section"/g, () => {
+        const landmark = landmarks[landmarkCount];
+        landmarkCount++;
+        return `<div class="travelogue-landmark-section" id="${landmark.id}"`;
+      });
+
+      // サマリーと地図の間に目次を挿入
+      const tocHtml = `
+<div style="background:linear-gradient(135deg,#f5f7fa 0%,#e9ecf1 100%);border:1px solid #d0d9e8;border-radius:12px;padding:1.5rem;margin:2rem 0;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+  <h3 style="color:${tripColor};font-size:1.2rem;font-weight:700;margin:0 0 1rem 0;display:flex;align-items:center;gap:0.5rem;">📍 目次</h3>
+  <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:0.5rem;">
+    ${landmarks.map(landmark => `
+    <li style="margin:0;">
+      <a href="#${landmark.id}" style="color:${tripColor};text-decoration:none;font-weight:500;padding:0.5rem 0.75rem;border-radius:6px;transition:all 0.2s;display:block;"
+         onmouseover="this.style.backgroundColor='rgba(0,0,0,0.05)'"
+         onmouseout="this.style.backgroundColor='transparent'">
+        → ${escapeHtml(landmark.title)}
+      </a>
+    </li>
+    `).join('')}
+  </ul>
+</div>`;
+
+      // map-containerの後に目次を挿入
+      const mapContainerEnd = finalHtml.indexOf('</div>', finalHtml.indexOf('id="travelogue-map-container"'));
+      if (mapContainerEnd !== -1) {
+        const insertPos = mapContainerEnd + '</div>'.length;
+        finalHtml = finalHtml.slice(0, insertPos) + tocHtml + finalHtml.slice(insertPos);
+      }
+    }
 
     finalHtml += navHtml;
 
@@ -7127,6 +7238,13 @@ async function updateHeaderInfo() {
       const tripColor = currentTrip.color || '#e1306c';
       headerMobileTripName.style.color = tripColor;
       headerMobileTripName.style.display = 'block';
+
+      // クリックイベント：旅行記を開く
+      headerMobileTripName.style.cursor = 'pointer';
+      headerMobileTripName.onclick = (e) => {
+        e.stopPropagation();
+        showTravelogueModal();
+      };
     }
   } else {
     // デスクトップ表示
@@ -7172,14 +7290,12 @@ async function updateHeaderInfo() {
       });
     }
 
-    // デスクトップのトリップ名リンクにクリックイベントを追加（地図表示に遷移）
+    // デスクトップのトリップ名リンクにクリックイベントを追加（旅行記を開く）
     const tripMapLink = line1.querySelector('.header-trip-map-link');
     if (tripMapLink) {
       tripMapLink.addEventListener('click', (e) => {
         e.preventDefault();
-        if (currentTrip) {
-          loadTripById(currentTrip.id);
-        }
+        showTravelogueModal();
       });
     }
 
@@ -7258,12 +7374,10 @@ function updateMapTripNameOverlay() {
     }
 
     if (isMobileView()) {
-      // モバイル：左に旅行記ボタン、中央にトリップ名、右にスタンプボタン
+      // モバイル：トリップ名のみ表示（ボタンなし）
       overlay.innerHTML = `
-        <div class="map-trip-name-card map-trip-name-card-mobile" style="--trip-color: ${tripColor}" id="mapTripNameCard">
-          ${hasTravelogue ? '<button type="button" class="map-trip-name-btn map-trip-name-btn-travelogue" title="旅行記">📖</button>' : '<div class="map-trip-name-spacer"></div>'}
+        <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
           <div class="map-trip-name-text" id="mapTripNameText">${escapeHtml(currentTrip.name)}</div>
-          ${hasStamps ? '<button type="button" class="map-trip-name-btn map-trip-name-btn-stamp" title="スタンプ">🎫</button>' : '<div class="map-trip-name-spacer"></div>'}
         </div>
       `;
     } else {
@@ -7286,31 +7400,14 @@ function updateMapTripNameOverlay() {
 
     // クリックイベントを追加
     if (isMobileView()) {
-      // モバイル：各ボタンとトリップ名に個別のイベント
-      const travelogueBtn = overlay.querySelector('.map-trip-name-btn-travelogue');
-      if (travelogueBtn) {
-        travelogueBtn.onclick = (e) => {
-          e.stopPropagation();
-          showTravelogueModal();
-        };
-      }
-
-      const stampBtn = overlay.querySelector('.map-trip-name-btn-stamp');
-      if (stampBtn) {
-        stampBtn.onclick = (e) => {
-          e.stopPropagation();
-          showStampRallyModal(currentTrip);
-        };
-      }
-
+      // モバイル：トリップ名をクリックで旅行記を開く
       const tripNameText = document.getElementById('mapTripNameText');
       if (tripNameText) {
         tripNameText.style.cursor = 'pointer';
-        tripNameText.title = '地図を再読み込み';
-        tripNameText.onclick = () => {
-          if (currentTrip) {
-            loadTripById(currentTrip.id);
-          }
+        tripNameText.title = '旅行記を表示';
+        tripNameText.onclick = (e) => {
+          e.stopPropagation();
+          showTravelogueModal();
         };
       }
     } else {
@@ -7774,7 +7871,11 @@ function initEventListeners() {
   if (playStopBtnMobile) {
     playStopBtnMobile.onclick = () => {
       if (playTimer) {
-        handlePlaybackStop();
+        // 自動再生停止時は完全停止して地図をリロード
+        stopPlay();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
       } else {
         startPlay();
       }
@@ -7794,7 +7895,11 @@ function initEventListeners() {
   if (mapPlayBtn) {
     mapPlayBtn.onclick = () => {
       if (playTimer) {
-        handlePlaybackStop();
+        // 自動再生停止時は完全停止して地図をリロード
+        stopPlay();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
       } else {
         startPlay();
       }
@@ -7845,7 +7950,11 @@ function initEventListeners() {
   if (mobilePlayBtn) {
     mobilePlayBtn.onclick = () => {
       if (playTimer) {
-        handlePlaybackStop();
+        // 自動再生停止時は完全停止して地図をリロード
+        stopPlay();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
         mobilePlayBtn.textContent = '▶';
       } else {
         startPlay();

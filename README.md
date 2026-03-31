@@ -4,6 +4,14 @@ GPS付き写真をアップロードすると撮影場所を地図上に表示�
 
 **URL**: https://air.ktrips.net
 
+## 最新アップデート（v1.4.0+）
+
+- ✨ **右側メニュー改善**: 写真サムネイルをドラッグで並び替え、✕で削除可能
+- 🗺️ **モバイル UI 最適化**: ヘッダー表示/非表示に追従するトリップ名表示
+- 🎫 **スタンプボタン追加**: 地図上のトリップ名からスタンプラリーへ直接アクセス
+- 🧭 **GPS自動検出**: 写真のGPS情報からトリップ名・説明を自動入力
+- 🔧 **GitHub Actions 修正**: firebase-config.js の自動生成が正確に動作
+
 ## 機能
 
 ### 基本機能
@@ -13,6 +21,7 @@ GPS付き写真をアップロードすると撮影場所を地図上に表示�
 - **トリップ管理**: 複数トリップを Firestore に保存・編集・公開
 - **親子トリップ**: フォルダ構造で複数のトリップを整理
 - **3つの地図レイヤー**: 地図・地形・航空写真を切り替え可能
+- **モバイル対応**: ヘッダー自動非表示でトリップ名が自動で移動
 
 ### 閲覧機能
 - **ログインなしで閲覧**: 公開トリップはログインなしで閲覧可能
@@ -25,6 +34,9 @@ GPS付き写真をアップロードすると撮影場所を地図上に表示�
 ### 編集機能（ログイン必要）
 - **Google ログイン**: 自分のトリップのみ編集可能
 - **写真アップロード**: ドラッグ&ドロップで複数枚一括アップロード
+- **写真管理**: 右側メニューで写真をドラッグして並び替え、✕で削除
+- **GPS自動検出**: 写真のGPS情報から自動で地名を取得、トリップ名・説明に自動入力
+- **GPS追加**: 右側メニュー或は地図上でGPSポイントを手動追加
 - **ポイント編集**: 写真の位置、名前、説明を編集
 - **写真削除**: 写真のみ削除/ポイントごと削除の2モード
 - **ルートカラー**: 12色からトリップカラーを選択
@@ -45,6 +57,22 @@ GPS付き写真をアップロードすると撮影場所を地図上に表示�
 5. **Firestore のルール** を `firestore.rules`、**Storage のルール** を `storage.rules` でデプロイ
 
 ### 2. ローカル開発
+
+#### 2-0. Git ユーザー設定
+
+```bash
+# グローバル設定（全リポジトリ共通）
+git config --global user.name "Your Name"
+git config --global user.email "your.email@example.com"
+
+# または、このリポジトリのみ設定
+git config user.name "Your Name"
+git config user.email "your.email@example.com"
+
+# 確認
+git config user.name
+git config user.email
+```
 
 #### 2-1. Firebase設定ファイルを作成
 
@@ -91,6 +119,11 @@ python3 -m http.server 8080
 3. Firestore Rules と Storage Rules を更新
 
 デプロイ状況は [Actions タブ](../../actions) で確認できます。
+
+**デプロイが失敗する場合:**
+- GitHub Actions ログで "Generated firebase-config.js:" の出力を確認
+- `FIREBASE_CONFIG` Secret に改行が含まれていないか確認（1行である必要があります）
+- `FIREBASE_SERVICE_ACCOUNT` Secret が有効な JSON 形式か確認
 
 ### 4. 手動デプロイ（オプション）
 
@@ -157,12 +190,18 @@ URLパラメータ `?region=japan` または `?region=global` でも指定可能
 1. **ログイン**: 右上メニュー → 「Googleでログイン」
 2. **新規トリップ**: 右上メニュー → 「新規」
 3. **写真追加**: 画面に写真をドラッグ＆ドロップ
-4. **GPX追加**: 右上メニュー → 「GPXアップロード」
-5. **ポイント編集**: 地図上のマーカークリック → ✏️編集
+   - GPS情報がある写真は自動で地名検出
+   - トリップ名・説明が未入力の場合は自動入力
+4. **写真管理**: 右側メニューのサムネイル
+   - ドラッグで写真の順序を変更
+   - ✕ボタンで写真を削除
+5. **GPS追加**: 右側メニュー → 📍GPS ボタン → 地図上をクリック
+6. **GPX追加**: 右上メニュー → 「GPXアップロード」
+7. **ポイント編集**: 地図上のマーカークリック → ✏️編集
    - **写真削除**: 📷写真削除（ポイント残す）または 🗑️全削除（ポイントごと）
-6. **トリップ設定**: 右上メニューで名前・説明・URL・動画・色を設定
-7. **保存**: 「保存」ボタンをクリック
-8. **公開**: 「公開する」にチェックで誰でも閲覧可能に
+8. **トリップ設定**: 右上メニューで名前・説明・URL・動画・色を設定
+9. **保存**: 「保存」ボタンをクリック
+10. **公開**: 「公開する」にチェックで誰でも閲覧可能に
 
 ### AI機能（オプション）
 
@@ -235,13 +274,16 @@ URLパラメータ `?region=japan` または `?region=global` でも指定可能
 - A: Google Cloud Console の OAuth 認証情報に本番URLを追加してください
 
 **Q: GitHub Actionsでデプロイが失敗する**
-- A: `FIREBASE_SERVICE_ACCOUNT` Secret が正しく設定されているか確認
+- A: GitHub Secrets に以下を設定確認:
+  - `FIREBASE_CONFIG`: JSON形式（1行） 例: `{"apiKey":"...","projectId":"airgo-trip",...}`
+  - `FIREBASE_SERVICE_ACCOUNT`: Firebase Console → プロジェクト設定 → サービスアカウント → 秘密鍵
 - A: Firebase プロジェクトのサービスアカウントに必要な権限があるか確認
   - Firebase Admin
   - Service Usage Consumer
   - Firebase Hosting Admin
   - Cloud Datastore User
   - Storage Admin
+- A: GitHub Actions ログで "Generated firebase-config.js:" を確認し、JSON が正しく生成されているか確認
 
 ### その他
 
