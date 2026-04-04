@@ -2511,7 +2511,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
 
       const iframe = document.createElement('iframe');
       iframe.src = iframeSrc;
-      iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:8px;';
+      iframe.style.cssText = 'width:100%;height:100%;border:none;';
       iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
       iframe.allowFullscreen = true;
       photoWrap.appendChild(iframe);
@@ -2523,6 +2523,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
           try {
             const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
             if (data?.event === 'onStateChange' && data?.info === 0) {
+              console.log('YouTube動画終了を検知: 次へ進みます');
               window.removeEventListener('message', ytHandler);
               if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
               if (playbackVideoEndCallback) {
@@ -2547,6 +2548,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
           try {
             const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
             if (data && data.event === 'finish') {
+              console.log('Vimeo動画終了を検知: 次へ進みます');
               window.removeEventListener('message', vimeoHandler);
               if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
               if (playbackVideoEndCallback) {
@@ -2563,9 +2565,16 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
         };
       }
 
-      // フォールバック: 最大5分後に次へ
+      // フォールバック: 動画終了イベントが取れない場合に備えて60秒後に次へ
       if (onVideoEnd) {
-        playbackVideoTimer = setTimeout(onVideoEnd, 300000);
+        playbackVideoTimer = setTimeout(() => {
+          console.log('動画フォールバックタイマー: 次へ進みます');
+          if (playbackVideoEndCallback) {
+            const cb = playbackVideoEndCallback;
+            playbackVideoEndCallback = null;
+            cb();
+          }
+        }, 60000);
       }
     }
   } else {
@@ -2714,7 +2723,13 @@ function showPhotoViewMode(p, lat, lng) {
         map.removeLayer(photoPopup);
         photoPopup = null;
       }
-      showVideoOverlay(p.videoUrl);
+      // 現在のポイントから次の動画を収集して連続再生
+      const { urls, names } = collectVideoUrlsFromCurrentPoint();
+      if (urls.length > 0) {
+        playVideoSequenceWithNames(urls, names);
+      } else {
+        showVideoOverlay(p.videoUrl);
+      }
     };
     div.appendChild(videoBtn);
   }
@@ -3635,10 +3650,13 @@ async function startPlay() {
 
         // 動画がある場合は動画終了まで待つ
         if (nextP.videoUrl && nextP.videoUrl.trim()) {
+          console.log(`自動再生: 動画ポイントを再生 (${currentPhotoIndex + 1}/${playbackPhotos.length}) - ${nextP.name || 'ポイント名なし'}`);
           await showPlaybackPhotoOverlay(nextP, () => {
+            console.log('自動再生: 動画終了、次のポイントへ');
             playTimer = setTimeout(tick, 500);
           });
         } else {
+          console.log(`自動再生: 写真ポイントを表示 (${currentPhotoIndex + 1}/${playbackPhotos.length}) - ${nextP.name || 'ポイント名なし'}`);
           await showPlaybackPhotoOverlay(nextP);
           playTimer = setTimeout(tick, 2500);
         }
@@ -3655,10 +3673,13 @@ async function startPlay() {
 
     // 1枚目の写真を即座に表示して再生開始（3D地図の初期化を待たない）
     if (p0.videoUrl && p0.videoUrl.trim()) {
+      console.log(`自動再生開始: 最初のポイントは動画です (${p0.name || 'ポイント名なし'})`);
       await showPlaybackPhotoOverlay(p0, () => {
+        console.log('動画終了: 次のポイントへ移動します');
         playTimer = setTimeout(tick, 500);
       });
     } else {
+      console.log(`自動再生開始: 最初のポイントは写真です (${p0.name || 'ポイント名なし'})`);
       await showPlaybackPhotoOverlay(p0);
       playTimer = setTimeout(tick, 2500);
     }
@@ -5117,6 +5138,25 @@ function createVideoControlsBar(overlay, wrap, { currentUrl, onPrev, onNext, onC
   return bar;
 }
 
+function collectVideoUrlsFromCurrentPoint() {
+  const photos = getDisplayPhotos();
+  if (!photos.length) return [];
+
+  const videoUrls = [];
+  const pointNames = [];
+
+  // 現在のポイントから順に動画URLを収集
+  for (let i = currentPhotoIndex; i < photos.length; i++) {
+    const p = photos[i];
+    if (p.videoUrl && p.videoUrl.trim()) {
+      videoUrls.push(p.videoUrl.trim());
+      pointNames.push(p.name || `ポイント ${i + 1}`);
+    }
+  }
+
+  return { urls: videoUrls, names: pointNames };
+}
+
 function showVideoOverlay(url) {
   const overlay = document.getElementById('videoOverlay');
   const wrap = document.getElementById('videoPlayerWrap');
@@ -5150,6 +5190,129 @@ function showVideoOverlay(url) {
     onNext: null,
     onClose: () => closeVideoOverlay()
   });
+}
+
+/** 動画URLとポイント名の配列を連続再生 */
+function playVideoSequenceWithNames(urls, names = []) {
+  if (!urls || urls.length === 0) return;
+  console.log(`動画連続再生を開始: ${urls.length}本の動画`);
+  const overlay = document.getElementById('videoOverlay');
+  const wrap = document.getElementById('videoPlayerWrap');
+  if (!overlay || !wrap) return;
+
+  let index = 0;
+
+  const playAt = (idx) => {
+    if (videoSequenceTimer) {
+      clearTimeout(videoSequenceTimer);
+      videoSequenceTimer = null;
+    }
+    if (idx < 0 || idx >= urls.length) return;
+    index = idx;
+    const url = urls[index];
+    const pointName = names[index] || '';
+    console.log(`動画再生開始 (${index + 1}/${urls.length}): ${pointName || 'ポイント名なし'}`);
+    wrap.innerHTML = '';
+
+    // ポイント名を表示するオーバーレイを追加
+    if (pointName) {
+      let nameOverlay = overlay.querySelector('.video-overlay-point-name');
+      if (!nameOverlay) {
+        nameOverlay = document.createElement('div');
+        nameOverlay.className = 'video-overlay-point-name';
+        overlay.appendChild(nameOverlay);
+      }
+      nameOverlay.textContent = pointName;
+      nameOverlay.style.display = '';
+    }
+
+    const embedUrl = getVideoEmbedUrl(url);
+    if (embedUrl) {
+      const ytId = getYouTubeVideoId(url);
+      const isVimeo = embedUrl.includes('vimeo.com');
+      const src = ytId
+        ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+        : embedUrl + '?autoplay=1' + (isVimeo ? '&api=1' : '');
+      const iframe = document.createElement('iframe');
+      iframe.src = src;
+      iframe.title = '動画';
+      iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
+      iframe.allowFullscreen = true;
+      wrap.appendChild(iframe);
+
+      const advanceToNext = () => {
+        console.log(`動画終了: 次の動画に進みます (${index + 1}/${urls.length} → ${index + 2}/${urls.length})`);
+        if (videoSequenceTimer) { clearTimeout(videoSequenceTimer); videoSequenceTimer = null; }
+        if (index + 1 < urls.length) playAt(index + 1);
+      };
+
+      // YouTube: postMessage で動画終了を検知
+      if (ytId) {
+        const ytHandler = (e) => {
+          if (!e.origin.includes('youtube.com')) return;
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data?.event === 'onStateChange' && data?.info === 0) {
+              console.log(`YouTube動画終了イベント受信`);
+              window.removeEventListener('message', ytHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', ytHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*'); } catch (_) {}
+        };
+      }
+
+      // Vimeo: postMessage で終了検知
+      if (isVimeo) {
+        const vimeoHandler = (e) => {
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data && data.event === 'finish') {
+              console.log(`Vimeo動画終了イベント受信`);
+              window.removeEventListener('message', vimeoHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', vimeoHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*'); } catch (_) {}
+        };
+      }
+
+      // フォールバック: 終了イベントが発火しない場合に備えて60秒後に次へ
+      if (index + 1 < urls.length) {
+        videoSequenceTimer = setTimeout(() => {
+          console.log('動画シーケンスフォールバックタイマー: 次へ進みます');
+          advanceToNext();
+        }, 60000);
+      }
+    } else {
+      const video = document.createElement('video');
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      video.muted = false;
+      video.addEventListener('ended', () => {
+        if (index + 1 < urls.length) playAt(index + 1);
+      });
+      wrap.appendChild(video);
+    }
+    overlay.classList.remove('hidden');
+    document.querySelector('.map-container')?.classList.add('map-showing-video');
+
+    createVideoControlsBar(overlay, wrap, {
+      currentUrl: url,
+      onPrev: index > 0 ? () => playAt(index - 1) : null,
+      onNext: index + 1 < urls.length ? () => playAt(index + 1) : null,
+      onClose: () => closeVideoOverlay()
+    });
+  };
+
+  playAt(0);
 }
 
 /** 動画URLの配列を連続再生。1件の場合は showVideoOverlay、複数なら順番に再生 */
@@ -5191,6 +5354,7 @@ function playVideoSequence(urls) {
       wrap.appendChild(iframe);
 
       const advanceToNext = () => {
+        console.log(`動画終了: 次の動画に進みます (${index + 1}/${urls.length} → ${index + 2}/${urls.length})`);
         if (videoSequenceTimer) { clearTimeout(videoSequenceTimer); videoSequenceTimer = null; }
         if (index + 1 < urls.length) playAt(index + 1);
       };
@@ -5202,6 +5366,7 @@ function playVideoSequence(urls) {
           try {
             const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
             if (data?.event === 'onStateChange' && data?.info === 0) {
+              console.log(`YouTube動画終了イベント受信`);
               window.removeEventListener('message', ytHandler);
               advanceToNext();
             }
@@ -5219,6 +5384,7 @@ function playVideoSequence(urls) {
           try {
             const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
             if (data && data.event === 'finish') {
+              console.log(`Vimeo動画終了イベント受信`);
               window.removeEventListener('message', vimeoHandler);
               advanceToNext();
             }
@@ -5230,9 +5396,12 @@ function playVideoSequence(urls) {
         };
       }
 
-      // フォールバック: 終了イベントが発火しない場合に備えて最大5分後に次へ
+      // フォールバック: 終了イベントが発火しない場合に備えて60秒後に次へ
       if (index + 1 < urls.length) {
-        videoSequenceTimer = setTimeout(advanceToNext, 300000);
+        videoSequenceTimer = setTimeout(() => {
+          console.log('動画シーケンスフォールバックタイマー: 次へ進みます');
+          advanceToNext();
+        }, 60000);
       }
     } else {
       const video = document.createElement('video');
@@ -7221,7 +7390,12 @@ function closeVideoOverlay() {
   }
   const overlay = document.getElementById('videoOverlay');
   const wrap = document.getElementById('videoPlayerWrap');
-  if (overlay) overlay.classList.add('hidden');
+  if (overlay) {
+    overlay.classList.add('hidden');
+    // ポイント名のオーバーレイを削除
+    const nameOverlay = overlay.querySelector('.video-overlay-point-name');
+    if (nameOverlay) nameOverlay.remove();
+  }
   document.querySelector('.map-container')?.classList.remove('map-showing-video');
   if (wrap) {
     wrap.innerHTML = '';

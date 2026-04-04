@@ -604,29 +604,32 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 .playback-photo-overlay.hidden {
   display: none;
 }
-/* 動画表示モード（デスクトップ：右下固定で地図も見える） */
+/* 動画表示モード（デスクトップ：下70%を使用） */
 .playback-photo-overlay.playback-video-fullscreen {
   position: absolute;
-  top: auto;
-  bottom: 20px;
-  right: 20px;
-  left: auto;
-  width: 480px;
-  height: 270px;
+  top: 30%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 70%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.95);
   pointer-events: auto;
-  border-radius: 10px;
+  border-radius: 0;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: none;
 }
-/* デスクトップ縦長動画 */
+/* デスクトップ縦長動画も同じ */
 .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
-  width: 240px;
-  height: 430px;
-  bottom: 20px;
+  top: 30%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 70%;
 }
 .playback-photo-card {
   background: rgba(255, 255, 255, 0.98);
@@ -637,14 +640,14 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   max-width: 594px;
   animation: fadeInSlide 0.4s ease-out;
 }
-/* 動画カード */
+/* 動画カード（手動再生と同じスタイル） */
 .playback-photo-card.playback-video-card {
   width: 100%;
   max-width: 100%;
   height: 100%;
   max-height: 100%;
   background: #000;
-  border-radius: 8px;
+  border-radius: 0;
   position: relative;
   pointer-events: auto;
 }
@@ -783,18 +786,18 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card img {
     max-height: 42.5vh;
   }
-  /* モバイル横長動画：下50% */
+  /* モバイル動画：下70% */
   .playback-photo-overlay.playback-video-fullscreen {
     top: 30%;
     left: 0;
     right: 0;
     bottom: 0;
     width: 100%;
-    height: 50%;
+    height: 70%;
     border-radius: 0;
     box-shadow: none;
   }
-  /* モバイル縦長動画：下70% */
+  /* モバイル縦長動画も同じ */
   .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
     top: 30%;
     height: 70%;
@@ -806,24 +809,28 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   }
   .playback-photo-card.playback-video-card {
-    width: 95%;
-    max-width: 95%;
-    height: 90%;
-    max-height: 90%;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
   }
 }
 
-/* モバイル縦向きの場合は動画表示エリアをさらに広げる */
+/* モバイル縦向きでも動画表示は手動再生と同じにする */
 @media (max-width: 768px) and (orientation: portrait) {
   .playback-photo-overlay.playback-video-fullscreen {
-    top: 10%;
-    height: 90%;
+    top: 30%;
+    height: 70%;
   }
   .playback-photo-card.playback-video-card {
-    width: 96%;
-    max-width: 96%;
-    height: 95%;
-    max-height: 95%;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+  }
+  .video-overlay {
+    top: 30%;
+    height: 70%;
   }
   .video-controls-bar {
     bottom: 10px;
@@ -833,6 +840,13 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     width: 34px;
     height: 34px;
     font-size: 0.9rem;
+  }
+  .video-overlay-point-name {
+    top: 12px;
+    left: 12px;
+    padding: 6px 12px;
+    font-size: 14px;
+    max-width: 70%;
   }
   .playback-photo-card img {
     width: 100%;
@@ -1002,6 +1016,22 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 }
 .video-overlay.hidden {
   display: none;
+}
+
+.video-overlay-point-name {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  z-index: 10;
+  max-width: 80%;
+  word-wrap: break-word;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .map-container.map-showing-video .map-search,
