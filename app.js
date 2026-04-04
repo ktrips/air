@@ -17,6 +17,7 @@ let playbackPhotos = []; // 再生中の写真配列
 let playbackVideoEndCallback = null;
 let playbackVideoTimer = null; // 動画再生時の30秒タイマー
 let videoSequenceTimer = null; // 動画シーケンス再生時のタイマー
+let currentAutoplayTick = null; // 自動再生のtick関数参照（jumpPlaybackで使用）
 let map3d = null;
 let photoPopup = null;
 let myTrips = [];
@@ -2464,25 +2465,6 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
 
     playbackVideoEndCallback = onVideoEnd || null;
 
-    // 動画コントロールバー（前の動画、再生/停止、次の動画、終了）
-    createVideoControlsBar(card, photoWrap, {
-      currentUrl: p.videoUrl,
-      onPrev: null,
-      onNext: onVideoEnd ? () => {
-        playbackVideoEndCallback = null;
-        if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
-        onVideoEnd();
-      } : null,
-      onClose: () => {
-        playbackVideoEndCallback = null;
-        if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
-        hidePlaybackPhotoOverlay();
-        if (playTimer) { clearTimeout(playTimer); playTimer = null; }
-        stopPlay();
-        showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
-      }
-    });
-
     // YouTube/Vimeo/その他の動画をiframeで埋め込み（autoplay + muted で自動再生を確保）
     const youtubeId = getYouTubeVideoId(p.videoUrl);
     const embedUrl = youtubeId
@@ -2559,9 +2541,6 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     }
   } else {
     playbackVideoEndCallback = null;
-    // 写真の場合はコントロールバーを非表示
-    const ctrlBarEl = card.querySelector('.video-controls-bar');
-    if (ctrlBarEl) ctrlBarEl.remove();
     // 写真の場合は通常表示モードに
     overlay.classList.remove('playback-video-fullscreen');
     card.classList.remove('playback-video-card');
@@ -3354,6 +3333,7 @@ async function onPlaybackComplete() {
 
 function stopPlay() {
   playbackVideoEndCallback = null;
+  currentAutoplayTick = null;
   if (playTimer) {
     clearTimeout(playTimer);
     clearInterval(playTimer); // 念のため両方
@@ -3579,6 +3559,7 @@ async function startPlay() {
         }
       }
     };
+    currentAutoplayTick = tick;
 
     // 1枚目の写真を即座に表示して再生開始（3D地図の初期化を待たない）
     if (p0.videoUrl && p0.videoUrl.trim()) {
@@ -3596,7 +3577,43 @@ async function startPlay() {
   }
 }
 
+/** 自動再生中に前後の写真・動画へジャンプ */
+async function jumpPlayback(delta) {
+  if (!document.body.classList.contains('app-playing')) return;
+  if (!playbackPhotos || !playbackPhotos.length) return;
+
+  // 現在の動画・タイマーをキャンセル
+  playbackVideoEndCallback = null;
+  if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+
+  const newIdx = currentPhotoIndex + delta;
+  if (newIdx < 0 || newIdx >= playbackPhotos.length) return;
+  currentPhotoIndex = newIdx;
+  const p = playbackPhotos[currentPhotoIndex];
+
+  // 地図をジャンプ先に移動
+  if (p?.lat != null && p?.lng != null) {
+    try { await flyMap3dTo(p.lat, p.lng, 17, 1500); } catch (_) {}
+  }
+
+  if (!currentAutoplayTick) return;
+  const tickFn = currentAutoplayTick;
+  if (p.videoUrl && p.videoUrl.trim()) {
+    await showPlaybackPhotoOverlay(p, () => {
+      playTimer = setTimeout(tickFn, 500);
+    });
+  } else {
+    await showPlaybackPhotoOverlay(p);
+    playTimer = setTimeout(tickFn, 2500);
+  }
+}
+
 function prevPhoto() {
+  if (document.body.classList.contains('app-playing')) {
+    jumpPlayback(-1);
+    return;
+  }
   const photos = getDisplayPhotos();
   if (!photos.length) return;
   currentPhotoIndex = (currentPhotoIndex - 1 + photos.length) % photos.length;
@@ -3608,6 +3625,10 @@ function prevPhoto() {
 }
 
 function nextPhoto() {
+  if (document.body.classList.contains('app-playing')) {
+    jumpPlayback(1);
+    return;
+  }
   const photos = getDisplayPhotos();
   if (!photos.length) return;
   currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;

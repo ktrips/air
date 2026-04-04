@@ -638,10 +638,42 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   position: relative;
   pointer-events: auto;
 }
-/* 動画コントロールバー（中央上） */
+/* 自動再生中の動画コントロールバー（下部中央） */
+.playback-video-bottombar {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  z-index: 20;
+  pointer-events: auto;
+}
+.playback-video-bar-btn {
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  transition: background 0.2s;
+}
+.playback-video-bar-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+.playback-video-bar-btn--back {
+  background: rgba(40, 40, 40, 0.7);
+}
+.playback-video-bar-btn--back:hover {
+  background: rgba(70, 70, 70, 0.9);
+}
+/* 動画コントロールバー（中央下） */
 .video-controls-bar {
   position: absolute;
-  top: 10px;
+  bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
@@ -760,7 +792,7 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     max-height: 90%;
   }
   .video-controls-bar {
-    top: 6px;
+    bottom: 10px;
     gap: 6px;
   }
   .video-controls-bar .video-ctrl-btn {
@@ -3670,8 +3702,8 @@ body.app-playing .map-playback-controls {
 }
 
 body.app-playing .play-stop-btn-mobile {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.3);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -3679,14 +3711,15 @@ body.app-playing .play-stop-btn-mobile {
 
 body.app-playing .play-stop-btn-mobile::before {
   content: '■';
-  font-size: 0.9rem;
+  font-size: 1.1rem;
   margin-left: 0;
   color: white;
   filter: none;
 }
 
 body.app-playing .map-photo-nav-btn {
-  display: none;
+  display: flex;
+  font-size: 1.8rem;
 }
 
 
@@ -3879,15 +3912,15 @@ body.app-playing .map-photo-nav-btn {
   }
 
   body.app-playing .play-stop-btn-mobile {
-    width: 32px;
-    height: 32px;
+    width: 39px;
+    height: 39px;
     background: rgba(0, 0, 0, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   }
 
   body.app-playing .play-stop-btn-mobile::before {
-    font-size: 0.8rem;
+    font-size: 1rem;
   }
   /* 自動再生時は地図を画面下まで拡大 */
   body.app-playing .map-container {
