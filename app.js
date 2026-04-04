@@ -2482,9 +2482,15 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
   photoWrap.innerHTML = '';
 
   if (hasVideo) {
-    // 動画の場合は下半分表示モードに
+    // 動画の縦横を判定してクラスを設定
+    const orientation = await detectVideoOrientation(p.videoUrl);
     overlay.classList.add('playback-video-fullscreen');
     card.classList.add('playback-video-card');
+    if (orientation === 'portrait') {
+      overlay.classList.add('playback-video-portrait');
+    } else {
+      overlay.classList.remove('playback-video-portrait');
+    }
 
     playbackVideoEndCallback = onVideoEnd || null;
 
@@ -2566,6 +2572,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     playbackVideoEndCallback = null;
     // 写真の場合は通常表示モードに
     overlay.classList.remove('playback-video-fullscreen');
+    overlay.classList.remove('playback-video-portrait');
     card.classList.remove('playback-video-card');
     // 写真を表示
     const img = document.createElement('img');
@@ -4978,6 +4985,49 @@ function getVimeoVideoId(url) {
   const u = url.trim();
   const vimeoMatch = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   return vimeoMatch ? vimeoMatch[1] : null;
+}
+
+// YouTubeサムネイルのアスペクト比から縦横を判定（portrait / landscape）
+async function detectVideoOrientation(videoUrl) {
+  const youtubeId = getYouTubeVideoId(videoUrl);
+  if (youtubeId) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve(img.naturalHeight > img.naturalWidth ? 'portrait' : 'landscape');
+      };
+      img.onerror = () => resolve('landscape');
+      img.src = `https://i.ytimg.com/vi/${youtubeId}/0.jpg`;
+    });
+  }
+  return 'landscape';
+}
+
+function loadYouTubeIFrameAPI() {
+  return new Promise((resolve) => {
+    if (youtubeApiReady) {
+      resolve();
+      return;
+    }
+
+    if (window.YT && window.YT.Player) {
+      youtubeApiReady = true;
+      resolve();
+      return;
+    }
+
+    window.onYouTubeIframeAPIReady = () => {
+      youtubeApiReady = true;
+      resolve();
+    };
+
+    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    }
+  });
 }
 
 function getVideoThumbnailUrl(videoUrl) {

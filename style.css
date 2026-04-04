@@ -604,19 +604,29 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 .playback-photo-overlay.hidden {
   display: none;
 }
-/* 動画表示モード */
+/* 動画表示モード（デスクトップ：右下固定で地図も見える） */
 .playback-photo-overlay.playback-video-fullscreen {
-  top: 30%;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  height: 70%;
+  position: absolute;
+  top: auto;
+  bottom: 20px;
+  right: 20px;
+  left: auto;
+  width: 480px;
+  height: 270px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.95);
   pointer-events: auto;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+/* デスクトップ縦長動画 */
+.playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
+  width: 240px;
+  height: 430px;
+  bottom: 20px;
 }
 .playback-photo-card {
   background: rgba(255, 255, 255, 0.98);
@@ -627,12 +637,12 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   max-width: 594px;
   animation: fadeInSlide 0.4s ease-out;
 }
-/* 動画カード（下半分） */
+/* 動画カード */
 .playback-photo-card.playback-video-card {
-  width: 95%;
-  max-width: 95%;
-  height: 90%;
-  max-height: 90%;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
   background: #000;
   border-radius: 8px;
   position: relative;
@@ -773,11 +783,21 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card img {
     max-height: 42.5vh;
   }
+  /* モバイル横長動画：下50% */
   .playback-photo-overlay.playback-video-fullscreen {
     top: 30%;
     left: 0;
     right: 0;
     bottom: 0;
+    width: 100%;
+    height: 50%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  /* モバイル縦長動画：下70% */
+  .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
+    top: 30%;
+    height: 70%;
   }
   .playback-photo-card {
     width: 60vw;
