@@ -14,8 +14,6 @@ let tripLeaderLayers = [];
 let playTimer = null;
 let playIntervalMs = 3000;
 let playbackPhotos = []; // 再生中の写真配列
-let currentYouTubePlayer = null;
-let youtubeApiReady = false;
 let playbackVideoEndCallback = null;
 let playbackVideoTimer = null; // 動画再生時の30秒タイマー
 let videoSequenceTimer = null; // 動画シーケンス再生時のタイマー
@@ -489,13 +487,17 @@ function initMap3d() {
           },
           terrainSource: {
             type: 'raster-dem',
-            url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-            tileSize: 256
+            tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            encoding: 'terrarium',
+            maxzoom: 15
           },
           hillshadeSource: {
             type: 'raster-dem',
-            url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-            tileSize: 256
+            tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            encoding: 'terrarium',
+            maxzoom: 15
           }
         },
         layers: [
@@ -2433,16 +2435,6 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
   const card = document.getElementById('playbackPhotoCard');
   if (!overlay || !card) return;
 
-  // 既存のYouTubeプレイヤーを破棄
-  if (currentYouTubePlayer) {
-    try {
-      currentYouTubePlayer.destroy();
-    } catch (e) {
-      console.warn('YouTube Player破棄エラー:', e);
-    }
-    currentYouTubePlayer = null;
-  }
-
   // 動画URLがある場合は動画優先
   const hasVideo = p.videoUrl && p.videoUrl.trim();
   const contentKey = hasVideo ? p.videoUrl : p.url;
@@ -2470,131 +2462,106 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     overlay.classList.add('playback-video-fullscreen');
     card.classList.add('playback-video-card');
 
-    // 戻るボタンを追加
-    let backBtn = card.querySelector('.playback-video-back-btn');
-    if (!backBtn) {
-      backBtn = document.createElement('button');
-      backBtn.type = 'button';
-      backBtn.className = 'playback-video-back-btn';
-      backBtn.textContent = '← 戻る';
-      backBtn.title = '動画をスキップして次へ';
-      card.appendChild(backBtn);
-    }
-    backBtn.style.display = '';
     playbackVideoEndCallback = onVideoEnd || null;
-    backBtn.onclick = () => {
-      if (onVideoEnd) {
+
+    // 動画コントロールバー（前の動画、再生/停止、次の動画、終了）
+    createVideoControlsBar(card, photoWrap, {
+      currentUrl: p.videoUrl,
+      onPrev: null,
+      onNext: onVideoEnd ? () => {
         playbackVideoEndCallback = null;
-        // 30秒タイマーをクリア
-        if (playbackVideoTimer) {
-          clearTimeout(playbackVideoTimer);
-          playbackVideoTimer = null;
-        }
-        // YouTubeプレイヤーを破棄
-        if (currentYouTubePlayer) {
-          try {
-            currentYouTubePlayer.destroy();
-          } catch (e) {
-            console.warn('YouTube Player破棄エラー:', e);
-          }
-          currentYouTubePlayer = null;
-        }
-        // 次へ進むコールバックを即座に呼ぶ
+        if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
         onVideoEnd();
+      } : null,
+      onClose: () => {
+        playbackVideoEndCallback = null;
+        if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+        hidePlaybackPhotoOverlay();
+        if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+        stopPlay();
+        showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
       }
-    };
+    });
 
-    // YouTube動画の場合はYouTube IFrame APIを使用
+    // YouTube/Vimeo/その他の動画をiframeで埋め込み（autoplay + muted で自動再生を確保）
     const youtubeId = getYouTubeVideoId(p.videoUrl);
-    if (youtubeId) {
-      // YouTube IFrame APIをロード
-      await loadYouTubeIFrameAPI();
+    const embedUrl = youtubeId
+      ? `https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+      : getVideoEmbedUrl(p.videoUrl);
 
-      // プレイヤー用のdivを作成
-      const playerDiv = document.createElement('div');
-      playerDiv.id = 'playbackYoutubePlayer';
-      playerDiv.style.cssText = 'width:100%;height:100%;';
-      photoWrap.appendChild(playerDiv);
+    if (embedUrl) {
+      const isYouTube = !!youtubeId;
+      const isVimeo = embedUrl.includes('vimeo.com');
+      let iframeSrc = embedUrl;
+      if (!isYouTube) {
+        iframeSrc += (iframeSrc.includes('?') ? '&' : '?') + 'autoplay=1&muted=1';
+        if (isVimeo) iframeSrc += '&api=1';
+      }
 
-      // YouTube Playerを作成
-      let checkVideoEndInterval = null;
-      currentYouTubePlayer = new YT.Player('playbackYoutubePlayer', {
-        videoId: youtubeId,
-        width: '100%',
-        height: '100%',
-        playerVars: {
-          autoplay: 1,
-          mute: 1,
-          controls: 1,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          start: 0
-        },
-        events: {
-          onReady: (event) => {
-            // プレイヤーが準備できたら再生開始
-            event.target.playVideo();
+      const iframe = document.createElement('iframe');
+      iframe.src = iframeSrc;
+      iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:8px;';
+      iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
+      iframe.allowFullscreen = true;
+      photoWrap.appendChild(iframe);
 
-            // YouTube動画の終了を検知して次へ進む
-            if (onVideoEnd) {
-              checkVideoEndInterval = setInterval(() => {
-                if (!currentYouTubePlayer) {
-                  clearInterval(checkVideoEndInterval);
-                  return;
-                }
-                try {
-                  const state = currentYouTubePlayer.getPlayerState();
-                  // 0=終了, 1=再生中, 2=一時停止, 3=バッファリング, 5=動画開始
-                  if (state === 0) {  // 動画が終了したら
-                    clearInterval(checkVideoEndInterval);
-                    if (playbackVideoTimer) clearTimeout(playbackVideoTimer);
-                    onVideoEnd();
-                  }
-                } catch (e) {
-                  clearInterval(checkVideoEndInterval);
-                }
-              }, 100);
-              // 安全ため最大3分のタイムアウト
-              playbackVideoTimer = setTimeout(() => {
-                if (checkVideoEndInterval) clearInterval(checkVideoEndInterval);
-                onVideoEnd();
-              }, 180000);
+      // YouTube: postMessage で動画終了を検知
+      if (isYouTube && onVideoEnd) {
+        const ytHandler = (e) => {
+          if (!e.origin.includes('youtube.com')) return;
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data?.event === 'onStateChange' && data?.info === 0) {
+              window.removeEventListener('message', ytHandler);
+              if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+              if (playbackVideoEndCallback) {
+                const cb = playbackVideoEndCallback;
+                playbackVideoEndCallback = null;
+                cb();
+              }
             }
-          },
-          onError: (event) => {
-            console.error('YouTube再生エラー:', event.data);
-            if (onVideoEnd) {
-              if (checkVideoEndInterval) clearInterval(checkVideoEndInterval);
-              onVideoEnd();
-            }
-          }
-        }
-      });
-    } else {
-      // Vimeoやその他の動画
-      const embedUrl = getVideoEmbedUrl(p.videoUrl);
-      if (embedUrl) {
-        const iframe = document.createElement('iframe');
-        iframe.src = embedUrl + '?autoplay=1&muted=1';
-        iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:8px;';
-        iframe.allow = 'autoplay; encrypted-media';
-        iframe.allowFullscreen = true;
-        photoWrap.appendChild(iframe);
+          } catch (_) {}
+        };
+        window.addEventListener('message', ytHandler);
+        iframe.onload = () => {
+          try {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*');
+          } catch (_) {}
+        };
+      }
 
-        // Vimeoやその他の動画は最大3分で次へ進む（ユーザーが戻るボタンで手動で次へも可能）
-        if (onVideoEnd) {
-          playbackVideoTimer = setTimeout(onVideoEnd, 180000);
-        }
+      // Vimeo: postMessage で終了検知
+      if (isVimeo && onVideoEnd) {
+        const vimeoHandler = (e) => {
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data && data.event === 'finish') {
+              window.removeEventListener('message', vimeoHandler);
+              if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+              if (playbackVideoEndCallback) {
+                const cb = playbackVideoEndCallback;
+                playbackVideoEndCallback = null;
+                cb();
+              }
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', vimeoHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*'); } catch (_) {}
+        };
+      }
+
+      // フォールバック: 最大5分後に次へ
+      if (onVideoEnd) {
+        playbackVideoTimer = setTimeout(onVideoEnd, 300000);
       }
     }
   } else {
     playbackVideoEndCallback = null;
-    // 写真の場合は戻るボタンを非表示
-    const backBtn = card.querySelector('.playback-video-back-btn');
-    if (backBtn) {
-      backBtn.style.display = 'none';
-    }
+    // 写真の場合はコントロールバーを非表示
+    const ctrlBarEl = card.querySelector('.video-controls-bar');
+    if (ctrlBarEl) ctrlBarEl.remove();
     // 写真の場合は通常表示モードに
     overlay.classList.remove('playback-video-fullscreen');
     card.classList.remove('playback-video-card');
@@ -3325,18 +3292,9 @@ function handlePlaybackStop() {
       clearTimeout(playbackVideoTimer);
       playbackVideoTimer = null;
     }
-    if (currentYouTubePlayer) {
-      try {
-        currentYouTubePlayer.destroy();
-      } catch (e) {
-        console.warn('YouTube Player破棄エラー:', e);
-      }
-      currentYouTubePlayer = null;
-    }
     cb();
   } else {
     stopPlay();
-    // スタンプ一覧を表示せず、トリップ全体を再表示
     showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
   }
 }
@@ -3400,16 +3358,6 @@ function stopPlay() {
     clearTimeout(playTimer);
     clearInterval(playTimer); // 念のため両方
     playTimer = null;
-  }
-
-  // YouTubeプレイヤーを破棄
-  if (currentYouTubePlayer) {
-    try {
-      currentYouTubePlayer.destroy();
-    } catch (e) {
-      console.warn('YouTube Player破棄エラー:', e);
-    }
-    currentYouTubePlayer = null;
   }
 
   // 動画再生タイマーをクリア
@@ -4905,7 +4853,7 @@ function getTripVideoUrls() {
 function getVideoEmbedUrl(url) {
   if (!url) return null;
   const u = url.trim();
-  const ytMatch = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  const ytMatch = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/);
   if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
   const vimeoMatch = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
@@ -4915,35 +4863,77 @@ function getVideoEmbedUrl(url) {
 function getYouTubeVideoId(url) {
   if (!url) return null;
   const u = url.trim();
-  const ytMatch = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  const ytMatch = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/);
   return ytMatch ? ytMatch[1] : null;
 }
 
-function loadYouTubeIFrameAPI() {
-  return new Promise((resolve) => {
-    if (youtubeApiReady) {
-      resolve();
-      return;
-    }
+/** 動画コントロールバーを生成（前の動画、再生/停止、次の動画、終了） */
+function createVideoControlsBar(overlay, wrap, { currentUrl, onPrev, onNext, onClose }) {
+  let existing = overlay.querySelector('.video-controls-bar');
+  if (existing) existing.remove();
 
-    if (window.YT && window.YT.Player) {
-      youtubeApiReady = true;
-      resolve();
-      return;
-    }
+  const bar = document.createElement('div');
+  bar.className = 'video-controls-bar';
 
-    window.onYouTubeIframeAPIReady = () => {
-      youtubeApiReady = true;
-      resolve();
-    };
+  if (onPrev) {
+    const prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'video-ctrl-btn';
+    prevBtn.dataset.action = 'prev';
+    prevBtn.title = '前の動画';
+    prevBtn.textContent = '⏮';
+    prevBtn.onclick = onPrev;
+    bar.appendChild(prevBtn);
+  }
 
-    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+  const pauseBtn = document.createElement('button');
+  pauseBtn.type = 'button';
+  pauseBtn.className = 'video-ctrl-btn';
+  pauseBtn.dataset.action = 'pause';
+  pauseBtn.title = '再生 / 停止';
+  pauseBtn.textContent = '⏸';
+  bar.appendChild(pauseBtn);
+
+  if (onNext) {
+    const nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'video-ctrl-btn';
+    nextBtn.dataset.action = 'next';
+    nextBtn.title = '次の動画';
+    nextBtn.textContent = '⏭';
+    nextBtn.onclick = onNext;
+    bar.appendChild(nextBtn);
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'video-ctrl-btn';
+  closeBtn.dataset.action = 'close';
+  closeBtn.title = '動画を終了';
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = onClose;
+  bar.appendChild(closeBtn);
+
+  let videoPaused = false;
+  pauseBtn.onclick = () => {
+    const iframe = wrap.querySelector('iframe');
+    const videoEl = wrap.querySelector('video');
+    videoPaused = !videoPaused;
+    pauseBtn.textContent = videoPaused ? '▶' : '⏸';
+    if (iframe && currentUrl) {
+      const ytId = getYouTubeVideoId(currentUrl);
+      if (ytId) {
+        try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: videoPaused ? 'pauseVideo' : 'playVideo' }), '*'); } catch (_) {}
+      } else if (currentUrl.includes('vimeo')) {
+        try { iframe.contentWindow.postMessage(JSON.stringify({ method: videoPaused ? 'pause' : 'play' }), '*'); } catch (_) {}
+      }
+    } else if (videoEl) {
+      videoPaused ? videoEl.pause() : videoEl.play();
     }
-  });
+  };
+
+  overlay.appendChild(bar);
+  return bar;
 }
 
 function showVideoOverlay(url) {
@@ -4953,10 +4943,14 @@ function showVideoOverlay(url) {
   const embedUrl = getVideoEmbedUrl(url);
   wrap.innerHTML = '';
   if (embedUrl) {
+    const ytId = getYouTubeVideoId(url);
+    const src = ytId
+      ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+      : embedUrl + '?autoplay=1';
     const iframe = document.createElement('iframe');
-    iframe.src = embedUrl + '?autoplay=1';
+    iframe.src = src;
     iframe.title = '動画';
-    iframe.allow = 'autoplay; encrypted-media';
+    iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
     iframe.allowFullscreen = true;
     wrap.appendChild(iframe);
   } else {
@@ -4969,6 +4963,12 @@ function showVideoOverlay(url) {
   }
   overlay.classList.remove('hidden');
   document.querySelector('.map-container')?.classList.add('map-showing-video');
+  createVideoControlsBar(overlay, wrap, {
+    currentUrl: url,
+    onPrev: null,
+    onNext: null,
+    onClose: () => closeVideoOverlay()
+  });
 }
 
 /** 動画URLの配列を連続再生。1件の場合は showVideoOverlay、複数なら順番に再生 */
@@ -4984,29 +4984,74 @@ function playVideoSequence(urls) {
   }
 
   let index = 0;
-  const VIDEO_DURATION_MS = 30000; // iframe動画の最大表示時間（YouTube/Vimeoは終了検知不可のため）
+  const VIDEO_DURATION_MS = 30000;
 
-  const playNext = () => {
+  const playAt = (idx) => {
     if (videoSequenceTimer) {
       clearTimeout(videoSequenceTimer);
       videoSequenceTimer = null;
     }
-    if (index >= urls.length) {
-      return;
-    }
+    if (idx < 0 || idx >= urls.length) return;
+    index = idx;
     const url = urls[index];
-    index++;
     wrap.innerHTML = '';
     const embedUrl = getVideoEmbedUrl(url);
     if (embedUrl) {
+      const ytId = getYouTubeVideoId(url);
+      const isVimeo = embedUrl.includes('vimeo.com');
+      const src = ytId
+        ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+        : embedUrl + '?autoplay=1' + (isVimeo ? '&api=1' : '');
       const iframe = document.createElement('iframe');
-      iframe.src = embedUrl + '?autoplay=1';
+      iframe.src = src;
       iframe.title = '動画';
-      iframe.allow = 'autoplay; encrypted-media';
+      iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
       iframe.allowFullscreen = true;
       wrap.appendChild(iframe);
-      if (index < urls.length) {
-        videoSequenceTimer = setTimeout(playNext, VIDEO_DURATION_MS);
+
+      const advanceToNext = () => {
+        if (videoSequenceTimer) { clearTimeout(videoSequenceTimer); videoSequenceTimer = null; }
+        if (index + 1 < urls.length) playAt(index + 1);
+      };
+
+      // YouTube: postMessage で動画終了を検知
+      if (ytId) {
+        const ytHandler = (e) => {
+          if (!e.origin.includes('youtube.com')) return;
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data?.event === 'onStateChange' && data?.info === 0) {
+              window.removeEventListener('message', ytHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', ytHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*'); } catch (_) {}
+        };
+      }
+
+      // Vimeo: postMessage で終了検知
+      if (isVimeo) {
+        const vimeoHandler = (e) => {
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data && data.event === 'finish') {
+              window.removeEventListener('message', vimeoHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', vimeoHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*'); } catch (_) {}
+        };
+      }
+
+      // フォールバック: 終了イベントが発火しない場合に備えて最大5分後に次へ
+      if (index + 1 < urls.length) {
+        videoSequenceTimer = setTimeout(advanceToNext, 300000);
       }
     } else {
       const video = document.createElement('video');
@@ -5015,15 +5060,22 @@ function playVideoSequence(urls) {
       video.autoplay = true;
       video.muted = false;
       video.addEventListener('ended', () => {
-        if (index < urls.length) playNext();
+        if (index + 1 < urls.length) playAt(index + 1);
       });
       wrap.appendChild(video);
     }
     overlay.classList.remove('hidden');
     document.querySelector('.map-container')?.classList.add('map-showing-video');
+
+    createVideoControlsBar(overlay, wrap, {
+      currentUrl: url,
+      onPrev: index > 0 ? () => playAt(index - 1) : null,
+      onNext: index + 1 < urls.length ? () => playAt(index + 1) : null,
+      onClose: () => closeVideoOverlay()
+    });
   };
 
-  playNext();
+  playAt(0);
 }
 
 let animePlayTimer = null;
@@ -8013,8 +8065,6 @@ function initEventListeners() {
 
   const generateTravelogueBtn = document.getElementById('generateTravelogueBtn');
   if (generateTravelogueBtn) generateTravelogueBtn.onclick = () => generateTravelogueWithAI();
-  const videoBackBtn = document.getElementById('videoBackBtn');
-  if (videoBackBtn) videoBackBtn.onclick = closeVideoOverlay;
 
 
   document.getElementById('helpModalClose').onclick = () => document.getElementById('helpModal').classList.remove('open');

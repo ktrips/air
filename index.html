@@ -69,7 +69,6 @@
           <input type="text" id="mapSearchInput" placeholder="地名を検索" class="map-search-input">
         </div>
         <div class="video-overlay hidden" id="videoOverlay">
-          <button type="button" class="video-back-btn" id="videoBackBtn" aria-label="戻る">← 戻る</button>
           <div class="video-player-wrap" id="videoPlayerWrap"></div>
         </div>
         <div class="playback-photo-overlay hidden" id="playbackPhotoOverlay">
@@ -456,6 +455,7 @@
         <ul>
           <li>右上メニュー（☰）から動画・旅行記・スタンプラリーを表示</li>
           <li>旅行記がある場合、トリップ名をクリックで旅行記を表示</li>
+          <li>「▶ 再生」でスライドショー開始。再生終了後は地図全体表示に自動復帰</li>
         </ul>
 
         <h4>✏️ 編集モード（ログイン必要）</h4>
@@ -484,6 +484,13 @@
           <li>✏️編集ボタンをクリック</li>
           <li>ポイント名・説明・ランドマーク番号を入力</li>
           <li>「保存」ボタンで保存</li>
+        </ol>
+
+        <p><strong>3b. GPS位置を変更（マーカードラッグ）:</strong></p>
+        <ol>
+          <li>ログイン済みの状態で地図上のマーカーをドラッグ</li>
+          <li>移動先でドロップすると地図下部に保存バーが表示</li>
+          <li>「保存」で新しい位置を確定、「元に戻す」でキャンセル</li>
         </ol>
 
         <p><strong>4. 写真の削除:</strong></p>
@@ -522,11 +529,13 @@
           <li>子トリップで「親を選択」→親トリップを選択</li>
           <li>「＋ 子トリップを追加」で新しい子を作成</li>
         </ol>
-        <p><strong>親トリップ選択時の表示（デスクトップ）:</strong></p>
+        <p><strong>親トリップ選択時の表示:</strong></p>
         <ul>
-          <li>子トリップのAIアニメサムネイルをインライン表示</li>
-          <li>各子トリップ名の横に📖（旅行記）・🎬（動画）の小ボタンを表示</li>
+          <li>全子トリップのAIアニメサムネイルをまとめてインライン表示（クリックでスライドショー）</li>
+          <li>旅行記ボタン（📖）をクリックすると子トリップ一覧が表示され、各トリップの旅行記を確認できる</li>
+          <li>旅行記一覧では各子トリップ名の横に🎬動画ボタンも表示（動画がある場合）</li>
           <li>スタンプラリーがある場合は🎫スタンプ一覧ボタンを表示</li>
+          <li>動画ボタン（🎬）で親トリップの動画 → 各子トリップの動画 → 各ポイントの動画を連続再生</li>
         </ul>
 
         <h4>🤖 AI機能（オプション）</h4>
@@ -562,6 +571,7 @@
           <li><strong>スワイプ:</strong> 写真を左右に切り替え</li>
           <li><strong>メニュー:</strong> 右上の☰から各機能にアクセス</li>
           <li><strong>ヘッダー表示:</strong> 隠れたヘッダーはプルダウンバーを下スワイプ、または地図上部を下スワイプで表示</li>
+          <li><strong>自動再生中:</strong> 写真がやや大きく表示。画面下部の停止ボタン（■）でいつでも停止可能</li>
         </ul>
 
         <h4>💡 Tips</h4>
