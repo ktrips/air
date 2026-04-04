@@ -1870,6 +1870,29 @@ function renderThumbnails() {
         img.alt = p.name;
         img.onclick = () => showPhotoAtIndex(i);
         item.appendChild(img);
+      } else if (p.videoUrl) {
+        // 写真はないが動画URLがある場合
+        const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
+        if (videoThumbnailUrl) {
+          const img = document.createElement('img');
+          img.src = videoThumbnailUrl;
+          img.alt = p.name || '動画';
+          img.onclick = () => showPhotoAtIndex(i);
+          // 動画アイコンを追加
+          const videoIcon = document.createElement('div');
+          videoIcon.className = 'thumbnail-video-icon';
+          videoIcon.innerHTML = '▶️';
+          item.appendChild(img);
+          item.appendChild(videoIcon);
+        } else {
+          // 動画URLがあるがサムネイルが取得できない場合
+          const placeholder = document.createElement('div');
+          placeholder.className = 'thumbnail-video-placeholder';
+          placeholder.innerHTML = '🎬';
+          placeholder.title = '動画ポイント';
+          placeholder.onclick = () => showPhotoAtIndex(i);
+          item.appendChild(placeholder);
+        }
       } else {
         // 写真なしのGPSポイント
         const placeholder = document.createElement('div');
@@ -2601,12 +2624,39 @@ function showPhotoViewMode(p, lat, lng) {
   const photoWrap = document.createElement('div');
   photoWrap.className = 'photo-popup-photo-wrap';
   const img = document.createElement('img');
-  img.src = p.url || '';
-  img.alt = p.name || '';
-  img.title = 'クリックでオリジナルを表示';
-  img.loading = 'eager';
-  img.decoding = 'async';
-  img.onclick = () => { if (p.url) window.open(p.url, '_blank', 'noopener'); };
+
+  // 写真がある場合は写真を表示、なければ動画サムネイルを表示
+  if (p.url) {
+    img.src = p.url;
+    img.alt = p.name || '';
+    img.title = 'クリックでオリジナルを表示';
+    img.loading = 'eager';
+    img.decoding = 'async';
+    img.onclick = () => window.open(p.url, '_blank', 'noopener');
+  } else if (p.videoUrl) {
+    const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
+    if (videoThumbnailUrl) {
+      img.src = videoThumbnailUrl;
+      img.alt = p.name || '動画';
+      img.title = 'クリックで動画を表示';
+      img.loading = 'eager';
+      img.decoding = 'async';
+      img.onclick = () => window.open(p.videoUrl, '_blank', 'noopener');
+      // 動画アイコンを追加
+      const videoIcon = document.createElement('div');
+      videoIcon.className = 'photo-popup-video-icon';
+      videoIcon.innerHTML = '▶️';
+      videoIcon.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:48px;opacity:0.9;pointer-events:none;';
+      photoWrap.appendChild(videoIcon);
+    } else {
+      img.src = '';
+      img.alt = '動画';
+    }
+  } else {
+    img.src = '';
+    img.alt = p.name || '';
+  }
+
   photoWrap.appendChild(img);
   if (p.landmarkNo || p.name) {
     const overlayTop = document.createElement('div');
@@ -2698,10 +2748,35 @@ function showPhotoPopupEditMode(lat, lng) {
   const photoWrap = document.createElement('div');
   photoWrap.className = 'photo-popup-photo-wrap';
   const img = document.createElement('img');
-  img.src = p.url || '';
-  img.alt = p.name || '';
-  img.title = 'クリックでオリジナルを表示';
-  if (p.url) img.onclick = () => window.open(p.url, '_blank', 'noopener');
+
+  // 写真がある場合は写真を表示、なければ動画サムネイルを表示
+  if (p.url) {
+    img.src = p.url;
+    img.alt = p.name || '';
+    img.title = 'クリックでオリジナルを表示';
+    img.onclick = () => window.open(p.url, '_blank', 'noopener');
+  } else if (p.videoUrl) {
+    const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
+    if (videoThumbnailUrl) {
+      img.src = videoThumbnailUrl;
+      img.alt = p.name || '動画';
+      img.title = 'クリックで動画を表示';
+      img.onclick = () => window.open(p.videoUrl, '_blank', 'noopener');
+      // 動画アイコンを追加
+      const videoIcon = document.createElement('div');
+      videoIcon.className = 'photo-popup-video-icon';
+      videoIcon.innerHTML = '▶️';
+      videoIcon.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:48px;opacity:0.9;pointer-events:none;';
+      photoWrap.appendChild(videoIcon);
+    } else {
+      img.src = '';
+      img.alt = '動画';
+    }
+  } else {
+    img.src = '';
+    img.alt = p.name || '';
+  }
+
   photoWrap.appendChild(img);
   if (p.landmarkNo || p.name) {
     const overlayTop = document.createElement('div');
@@ -3001,18 +3076,28 @@ function showPhotoPopupEditMode(lat, lng) {
       // 元のポイントをそのままディープコピー（フォームの内容は反映しない）
       const duplicatedPhoto = JSON.parse(JSON.stringify(photos[idx]));
 
-      // 複製したポイントをスタンプに設定
-      duplicatedPhoto.isStamp = true;
+      // ランドマークとスタンプのチェックを外す
+      duplicatedPhoto.isLandmark = false;
+      duplicatedPhoto.isStamp = false;
 
-      // ポイント名に「御朱印」を追加
+      // ポイント名に「2」を追加
       if (duplicatedPhoto.name) {
-        duplicatedPhoto.name = `${duplicatedPhoto.name} 御朱印`;
+        duplicatedPhoto.name = `${duplicatedPhoto.name}2`;
       } else {
-        duplicatedPhoto.name = '御朱印';
+        duplicatedPhoto.name = '2';
       }
 
-      // ポイント説明を「御朱印」に設定
-      duplicatedPhoto.description = '御朱印';
+      // ポイント説明に「2」を追加
+      if (duplicatedPhoto.description) {
+        duplicatedPhoto.description = `${duplicatedPhoto.description}2`;
+      } else {
+        duplicatedPhoto.description = '2';
+      }
+
+      // 写真関連の情報を削除（写真はコピーしない）
+      delete duplicatedPhoto.url;
+      delete duplicatedPhoto.storagePath;
+      delete duplicatedPhoto.file;
 
       // 次の位置に挿入
       photos.splice(idx + 1, 0, duplicatedPhoto);
@@ -4886,6 +4971,31 @@ function getYouTubeVideoId(url) {
   const u = url.trim();
   const ytMatch = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/);
   return ytMatch ? ytMatch[1] : null;
+}
+
+function getVimeoVideoId(url) {
+  if (!url) return null;
+  const u = url.trim();
+  const vimeoMatch = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  return vimeoMatch ? vimeoMatch[1] : null;
+}
+
+function getVideoThumbnailUrl(videoUrl) {
+  if (!videoUrl) return null;
+
+  // YouTube
+  const youtubeId = getYouTubeVideoId(videoUrl);
+  if (youtubeId) {
+    return `https://img.youtube.com/vi/${youtubeId}/mqdefault.jpg`;
+  }
+
+  // Vimeo
+  const vimeoId = getVimeoVideoId(videoUrl);
+  if (vimeoId) {
+    return `https://vumbnail.com/${vimeoId}.jpg`;
+  }
+
+  return null;
 }
 
 /** 動画コントロールバーを生成（前の動画、再生/停止、次の動画、終了） */
