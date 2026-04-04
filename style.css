@@ -791,6 +791,20 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     height: 90%;
     max-height: 90%;
   }
+}
+
+/* モバイル縦向きの場合は動画表示エリアをさらに広げる */
+@media (max-width: 768px) and (orientation: portrait) {
+  .playback-photo-overlay.playback-video-fullscreen {
+    top: 10%;
+    height: 90%;
+  }
+  .playback-photo-card.playback-video-card {
+    width: 96%;
+    max-width: 96%;
+    height: 95%;
+    max-height: 95%;
+  }
   .video-controls-bar {
     bottom: 10px;
     gap: 6px;
