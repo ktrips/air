@@ -724,6 +724,42 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 .video-ctrl-btn[data-action="close"]:hover {
   background: rgba(200, 30, 30, 0.9);
 }
+
+/* 自動再生停止ボタン */
+.playback-stop-bar {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  pointer-events: auto;
+}
+.playback-stop-btn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(180, 40, 40, 0.9);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  transition: background 0.2s, transform 0.15s;
+  pointer-events: auto;
+}
+.playback-stop-btn:hover {
+  background: rgba(200, 30, 30, 0.95);
+  transform: scale(1.05);
+}
+.playback-stop-btn:active {
+  transform: scale(0.95);
+}
+
 .playback-photo-wrap {
   position: relative;
   width: 100%;
@@ -847,6 +883,13 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     padding: 6px 12px;
     font-size: 14px;
     max-width: 70%;
+  }
+  .playback-stop-bar {
+    bottom: 12px;
+  }
+  .playback-stop-btn {
+    padding: 8px 16px;
+    font-size: 14px;
   }
   .playback-photo-card img {
     width: 100%;

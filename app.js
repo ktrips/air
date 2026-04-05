@@ -2624,6 +2624,30 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     info.style.display = 'none';
   }
 
+  // 自動再生中で動画がある場合は停止ボタンを表示
+  if (hasVideo && playTimer) {
+    let stopBar = overlay.querySelector('.playback-stop-bar');
+    if (!stopBar) {
+      stopBar = document.createElement('div');
+      stopBar.className = 'playback-stop-bar';
+      const stopBtn = document.createElement('button');
+      stopBtn.type = 'button';
+      stopBtn.className = 'playback-stop-btn';
+      stopBtn.title = '自動再生を停止';
+      stopBtn.textContent = '⏹ 停止';
+      stopBtn.onclick = () => {
+        console.log('自動再生を停止します');
+        stopPlay();
+      };
+      stopBar.appendChild(stopBtn);
+      overlay.appendChild(stopBar);
+    }
+  } else {
+    // 動画がない場合は停止ボタンを削除
+    const stopBar = overlay.querySelector('.playback-stop-bar');
+    if (stopBar) stopBar.remove();
+  }
+
   document.getElementById('playbackPhotoOverlay').classList.remove('hidden');
 }
 
@@ -3477,6 +3501,9 @@ function stopPlay() {
       console.warn('3D地図レイヤークリアエラー:', e);
     }
   }
+
+  // トリップ全体のマップに戻る
+  showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
 }
 
 let cachedGpxPoints = null;
@@ -3578,10 +3605,10 @@ async function startPlay() {
   }
 
   const allPhotos = getDisplayPhotos();
-  // 写真があるポイントのみを再生対象にする
-  playbackPhotos = allPhotos.filter(p => p.url && p.url.trim());
+  // 写真または動画URLがあるポイントを再生対象にする
+  playbackPhotos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
   if (!playbackPhotos.length) {
-    alert('再生できる写真がありません。写真を追加してください。');
+    alert('再生できる写真または動画がありません。写真または動画URLを追加してください。');
     return;
   }
 
@@ -3975,6 +4002,13 @@ async function saveTrip(opts = {}) {
     renderTripList();
     refreshTripSelect();
     refreshTripParentSelectOptions();
+
+    // URLにトリップ名パラメータを更新
+    if (currentTrip && currentTrip.name) {
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('trip', encodeURIComponent(currentTrip.name));
+      window.history.replaceState({}, '', newUrl.toString());
+    }
   } catch (err) {
     console.error('保存エラー:', err);
     if (silent) throw err;
@@ -4517,6 +4551,12 @@ async function deleteTripFromList(id) {
       currentTrip = null;
       currentPhotoIndex = 0;
       thumbnailsVisible = false;
+
+      // URLパラメータを削除
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('trip');
+      window.history.replaceState({}, '', newUrl.toString());
+
       renderThumbnails();
       updateMapMarkers();
       updateTripInputs();
@@ -4746,6 +4786,12 @@ async function loadTripById(id) {
     try {
       currentTrip = { ...cached, id: cached.id };
       currentPhotoIndex = 0;
+
+      // URLにトリップ名パラメータを追加
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('trip', encodeURIComponent(currentTrip.name));
+      window.history.replaceState({}, '', newUrl.toString());
+
       await updateTripInputs();
       renderTripList();
       refreshTripSelect();
@@ -8588,13 +8634,39 @@ function init() {
       renderTripList();
       refreshTripSelect();
       refreshTripParentSelectOptions();
-      const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
-      if (lastTripId) {
+
+      // URLパラメータからトリップ名を取得
+      const urlParams = new URLSearchParams(window.location.search);
+      const tripNameParam = urlParams.get('trip');
+
+      let tripToLoad = null;
+
+      if (tripNameParam) {
+        // URLパラメータでトリップ名が指定されている場合、そのトリップを検索
+        const decodedTripName = decodeURIComponent(tripNameParam);
+        const foundTrip = myTrips.find(t => t.name === decodedTripName);
+        if (foundTrip) {
+          console.log(`URLパラメータからトリップを開きます: ${decodedTripName}`);
+          tripToLoad = foundTrip.id;
+        } else {
+          console.warn(`トリップ名 "${decodedTripName}" が見つかりませんでした`);
+        }
+      }
+
+      // URLパラメータで見つからなかった場合は、前回のトリップを開く
+      if (!tripToLoad) {
+        const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
+        if (lastTripId) {
+          tripToLoad = lastTripId;
+        }
+      }
+
+      if (tripToLoad) {
         try {
-          await loadTripById(lastTripId);
+          await loadTripById(tripToLoad);
         } catch (err) {
-          console.error('前回のトリップ読み込みエラー:', err);
-          // 前回のトリップ読み込みに失敗した場合は、デフォルトビューを表示
+          console.error('トリップ読み込みエラー:', err);
+          // トリップ読み込みに失敗した場合は、デフォルトビューを表示
           await updateHeaderInfo();
           await updateMapMarkers();
         }
