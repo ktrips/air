@@ -564,8 +564,10 @@ async function add3dMapRouteAndMarkers() {
   if (!map3d || !currentTrip) return;
 
   // 既存のレイヤーとソースをクリア
+  if (map3d.getLayer('route-glow')) map3d.removeLayer('route-glow');
   if (map3d.getLayer('route')) map3d.removeLayer('route');
   if (map3d.getSource('route')) map3d.removeSource('route');
+  if (map3d.getLayer('points-glow')) map3d.removeLayer('points-glow');
   if (map3d.getLayer('points')) map3d.removeLayer('points');
   if (map3d.getSource('points')) map3d.removeSource('points');
 
@@ -604,14 +606,26 @@ async function add3dMapRouteAndMarkers() {
       }
     });
 
+    // グロー（発光）レイヤー — ルートを目立たせる
+    map3d.addLayer({
+      id: 'route-glow',
+      type: 'line',
+      source: 'route',
+      paint: {
+        'line-color': color,
+        'line-width': 22,
+        'line-opacity': 0.25,
+        'line-blur': 6
+      }
+    });
     map3d.addLayer({
       id: 'route',
       type: 'line',
       source: 'route',
       paint: {
         'line-color': color,
-        'line-width': 7,
-        'line-opacity': 0.8
+        'line-width': 10,
+        'line-opacity': 1.0
       }
     });
   }
@@ -641,16 +655,28 @@ async function add3dMapRouteAndMarkers() {
       }
     });
 
+    // グロー（発光）レイヤー — ポイントを目立たせる
+    map3d.addLayer({
+      id: 'points-glow',
+      type: 'circle',
+      source: 'points',
+      paint: {
+        'circle-radius': 22,
+        'circle-color': color,
+        'circle-opacity': 0.2,
+        'circle-blur': 1
+      }
+    });
     map3d.addLayer({
       id: 'points',
       type: 'circle',
       source: 'points',
       paint: {
-        'circle-radius': 6,
+        'circle-radius': 11,
         'circle-color': color,
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2,
-        'circle-opacity': 0.9
+        'circle-stroke-width': 3,
+        'circle-opacity': 1.0
       }
     });
   }
@@ -2624,30 +2650,6 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     info.style.display = 'none';
   }
 
-  // 自動再生中で動画がある場合は停止ボタンを表示
-  if (hasVideo && playTimer) {
-    let stopBar = overlay.querySelector('.playback-stop-bar');
-    if (!stopBar) {
-      stopBar = document.createElement('div');
-      stopBar.className = 'playback-stop-bar';
-      const stopBtn = document.createElement('button');
-      stopBtn.type = 'button';
-      stopBtn.className = 'playback-stop-btn';
-      stopBtn.title = '自動再生を停止';
-      stopBtn.textContent = '⏹ 停止';
-      stopBtn.onclick = () => {
-        console.log('自動再生を停止します');
-        stopPlay();
-      };
-      stopBar.appendChild(stopBtn);
-      overlay.appendChild(stopBar);
-    }
-  } else {
-    // 動画がない場合は停止ボタンを削除
-    const stopBar = overlay.querySelector('.playback-stop-bar');
-    if (stopBar) stopBar.remove();
-  }
-
   document.getElementById('playbackPhotoOverlay').classList.remove('hidden');
 }
 
@@ -3771,8 +3773,10 @@ function nextPhoto() {
   }
   const photos = getDisplayPhotos();
   if (!photos.length) return;
-  currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;
-  if (!thumbnailsVisible) {
+  if (thumbnailsVisible) {
+    currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;
+  } else {
+    currentPhotoIndex = 0;
     thumbnailsVisible = true;
     renderThumbnails();
   }
@@ -5856,28 +5860,26 @@ ${detailAnimeHtml}
         return `<div class="travelogue-landmark-section" id="${landmark.id}"`;
       });
 
-      // サマリーと地図の間に目次を挿入
+      // サマリーの直後（地図コンテナの直前）に目次を挿入
       const tocHtml = `
-<div style="background:linear-gradient(135deg,#f5f7fa 0%,#e9ecf1 100%);border:1px solid #d0d9e8;border-radius:12px;padding:1.5rem;margin:2rem 0;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-  <h3 style="color:${tripColor};font-size:1.2rem;font-weight:700;margin:0 0 1rem 0;display:flex;align-items:center;gap:0.5rem;">📍 目次</h3>
-  <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:0.5rem;">
-    ${landmarks.map(landmark => `
-    <li style="margin:0;">
-      <a href="#${landmark.id}" style="color:${tripColor};text-decoration:none;font-weight:500;padding:0.5rem 0.75rem;border-radius:6px;transition:all 0.2s;display:block;"
-         onmouseover="this.style.backgroundColor='rgba(0,0,0,0.05)'"
-         onmouseout="this.style.backgroundColor='transparent'">
-        → ${escapeHtml(landmark.title)}
-      </a>
-    </li>
-    `).join('')}
-  </ul>
-</div>`;
+<details class="travelogue-toc-details">
+  <summary class="travelogue-toc-summary">📋 目次</summary>
+  <nav class="travelogue-toc-nav">
+    <ul>
+      ${landmarks.map(landmark => `
+      <li><a href="#${landmark.id}" style="color:${tripColor};">› ${escapeHtml(landmark.title)}</a></li>
+      `).join('')}
+    </ul>
+  </nav>
+</details>`;
 
-      // map-containerの後に目次を挿入
-      const mapContainerEnd = finalHtml.indexOf('</div>', finalHtml.indexOf('id="travelogue-map-container"'));
-      if (mapContainerEnd !== -1) {
-        const insertPos = mapContainerEnd + '</div>'.length;
-        finalHtml = finalHtml.slice(0, insertPos) + tocHtml + finalHtml.slice(insertPos);
+      // 地図コンテナの直前に目次を挿入
+      const mapIdIdx = finalHtml.indexOf('id="travelogue-map-container"');
+      if (mapIdIdx !== -1) {
+        const divStart = finalHtml.lastIndexOf('<div', mapIdIdx);
+        if (divStart !== -1) {
+          finalHtml = finalHtml.slice(0, divStart) + tocHtml + '\n' + finalHtml.slice(divStart);
+        }
       }
     }
 
@@ -6241,6 +6243,29 @@ async function showTravelogueModal(trip) {
 
     content.innerHTML = processedHtml;
 
+    // TOCの開閉状態: デスクトップでは開いた状態、モバイルでは閉じた状態
+    const tocDetails = content.querySelector('.travelogue-toc-details');
+    if (tocDetails && !isMobileView()) {
+      tocDetails.open = true;
+    }
+
+    // 地図コンテナを <details> でラップ（モバイルで折り畳み可能に）
+    const mapCont = content.querySelector('#travelogue-map-container');
+    if (mapCont) {
+      const mapDetailsEl = document.createElement('details');
+      mapDetailsEl.className = 'travelogue-map-details';
+      mapDetailsEl.id = 'travelogue-map-details';
+      const mapSummaryEl = document.createElement('summary');
+      mapSummaryEl.className = 'travelogue-map-summary';
+      mapSummaryEl.textContent = '🗺️ ルート地図';
+      mapDetailsEl.appendChild(mapSummaryEl);
+      mapCont.parentNode.insertBefore(mapDetailsEl, mapCont);
+      mapDetailsEl.appendChild(mapCont);
+      if (!isMobileView()) {
+        mapDetailsEl.open = true;
+      }
+    }
+
     // 旅行記内のナビゲーションリンクにイベントを追加
     content.querySelectorAll('.travelogue-nav-prev, .travelogue-nav-next').forEach((link) => {
       link.addEventListener('click', async (e) => {
@@ -6328,7 +6353,18 @@ async function showTravelogueModal(trip) {
           mapWrap.style.display = 'block';
           mapContainer.appendChild(mapWrap);
         }
-        setTimeout(() => initTravelogueMap(t), 100);
+        const mapDetailsEl = document.getElementById('travelogue-map-details');
+        if (isMobileView() && mapDetailsEl && !mapDetailsEl.open) {
+          // モバイル: details が開かれた時に初期化（遅延）
+          mapDetailsEl.addEventListener('toggle', function onMapToggle() {
+            if (mapDetailsEl.open) {
+              mapDetailsEl.removeEventListener('toggle', onMapToggle);
+              setTimeout(() => initTravelogueMap(t), 100);
+            }
+          });
+        } else {
+          setTimeout(() => initTravelogueMap(t), 100);
+        }
       } else {
         // 古い形式：プレースホルダーを使用
         if (mapWrap) {

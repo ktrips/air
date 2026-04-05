@@ -726,39 +726,6 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 }
 
 /* 自動再生停止ボタン */
-.playback-stop-bar {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
-  pointer-events: auto;
-}
-.playback-stop-btn {
-  padding: 10px 20px;
-  border-radius: 8px;
-  border: none;
-  background: rgba(180, 40, 40, 0.9);
-  color: #fff;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  transition: background 0.2s, transform 0.15s;
-  pointer-events: auto;
-}
-.playback-stop-btn:hover {
-  background: rgba(200, 30, 30, 0.95);
-  transform: scale(1.05);
-}
-.playback-stop-btn:active {
-  transform: scale(0.95);
-}
 
 .playback-photo-wrap {
   position: relative;
@@ -883,13 +850,6 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     padding: 6px 12px;
     font-size: 14px;
     max-width: 70%;
-  }
-  .playback-stop-bar {
-    bottom: 12px;
-  }
-  .playback-stop-btn {
-    padding: 8px 16px;
-    font-size: 14px;
   }
   .playback-photo-card img {
     width: 100%;
@@ -3412,6 +3372,91 @@ body:not(.editor) .viewer-only { display: block; }
 .travelogue-landmark-section h3 {
   font-size: 1.3rem;
   margin-bottom: 1.5rem;
+}
+
+/* 旅行記の目次（折り畳み式） */
+.travelogue-toc-details {
+  margin: 0.6rem 0 1rem;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  background: #f8f9fb;
+  overflow: hidden;
+}
+.travelogue-toc-summary {
+  cursor: pointer;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #999;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  user-select: none;
+}
+.travelogue-toc-summary::-webkit-details-marker { display: none; }
+.travelogue-toc-summary::before {
+  content: '▶';
+  font-size: 0.6rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.travelogue-toc-details[open] .travelogue-toc-summary::before {
+  transform: rotate(90deg);
+}
+.travelogue-toc-nav {
+  padding: 0.2rem 0.5rem 0.4rem;
+}
+.travelogue-toc-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.travelogue-toc-nav li a {
+  text-decoration: none;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  display: block;
+  opacity: 0.75;
+  transition: opacity 0.15s, background 0.15s;
+}
+.travelogue-toc-nav li a:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* 旅行記の地図（折り畳み式） */
+.travelogue-map-details {
+  margin: 1rem 0;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.travelogue-map-summary {
+  cursor: pointer;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+  background: #f5f7fa;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  user-select: none;
+}
+.travelogue-map-summary::-webkit-details-marker { display: none; }
+.travelogue-map-summary::before {
+  content: '▶';
+  font-size: 0.65rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.travelogue-map-details[open] .travelogue-map-summary::before {
+  transform: rotate(90deg);
 }
 
 @media (max-width: 768px) {
