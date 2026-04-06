@@ -3480,7 +3480,7 @@ body:not(.editor) .viewer-only { display: block; }
   scrollbar-width: thin;
 }
 .travelogue-detail-animes-strip img {
-  height: 110px;
+  height: 143px;
   width: auto;
   flex-shrink: 0;
   border-radius: 6px;
@@ -3495,7 +3495,7 @@ body:not(.editor) .viewer-only { display: block; }
 }
 @media (max-width: 768px) {
   .travelogue-detail-animes-strip img {
-    height: 82px;
+    height: 107px;
   }
 }
 

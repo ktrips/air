@@ -6323,7 +6323,8 @@ async function showTravelogueModal(trip) {
     // サマリー下に非表紙アニメ（detail系）を表示順に小さく並べる
     // AI生成HTML内の既存アニメ行を除去（重複防止）
     content.querySelectorAll('.travelogue-detail-animes').forEach(el => el.remove());
-    const detailAnimesToShow = (t.generatedAnimes || []).filter(a => String(a.style || '').startsWith('detail'));
+    const allAnimes = t.generatedAnimes || [];
+    const detailAnimesToShow = allAnimes.filter(a => String(a.style || '').startsWith('detail'));
     if (detailAnimesToShow.length > 0) {
       const summaryEl = content.querySelector('.travelogue-summary');
       if (summaryEl) {
@@ -6334,8 +6335,9 @@ async function showTravelogueModal(trip) {
           img.src = anime.url;
           img.alt = '';
           img.loading = 'lazy';
-          img.title = 'クリックで拡大';
-          img.onclick = () => showImagePopup(img.src);
+          img.title = 'クリックで全アニメを表示';
+          img.dataset.isAnime = 'true';
+          img.onclick = () => showAnimeImageViewer(allAnimes, t.name);
           animesRow.appendChild(img);
         });
         summaryEl.insertAdjacentElement('afterend', animesRow);
@@ -6358,10 +6360,12 @@ async function showTravelogueModal(trip) {
     // 旅行記内の写真・アニメ画像をクリックで拡大表示
     content.querySelectorAll('img').forEach((img) => {
       img.style.cursor = 'pointer';
-      img.title = 'クリックで拡大表示';
+      if (!img.dataset.isAnime) img.title = 'クリックで拡大表示';
       img.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        // アニメ画像は onclick で処理済み（全アニメビューアーを開く）
+        if (img.dataset.isAnime) return;
         if (img.src) showImagePopup(img.src);
       });
     });
