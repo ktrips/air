@@ -5618,9 +5618,12 @@ async function generateTravelogueWithAI() {
         }
         if (i < photos.length - 1) await new Promise(r => setTimeout(r, 300));
       } catch (_) {}
+      const piVideoUrl = p.videoUrl && p.videoUrl.trim() ? p.videoUrl.trim() : '';
       photoInfos.push({
         index: i + 1,
         url: p.url,
+        videoUrl: piVideoUrl,
+        videoThumbnailUrl: piVideoUrl ? (getVideoThumbnailUrl(piVideoUrl) || '') : '',
         placeName: loc,
         description: desc,
         landmarkNo: p.landmarkNo || '',
@@ -5638,6 +5641,10 @@ async function generateTravelogueWithAI() {
       parts.push(`  場所: ${pi.placeName || '（不明）'}`);
       if (pi.landmarkNo) parts.push(`  ランドマーク: 📍 ${pi.landmarkNo}`);
       if (pi.isStamp) parts.push(`  スタンプ: ✅ この写真はスタンプです`);
+      if (pi.videoUrl) {
+        parts.push(`  動画URL: ${pi.videoUrl}`);
+        if (pi.videoThumbnailUrl) parts.push(`  動画サムネイルURL: ${pi.videoThumbnailUrl}`);
+      }
       if (pi.wikiData && pi.wikiData.extract) {
         parts.push(`  Wikipedia情報（${pi.wikiData.title}について）: ${pi.wikiData.extract}`);
       }
@@ -5709,7 +5716,12 @@ ${detailAnimeHtml}
   <div style="margin:1.5rem 0;">
     <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
       <div style="position:relative;width:500px;max-width:100%;">
-        <img src="写真URL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;">
+        動画URLがない場合: <img src="写真URL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;">
+        動画URLがある場合（必ず動画サムネイルURLを使用し、全体を動画リンクでラップ）:
+        <a href="動画URL" target="_blank" rel="noopener" style="display:block;position:relative;">
+          <img src="動画サムネイルURL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;">
+          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:56px;height:56px;background:rgba(0,0,0,0.72);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff;pointer-events:none;">▶</div>
+        </a>
         <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;font-size:1rem;box-shadow:0 2px 6px rgba(0,0,0,0.4);">ポイント名</div>
         <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;line-height:1.4;">[ポイント説明をここに記載]</div>
       </div>
@@ -5750,7 +5762,9 @@ ${detailAnimeHtml}
 - Wikipedia情報は、その場所の歴史、特徴、見どころなど、旅行者に役立つ情報を含めてください
 - GPSルート地図は自動表示されるのでHTMLに含めない
 - スタンプ一覧はアプリ側で自動表示するため旅行記HTMLに含めない
-- ナビゲーションリンクはアプリ側で自動追加するため旅行記HTMLに含めない`;
+- ナビゲーションリンクはアプリ側で自動追加するため旅行記HTMLに含めない
+- 写真情報に「動画URL」が記載されている場合は、写真URLではなく動画サムネイルURLをメイン画像（<img src>）として使用してください。画像全体を動画URLへのリンク（<a href>）でラップし、中央に再生ボタン（▶）のオーバーレイを重ねてください
+- 動画URLがない写真は通常の写真URLを使用してください`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
   try {
     setStatus('旅行記を生成中...');
@@ -5812,6 +5826,19 @@ ${detailAnimeHtml}
     if (!content.trim()) throw new Error('応答が空です');
 
     let finalHtml = content.trim();
+
+    // 動画URLがあるポイントの写真をサムネイルに差し替え（AIが従わなかった場合のフォールバック）
+    photos.filter(p => p.url && p.videoUrl && p.videoUrl.trim()).forEach(p => {
+      const vUrl = p.videoUrl.trim();
+      const thumbUrl = getVideoThumbnailUrl(vUrl);
+      if (!thumbUrl || !finalHtml.includes(`src="${p.url}"`)) return;
+      const playOverlay = `<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:56px;height:56px;background:rgba(0,0,0,0.72);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff;pointer-events:none;">▶</div>`;
+      // <img src="写真URL" ...> を <a href="動画URL"><img src="サムネイルURL" ...></a> + 再生ボタンに差し替え
+      finalHtml = finalHtml.replace(
+        new RegExp(`<img src="${p.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"([^>]*)>`, 'g'),
+        `<a href="${escapeHtml(vUrl)}" target="_blank" rel="noopener" style="display:block;"><img src="${escapeHtml(thumbUrl)}"$1>${playOverlay}</a>`
+      );
+    });
 
     // 旅行記の最後にナビゲーターを追加
     const allTrips = getOrderedTrips();
@@ -6243,26 +6270,75 @@ async function showTravelogueModal(trip) {
 
     content.innerHTML = processedHtml;
 
-    // TOCの開閉状態: デスクトップでは開いた状態、モバイルでは閉じた状態
+    // 地図・TOC のレイアウト制御（デスクトップ: 横並び / モバイル: アコーディオン）
     const tocDetails = content.querySelector('.travelogue-toc-details');
-    if (tocDetails && !isMobileView()) {
-      tocDetails.open = true;
+    const mapCont = content.querySelector('#travelogue-map-container');
+
+    if (!isMobileView()) {
+      // ── デスクトップ: 地図(左) と TOC(右) を横並び ──
+      if (mapCont && tocDetails) {
+        const row = document.createElement('div');
+        row.className = 'travelogue-map-toc-row';
+
+        const mapCol = document.createElement('div');
+        mapCol.className = 'travelogue-map-col';
+
+        const tocCol = document.createElement('div');
+        tocCol.className = 'travelogue-toc-col';
+
+        // <details> を外して TOC コンテンツだけ tocCol に移す
+        const tocTitle = document.createElement('div');
+        tocTitle.className = 'travelogue-toc-title';
+        tocTitle.textContent = '📋 目次';
+        const tocNav = tocDetails.querySelector('.travelogue-toc-nav');
+        tocCol.appendChild(tocTitle);
+        if (tocNav) tocCol.appendChild(tocNav);
+        tocDetails.remove();
+
+        mapCont.parentNode.insertBefore(row, mapCont);
+        mapCol.appendChild(mapCont);
+        row.appendChild(mapCol);
+        row.appendChild(tocCol);
+      } else if (tocDetails) {
+        // 地図なし: TOC を常時展開
+        tocDetails.open = true;
+      }
+    } else {
+      // ── モバイル: 地図を <details> でラップ（デフォルト閉じ） ──
+      // TOC は生成時に既に <details> でラップ済み（閉じた状態がデフォルト）
+      if (mapCont) {
+        const mapDetailsEl = document.createElement('details');
+        mapDetailsEl.className = 'travelogue-map-details';
+        mapDetailsEl.id = 'travelogue-map-details';
+        const mapSummaryEl = document.createElement('summary');
+        mapSummaryEl.className = 'travelogue-map-summary';
+        mapSummaryEl.textContent = '🗺️ ルート地図';
+        mapDetailsEl.appendChild(mapSummaryEl);
+        mapCont.parentNode.insertBefore(mapDetailsEl, mapCont);
+        mapDetailsEl.appendChild(mapCont);
+        // open なし → 閉じた状態
+      }
     }
 
-    // 地図コンテナを <details> でラップ（モバイルで折り畳み可能に）
-    const mapCont = content.querySelector('#travelogue-map-container');
-    if (mapCont) {
-      const mapDetailsEl = document.createElement('details');
-      mapDetailsEl.className = 'travelogue-map-details';
-      mapDetailsEl.id = 'travelogue-map-details';
-      const mapSummaryEl = document.createElement('summary');
-      mapSummaryEl.className = 'travelogue-map-summary';
-      mapSummaryEl.textContent = '🗺️ ルート地図';
-      mapDetailsEl.appendChild(mapSummaryEl);
-      mapCont.parentNode.insertBefore(mapDetailsEl, mapCont);
-      mapDetailsEl.appendChild(mapCont);
-      if (!isMobileView()) {
-        mapDetailsEl.open = true;
+    // サマリー下に非表紙アニメ（detail系）を表示順に小さく並べる
+    // AI生成HTML内の既存アニメ行を除去（重複防止）
+    content.querySelectorAll('.travelogue-detail-animes').forEach(el => el.remove());
+    const detailAnimesToShow = (t.generatedAnimes || []).filter(a => String(a.style || '').startsWith('detail'));
+    if (detailAnimesToShow.length > 0) {
+      const summaryEl = content.querySelector('.travelogue-summary');
+      if (summaryEl) {
+        const animesRow = document.createElement('div');
+        animesRow.className = 'travelogue-detail-animes-strip';
+        detailAnimesToShow.forEach(anime => {
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = '';
+          img.loading = 'lazy';
+          img.title = 'クリックで拡大';
+          img.onclick = () => showImagePopup(img.src);
+          animesRow.appendChild(img);
+        });
+        summaryEl.insertAdjacentElement('afterend', animesRow);
       }
     }
 
@@ -6732,13 +6808,7 @@ const ANIME_STYLES = {
   'chikyu-cover': {
     label: '地球の歩き方表紙風',
     brand: '地球の歩き方',
-    prompt: ANIME_COVER_PREFIX + 'Chikyu no Arukikata (Earth\'s Walk) travel guide book cover style. Red and white design, Japanese travel publication aesthetic, professional cover layout with bold typography. Travelogue content: ',
-    brandClass: 'anime-brand-chikyu'
-  },
-  'chikyu-spot': {
-    label: '地球の歩き方おすすめスポット風',
-    brand: '地球の歩き方 おすすめスポット',
-    prompt: ANIME_COVER_PREFIX + 'Chikyu no Arukikata recommended spots style. Travel guide recommended destination aesthetic, inviting and informative layout. Travelogue content: ',
+    prompt: ANIME_COVER_PREFIX + 'Japanese travel guidebook cover style. Professional cover layout with bold trip title typography, scenic travel imagery, warm and inviting colors. IMPORTANT: Include a hand-drawn illustrated mini-map in the cover design showing the travel route with key waypoints marked — styled like a vintage travel guidebook map (soft watercolor or ink sketch style). No specific brand name or logo. Travelogue content: ',
     brandClass: 'anime-brand-chikyu'
   },
   'jump': {
@@ -7117,7 +7187,7 @@ async function showAnimeModal() {
           '',
           '【重要】画像内のすべての言葉・説明・吹き出しのセリフ・ラベル・タイトルは必ず日本語のみで記述してください。英語は一切使用しないでください。',
           '',
-          '【スタイル】地球の歩き方風の旅行ガイド。ソフトで温かみのあるイラスト、柔らかい色調、アニメ調。',
+          '【スタイル】日本の旅行ガイドブック風のイラスト。ソフトで温かみのあるタッチ、柔らかい色調、アニメ調。特定のブランド名は使用しない。',
           '',
           '【必須】',
           '- 1枚の画像内に5コマを縦に並べた旅行記ページのレイアウト。',
@@ -7156,28 +7226,35 @@ async function showAnimeModal() {
 
     // 表紙系スタイル: 単一画像を生成
     const tripName = trip.name || '旅行';
-    let coverTitle = tripName;
 
-    const regionPatterns = [
-      /([ぁ-ん一-龥]{2,})(海道|街道|地方|エリア|地区)/,
-      /([ぁ-ん一-龥]{2,})(旅行|観光|めぐり|巡り)/,
-      /^([ぁ-ん一-龥]{2,})/
-    ];
-
-    for (const pattern of regionPatterns) {
-      const match = tripName.match(pattern);
-      if (match) {
-        coverTitle = `${match[1]}の歩き方`;
-        break;
-      }
-    }
-
+    // トリップ名から表紙タイトルを生成
     const photos = trip.photos || [];
     const places = [...new Set(photos.filter(p => p.placeName).map(p => p.placeName))];
-    if (coverTitle === tripName && places.length > 0) {
-      const mainPlace = places[0].replace(/(市|町|村|区|県|府|道).*/, '');
-      coverTitle = `${mainPlace}の歩き方`;
+
+    function buildCoverTitle(name) {
+      // Step1: Day7・第7日・7日目 などの日付プレフィックスを除去
+      let s = name.replace(/^(Day\s*\d+|第?\d+日目?)[:\s　]+/i, '').trim();
+
+      // Step2: 活動系サフィックスを除去して地名だけ残す
+      s = s.replace(/[のの]?(走り方|歩き方|旅行記?|観光|めぐり|巡り|サイクリング|ツーリング|ハイキング|トレッキング|探訪|散策|見学|紀行|一周|縦断|横断|制覇|の旅|ライド|ウォーク|ドライブ).*$/, '').trim();
+
+      // Step3: 漢字・ひらがな・カタカナ・長音符・中点で構成される地名部分を抽出
+      const locMatch = s.match(/[一-龥ぁ-んァ-ンー々・〜]{2,}/);
+      if (locMatch) return `${locMatch[0]}の歩き方`;
+
+      // Step4: 元の cleaned 文字列が使えるならそのまま使う
+      if (s.length >= 2) return `${s}の歩き方`;
+
+      // Step5: 写真の地名から補完
+      if (places.length > 0) {
+        const mainPlace = places[0].replace(/(市|町|村|区|県|府|道).*/u, '');
+        if (mainPlace.length >= 2) return `${mainPlace}の歩き方`;
+      }
+
+      return `${name}の歩き方`;
     }
+
+    let coverTitle = buildCoverTitle(tripName);
 
     const promptParts = [
       style.prompt,
@@ -7213,6 +7290,30 @@ async function showAnimeModal() {
       const descriptions = photos.filter(p => p.description).map(p => p.description).slice(0, 3);
       if (descriptions.length > 0) {
         promptParts.push(`【ハイライト】${descriptions.join('、')}`);
+      }
+
+      // 地球の歩き方表紙風: マップ情報を追加
+      if (styleId === 'chikyu-cover') {
+        // ルート順の地名リスト（重複除去）
+        const routeNames = photos
+          .filter(p => p.name || p.placeName)
+          .map(p => p.name || p.placeName)
+          .filter((v, i, arr) => arr.indexOf(v) === i)
+          .slice(0, 10);
+        if (routeNames.length > 0) {
+          promptParts.push(`【ルート順のスポット（ミニマップに使用）】${routeNames.join(' → ')}`);
+        }
+        const hasGps = photos.some(p => p.lat != null && p.lng != null);
+        if (hasGps) {
+          const startPhoto = photos.find(p => p.lat != null);
+          const endPhoto = [...photos].reverse().find(p => p.lat != null);
+          if (startPhoto && endPhoto) {
+            const startName = startPhoto.name || startPhoto.placeName || 'スタート';
+            const endName = endPhoto.name || endPhoto.placeName || 'ゴール';
+            promptParts.push(`【スタート〜ゴール】${startName} → ${endName}`);
+          }
+        }
+        promptParts.push('【ミニマップの指示】表紙の一角（右下や左下など）に手描き風の小さなルートマップを配置してください。訪問スポットをドット（●）でマークし、矢印の線でつないだシンプルな地図スタイル。旅行ガイドブックらしい味のある手書きイラスト調で。');
       }
     }
 
@@ -7290,25 +7391,23 @@ function renderGeneratedAnimesList() {
     return;
   }
 
-  // コンテナをクリア
   container.innerHTML = '';
 
   if (!currentTrip || !currentTrip.generatedAnimes || currentTrip.generatedAnimes.length === 0) {
-    console.log('表示するアニメ画像がありません');
     return;
   }
 
-  console.log(`${currentTrip.generatedAnimes.length}個のアニメ画像を表示します`);
+  const total = currentTrip.generatedAnimes.length;
 
-  // 各画像を表示
   currentTrip.generatedAnimes.forEach((anime, index) => {
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position:relative;display:inline-block;';
+    wrapper.style.cssText = 'position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:2px;';
 
+    // サムネイル画像
     const img = document.createElement('img');
     img.src = anime.url;
     img.alt = `${currentTrip.name}のアニメ画像`;
-    img.style.cssText = 'height:100px;width:auto;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.2);cursor:pointer;';
+    img.style.cssText = 'height:90px;width:auto;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.2);cursor:pointer;display:block;';
     img.title = 'クリックで拡大表示';
     img.onclick = () => {
       const modal = document.createElement('div');
@@ -7322,25 +7421,18 @@ function renderGeneratedAnimesList() {
     };
     wrapper.appendChild(img);
 
+    // 削除ボタン（画像右上に絶対配置）
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = '×';
     deleteBtn.title = '画像を削除';
-    deleteBtn.style.cssText = 'position:absolute;top:2px;right:2px;background:#dc3545;color:white;border:none;border-radius:50%;width:20px;height:20px;font-size:14px;line-height:1;cursor:pointer;padding:0;';
+    deleteBtn.style.cssText = 'position:absolute;top:2px;right:2px;background:#dc3545;color:white;border:none;border-radius:50%;width:18px;height:18px;font-size:12px;line-height:1;cursor:pointer;padding:0;z-index:1;';
     deleteBtn.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm('この画像を削除しますか？')) return;
-
       try {
-        // Storageから削除
         await deleteAnimeImageFromStorage(anime.url);
-
-        // トリップデータから削除
         currentTrip.generatedAnimes.splice(index, 1);
-
-        // トリップを保存
         await saveTrip({ silent: true });
-
-        // UIを更新
         renderGeneratedAnimesList();
         setStatus('画像を削除しました');
       } catch (err) {
@@ -7349,6 +7441,32 @@ function renderGeneratedAnimesList() {
       }
     };
     wrapper.appendChild(deleteBtn);
+
+    // 並び替えボタン（画像の下に横並び）
+    const orderRow = document.createElement('div');
+    orderRow.style.cssText = 'display:flex;gap:2px;';
+
+    const moveBtn = (label, delta, title) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.title = title;
+      btn.style.cssText = 'background:#555;color:#fff;border:none;border-radius:3px;width:22px;height:18px;font-size:11px;cursor:pointer;padding:0;line-height:1;';
+      btn.disabled = delta < 0 ? index === 0 : index === total - 1;
+      if (btn.disabled) btn.style.opacity = '0.3';
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const arr = currentTrip.generatedAnimes;
+        const target = index + delta;
+        [arr[index], arr[target]] = [arr[target], arr[index]];
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+      };
+      return btn;
+    };
+
+    orderRow.appendChild(moveBtn('←', -1, '左へ移動'));
+    orderRow.appendChild(moveBtn('→', 1, '右へ移動'));
+    wrapper.appendChild(orderRow);
 
     container.appendChild(wrapper);
   });
@@ -7994,13 +8112,34 @@ function updateTravelogueHistoryLinks() {
     const date = new Date(entry.timestamp);
     const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
+    const wrap = document.createElement('span');
+    wrap.style.cssText = 'display:inline-flex;align-items:stretch;border-radius:4px;overflow:hidden;border:1px solid #d0d0d0;';
+
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'btn btn-secondary btn-xs';
+    link.style.borderRadius = '0';
+    link.style.border = 'none';
     link.textContent = `📝 ${dateStr}`;
     link.title = `旅行記履歴 ${actualIndex + 1} を表示`;
     link.onclick = () => showTravelogueFromHistory(entry);
-    container.appendChild(link);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.style.cssText = 'border:none;border-left:1px solid #d0d0d0;background:#fff;color:#c0392b;padding:0 6px;cursor:pointer;font-size:0.8rem;line-height:1;';
+    deleteBtn.title = 'この旅行記履歴を削除';
+    deleteBtn.textContent = '✕';
+    deleteBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`${dateStr} の旅行記履歴を削除しますか？`)) return;
+      currentTrip.travelogueHistory.splice(actualIndex, 1);
+      await saveTrip({ silent: true });
+      updateTravelogueHistoryLinks();
+    };
+
+    wrap.appendChild(link);
+    wrap.appendChild(deleteBtn);
+    container.appendChild(wrap);
   });
 }
 

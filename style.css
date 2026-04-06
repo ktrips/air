@@ -3369,14 +3369,141 @@ body:not(.editor) .viewer-only { display: block; }
   margin: 2.5rem 0;
 }
 
+/* 動画リンクブロック（旅行記内） */
+.travelogue-video-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.8rem 0.4rem 0.4rem;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 6px;
+  text-decoration: none;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.travelogue-video-link:hover {
+  background: rgba(0, 0, 0, 1);
+}
+.travelogue-video-link img {
+  width: 80px;
+  height: 45px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  box-shadow: none !important;
+  cursor: default !important;
+}
+
 .travelogue-landmark-section h3 {
   font-size: 1.3rem;
   margin-bottom: 1.5rem;
 }
 
-/* 旅行記の目次（折り畳み式） */
+/* ──────────────────────────────────────────
+   旅行記: 地図 ＋ 目次の横並びレイアウト（デスクトップ）
+   ────────────────────────────────────────── */
+.travelogue-map-toc-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin: 1rem 0 1.5rem;
+}
+.travelogue-map-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* 地図コンテナ自体の余白を上書き */
+.travelogue-map-col #travelogue-map-container {
+  margin: 0 !important;
+  min-height: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.travelogue-toc-col {
+  flex: 0 0 180px;
+  width: 180px;
+  padding: 0.5rem 0.6rem;
+  background: #f8f9fb;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  position: sticky;
+  top: 1rem;
+}
+.travelogue-toc-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #aaa;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+  padding: 0 0.2rem;
+}
+.travelogue-toc-col .travelogue-toc-nav {
+  padding: 0;
+}
+.travelogue-toc-col .travelogue-toc-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.travelogue-toc-col .travelogue-toc-nav li a {
+  text-decoration: none;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  padding: 0.18rem 0.3rem;
+  border-radius: 4px;
+  display: block;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+.travelogue-toc-col .travelogue-toc-nav li a:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* ──────────────────────────────────────────
+   旅行記: サマリー下のアニメストリップ
+   ────────────────────────────────────────── */
+.travelogue-detail-animes-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.5rem 0 0.6rem;
+  margin: 0.25rem 0 0.5rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.travelogue-detail-animes-strip img {
+  height: 110px;
+  width: auto;
+  flex-shrink: 0;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  object-fit: cover;
+}
+.travelogue-detail-animes-strip img:hover {
+  transform: scale(1.04);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+@media (max-width: 768px) {
+  .travelogue-detail-animes-strip img {
+    height: 82px;
+  }
+}
+
+/* ──────────────────────────────────────────
+   旅行記: モバイル用アコーディオン（目次）
+   ────────────────────────────────────────── */
 .travelogue-toc-details {
-  margin: 0.6rem 0 1rem;
+  margin: 0.5rem 0 0.75rem;
   border: 1px solid #e0e4ea;
   border-radius: 8px;
   background: #f8f9fb;
@@ -3384,7 +3511,7 @@ body:not(.editor) .viewer-only { display: block; }
 }
 .travelogue-toc-summary {
   cursor: pointer;
-  padding: 0.45rem 0.75rem;
+  padding: 0.5rem 0.75rem;
   font-size: 0.75rem;
   font-weight: 600;
   color: #999;
@@ -3405,7 +3532,7 @@ body:not(.editor) .viewer-only { display: block; }
   transform: rotate(90deg);
 }
 .travelogue-toc-nav {
-  padding: 0.2rem 0.5rem 0.4rem;
+  padding: 0.2rem 0.5rem 0.5rem;
 }
 .travelogue-toc-nav ul {
   list-style: none;
@@ -3417,7 +3544,7 @@ body:not(.editor) .viewer-only { display: block; }
 .travelogue-toc-nav li a {
   text-decoration: none;
   font-size: 0.75rem;
-  padding: 0.15rem 0.4rem;
+  padding: 0.2rem 0.4rem;
   border-radius: 4px;
   display: block;
   opacity: 0.75;
@@ -3428,9 +3555,11 @@ body:not(.editor) .viewer-only { display: block; }
   background: rgba(0, 0, 0, 0.04);
 }
 
-/* 旅行記の地図（折り畳み式） */
+/* ──────────────────────────────────────────
+   旅行記: モバイル用アコーディオン（地図）
+   ────────────────────────────────────────── */
 .travelogue-map-details {
-  margin: 1rem 0;
+  margin: 0.5rem 0 0.75rem;
   border: 1px solid #e0e4ea;
   border-radius: 8px;
   overflow: hidden;
@@ -3438,7 +3567,7 @@ body:not(.editor) .viewer-only { display: block; }
 .travelogue-map-summary {
   cursor: pointer;
   padding: 0.55rem 0.9rem;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: #555;
   background: #f5f7fa;
@@ -3457,6 +3586,9 @@ body:not(.editor) .viewer-only { display: block; }
 }
 .travelogue-map-details[open] .travelogue-map-summary::before {
   transform: rotate(90deg);
+}
+.travelogue-map-details #travelogue-map-container {
+  margin: 0 !important;
 }
 
 @media (max-width: 768px) {
