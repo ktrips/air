@@ -3091,6 +3091,10 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 /* アニメ画像ビューア（サムネイルクリック時の前へ/次へ付き表示） */
+#animeImageViewerModal {
+  z-index: 3100;
+}
+
 .modal-anime-viewer {
   max-width: 75vw;
   max-height: 90vh;
