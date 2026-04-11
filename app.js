@@ -2066,7 +2066,11 @@ async function updateMapMarkers() {
     }
     // GPXルートを地図に表示（表示範囲の計算には含めない）
     if (pts.length > 1) {
-      const layer = L.polyline(pts, { color, weight: 4, opacity: 0.8, smoothFactor: 1.5 }).addTo(map);
+      // 自動再生中はルートを太く鮮明に表示
+      const isPlayback = document.body.classList.contains('app-playing');
+      const routeWeight = isPlayback ? 6 : 4;
+      const routeOpacity = isPlayback ? 1.0 : 0.8;
+      const layer = L.polyline(pts, { color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5 }).addTo(map);
       gpxLayers.push(layer);
       // allLatLngsには追加しない（写真マーカーのみで範囲を決定）
     }
@@ -3500,6 +3504,8 @@ function stopPlay() {
   document.body.classList.remove('app-playing');
   hidePlaybackPhotoOverlay();
   hidePlayOverlay();
+  // ルート表示を通常モードに戻す
+  updateMapMarkers();
   // キャッシュクリア
   lastPlaybackPhotoUrl = null;
   // 3D地図のレイヤーをクリア
@@ -3649,6 +3655,9 @@ async function startPlay() {
     if (mobilePlayBtn) mobilePlayBtn.textContent = '■';
     document.querySelector('.map-container')?.classList.add('map-playback-cinematic');
     document.body.classList.add('app-playing');
+
+    // ルート表示を目立つモードに切り替え
+    await updateMapMarkers();
 
     // 自動再生時はサムネイルを非表示
     thumbnailsVisible = false;
@@ -4126,13 +4135,13 @@ async function saveTripOrder(ids) {
       { merge: true }
     );
     tripOrder = [...ids];
+    // バッチ書き込みで一括更新（N回のAPI呼び出し→1回に削減）
+    const batch = window.firebaseDb.batch();
     for (let i = 0; i < ids.length; i++) {
-      try {
-        await window.firebaseDb.collection('trips').doc(ids[i]).set({ order: i }, { merge: true });
-      } catch (e) {
-        console.warn('トリップ order 更新エラー:', ids[i], e);
-      }
+      const docRef = window.firebaseDb.collection('trips').doc(ids[i]);
+      batch.set(docRef, { order: i }, { merge: true });
     }
+    await batch.commit();
     return { ok: true };
   } catch (err) {
     console.warn('トリップ順序保存エラー:', err);
@@ -5081,6 +5090,21 @@ async function detectVideoOrientation(videoUrl) {
       img.src = `https://i.ytimg.com/vi/${youtubeId}/0.jpg`;
     });
   }
+
+  // Vimeoの場合、oEmbed APIでアスペクト比を取得
+  const vimeoId = getVimeoVideoId(videoUrl);
+  if (vimeoId) {
+    try {
+      const response = await fetch(`https://vimeo.com/api/oembed.json?url=https://vimeo.com/${vimeoId}`);
+      const data = await response.json();
+      if (data.width && data.height) {
+        return data.height > data.width ? 'portrait' : 'landscape';
+      }
+    } catch (e) {
+      console.warn('Vimeo動画情報の取得に失敗:', e);
+    }
+  }
+
   return 'landscape';
 }
 
@@ -5762,18 +5786,13 @@ async function generateTravelogueWithAI() {
 重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
-  // 進捗表示用のインターバル（10秒ごとに更新）
-  let progressInterval = null;
 
   try {
     setStatus('旅行記を生成中... (数分かかる場合があります)');
     if (btn) btn.textContent = '旅行記生成中...';
 
-    let elapsedSeconds = 0;
-    progressInterval = setInterval(() => {
-      elapsedSeconds += 10;
-      setStatus(`旅行記を生成中... ${elapsedSeconds}秒経過`);
-    }, 10000);
+    // 不要なsetIntervalを削除（パフォーマンス最適化）
+    // progressInterval = setInterval(...) は削除
 
     let content = '';
     const provider = cfg.provider || 'gemini';
@@ -5894,8 +5913,6 @@ async function generateTravelogueWithAI() {
       throw new Error('AIからの応答が空です。APIキーが正しいか、プロバイダーの設定を確認してください。');
     }
 
-    // 進捗表示を停止
-    clearInterval(progressInterval);
     console.log(`✓ AI生成完了: ${content.length} 文字 (${Date.now() - startTime}ms)`);
 
     // AIの出力から不要な前置き文とマークダウンを削除
@@ -6106,10 +6123,6 @@ async function generateTravelogueWithAI() {
     alert(errorMessage);
     setStatus('旅行記生成に失敗しました');
   } finally {
-    // 進捗表示を確実に停止
-    if (progressInterval) {
-      clearInterval(progressInterval);
-    }
     if (btn) btn.textContent = originalBtnText;
   }
 }
@@ -8566,8 +8579,8 @@ function initEventListeners() {
       cachedAiConfig = null;
     }
     updateEditorUI();
-    await loadMyTrips();
-    await loadTripOrder();
+    // Firestore読み込みを並列化（パフォーマンス最適化）
+    await Promise.all([loadMyTrips(), loadTripOrder()]);
     renderTripList();
     refreshTripSelect();
     await updateMapMarkers();
@@ -9149,8 +9162,8 @@ function init() {
 
   const loadTripsAndRender = async () => {
     try {
-      await loadMyTrips();
-      await loadTripOrder();
+      // Firestore読み込みを並列化（パフォーマンス最適化）
+      await Promise.all([loadMyTrips(), loadTripOrder()]);
       renderTripList();
       refreshTripSelect();
       refreshTripParentSelectOptions();
