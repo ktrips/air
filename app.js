@@ -928,7 +928,12 @@ async function uploadGpxToStorage(tripId, gpxText) {
 }
 
 async function uploadTravelogueToStorage(tripId, htmlContent) {
-  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
+  if (!tripId) {
+    throw new Error('tripIdが指定されていません');
+  }
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) {
+    throw new Error('Storage not ready');
+  }
   const path = `trips/${tripId}/travelogue/content.html`;
   const ref = window.firebaseStorage.ref(path);
   const blob = new Blob([htmlContent], { type: 'text/html; charset=utf-8' });
@@ -938,7 +943,12 @@ async function uploadTravelogueToStorage(tripId, htmlContent) {
 }
 
 async function uploadAnimeImageToStorage(tripId, imageDataUrl, filePrefix = 'anime') {
-  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
+  if (!tripId) {
+    throw new Error('tripIdが指定されていません');
+  }
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) {
+    throw new Error('Storage not ready');
+  }
 
   // Data URLからBase64データとMIMEタイプを抽出
   const matches = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
@@ -5535,12 +5545,83 @@ function closeAiSettingsModal() {
   document.getElementById('aiSettingsModal').classList.remove('open');
 }
 
+/** トリップデータのハッシュを生成（旅行記の差分更新用） */
+function generateTripContentHash(trip) {
+  try {
+    const photos = trip?.photos || [];
+    const contentData = {
+      description: trip?.description || '',
+      url: trip?.url || '',
+      photos: photos.map(p => ({
+        placeName: p?.placeName || '',
+        name: p?.name || '',
+        description: p?.description || '',
+        landmarkNo: p?.landmarkNo || '',
+        isStamp: !!p?.isStamp,
+        lat: p?.lat,
+        lng: p?.lng,
+        videoUrl: p?.videoUrl || ''
+      }))
+    };
+
+    // シンプルなハッシュ関数（文字列化して簡易ハッシュ）
+    const str = JSON.stringify(contentData);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // 32bit整数に変換
+    }
+    return hash.toString(36);
+  } catch (error) {
+    console.error('ハッシュ生成エラー:', error);
+    // エラー時はランダムなハッシュを返す（常に再生成させる）
+    return Math.random().toString(36).substring(2);
+  }
+}
+
 async function generateTravelogueWithAI() {
+  const startTime = Date.now();
   const trip = currentTrip;
+
+  // トリップの詳細な検証とログ出力
+  console.log('🔍 旅行記生成開始 - トリップ情報:', {
+    hasTripObject: !!trip,
+    tripId: trip?.id,
+    tripName: trip?.name,
+    photosCount: trip?.photos?.length || 0
+  });
+
   if (!trip) {
     alert('トリップを選択してください');
     return;
   }
+  if (!trip.id) {
+    alert('トリップIDが不正です。トリップを再度選択してください。');
+    console.error('トリップIDが不正:', trip);
+    return;
+  }
+
+  // 旅行記の差分更新チェック
+  console.log('🔍 旅行記の差分チェック開始...');
+  const currentHash = generateTripContentHash(trip);
+  const hasExistingTravelogue = !!(trip.travelogueUrl || trip.travelogueHtml || (trip.travelogueHistory?.length > 0));
+
+  if (hasExistingTravelogue && trip.travelogueContentHash === currentHash) {
+    console.log('✓ トリップの内容に変更なし - 既存の旅行記を使用');
+    setStatus('トリップの内容に変更がないため、既存の旅行記を表示します');
+    showTravelogueModal();
+    return;
+  }
+
+  // 内容に変更がある場合は旅行記を再生成
+  if (hasExistingTravelogue) {
+    console.log('🔄 内容が変更されたため、旅行記を更新します');
+    setStatus('内容が変更されたため、旅行記を更新します...');
+  } else {
+    console.log('📝 新規旅行記を生成します');
+  }
+
   const cfg = cachedAiConfig ?? (await loadUserAiConfig());
   if (!cfg?.apiKey?.trim()) {
     alert('旅行記生成にはAPIキーが必要です。AI設定でプロバイダーを選択し、APIキーを入力してください。');
@@ -5549,6 +5630,8 @@ async function generateTravelogueWithAI() {
 
   const btn = document.getElementById('generateTravelogueBtn');
   const originalBtnText = btn?.textContent || '旅行記生成';
+
+  console.log(`⏱️ 準備完了: ${Date.now() - startTime}ms`);
 
   // 既存の旅行記がある場合は上書き（削除せずに更新）
   if (trip.travelogueUrl || trip.travelogueHtml) {
@@ -5562,7 +5645,8 @@ async function generateTravelogueWithAI() {
   // 親トリップの情報を取得
   let parentTripInfo = null;
   if (trip.parentId) {
-    const parentTrip = getOrderedTrips().find(t => t.id === trip.parentId);
+    const allTrips = getOrderedTrips() || [];
+    const parentTrip = allTrips.find(t => t && t.id === trip.parentId);
     if (parentTrip) {
       parentTripInfo = {
         name: parentTrip.name || '（無題）',
@@ -5596,28 +5680,16 @@ async function generateTravelogueWithAI() {
     }
   } catch (_) {}
   if (gpxSummary) parts.push(`GPS情報: ${gpxSummary}`);
+
+  // 🚀 高速化：Wikipedia取得を完全にスキップ
+  console.log(`⚡ 高速モード: Wikipedia取得をスキップ (${Date.now() - startTime}ms)`);
   const photoInfos = [];
-  const usedWikiExtracts = new Set(); // 既に使用したWikipedia情報を記録
 
   if (photos.length > 0) {
-    setStatus('Wikipediaから情報を取得中...');
-    if (btn) btn.textContent = 'Wikipedia取得中...';
-    for (let i = 0; i < photos.length; i++) {
-      const p = photos[i];
-      const loc = p.placeName || (p.lat != null && p.lng != null ? `緯度${p.lat.toFixed(4)} 経度${p.lng.toFixed(4)}` : '');
+    // photoInfosを構築（Wikipediaなし）
+    photos.forEach((p, i) => {
+      const loc = p.placeName || '';
       const desc = p.description || p.name || '';
-      let wikiData = null;
-      try {
-        const result = await fetchWikipediaForPlace(p.lat, p.lng, p.placeName || loc);
-        // 重複チェック：同じextractが既に使用されている場合はnullにする
-        if (result && result.extract) {
-          if (!usedWikiExtracts.has(result.extract)) {
-            wikiData = result;
-            usedWikiExtracts.add(result.extract);
-          }
-        }
-        if (i < photos.length - 1) await new Promise(r => setTimeout(r, 300));
-      } catch (_) {}
       const piVideoUrl = p.videoUrl && p.videoUrl.trim() ? p.videoUrl.trim() : '';
       photoInfos.push({
         index: i + 1,
@@ -5628,30 +5700,24 @@ async function generateTravelogueWithAI() {
         description: desc,
         landmarkNo: p.landmarkNo || '',
         pointName: p.name || p.description || '',
-        isStamp: !!p.isStamp,
-        wikiData // { title, extract } または null
+        isStamp: !!p.isStamp
       });
-    }
-    parts.push('写真情報（順番に、各写真ごとに左右レイアウトで旅行記を生成してください）:');
+    });
+    // 🚀 プロンプト簡略化：必要最小限の情報のみ
+    parts.push('\n写真情報:');
     photoInfos.forEach((pi) => {
-      parts.push(`\n  【写真${pi.index}】`);
-      parts.push(`  写真URL: ${pi.url}`);
-      parts.push(`  ポイント名: ${pi.pointName || pi.placeName || '名称未設定'}`);
-      parts.push(`  ポイント説明: ${pi.description || '説明なし'}`);
-      parts.push(`  場所: ${pi.placeName || '（不明）'}`);
-      if (pi.landmarkNo) parts.push(`  ランドマーク: 📍 ${pi.landmarkNo}`);
-      if (pi.isStamp) parts.push(`  スタンプ: ✅ この写真はスタンプです`);
-      if (pi.videoUrl) {
-        parts.push(`  動画URL: ${pi.videoUrl}`);
-        if (pi.videoThumbnailUrl) parts.push(`  動画サムネイルURL: ${pi.videoThumbnailUrl}`);
-      }
-      if (pi.wikiData && pi.wikiData.extract) {
-        parts.push(`  Wikipedia情報（${pi.wikiData.title}について）: ${pi.wikiData.extract}`);
-      }
-      parts.push(`  → この写真について旅行記を書いてください（その場所の様子、体験、感想など）`);
+      const info = [];
+      info.push(`写真${pi.index}: ${pi.url}`);
+      if (pi.landmarkNo) info.push(`[ランドマーク${pi.landmarkNo}]`);
+      info.push(pi.pointName || pi.placeName || '名称未設定');
+      if (pi.description) info.push(`- ${pi.description}`);
+      parts.push(info.join(' '));
     });
   }
   const context = parts.join('\n');
+
+  // プロンプトの長さをログ出力
+  console.log(`📝 高速モード - プロンプト長: ${context.length} 文字 (写真${photos.length}枚)`);
   const tripColor = trip.color || '#e1306c';
 
   // アニメ画像: 表紙(cover)と詳細(detail)を分離
@@ -5665,167 +5731,186 @@ async function generateTravelogueWithAI() {
   }
   let detailAnimeHtml = '';
   if (detailAnimes.length > 0) {
-    const imgs = detailAnimes.map(a => `<img src="${a.url}" alt="旅行記詳細" style="width:calc(33.333% - 0.5rem);min-width:120px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`).join('\n');
-    detailAnimeHtml = `<div class="travelogue-detail-animes" style="display:flex;flex-wrap:wrap;gap:0.75rem;margin:2rem 0;justify-content:flex-start;">\n${imgs}\n</div>`;
+    // 詳細アニメを20%大きく: 33.333% → 40%
+    const imgs = detailAnimes.map(a => `<img src="${a.url}" alt="旅行記詳細" style="width:calc(40% - 0.5rem);min-width:150px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`).join('\n');
+    detailAnimeHtml = `<div class="travelogue-detail-animes" style="display:flex;flex-wrap:wrap;gap:0.75rem;margin:1rem 0 0 0;justify-content:flex-start;">\n${imgs}\n</div>`;
   }
 
   const hasAnimeCover = !!animeCoverHtml;
   const hasDetailAnimes = !!detailAnimeHtml;
 
-  const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
+  // サマリー構造を事前に構築（ネストされたテンプレートリテラルを回避）
+  let summaryStructure = '';
+  if (hasAnimeCover) {
+    const coverDiv = '<div style="flex:0 0 auto;min-width:200px;">' + animeCoverHtml + '</div>';
+    const textDiv = '<div style="flex:1;min-width:250px;"><p>220字のサマリー</p>' + (hasDetailAnimes ? detailAnimeHtml : '') + '</div>';
+    summaryStructure = '<div class="travelogue-summary" style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;margin:2rem 0;">' + coverDiv + textDiv + '</div>';
+  } else {
+    summaryStructure = '<div class="travelogue-summary"><p>220字のサマリー</p>' + (hasDetailAnimes ? detailAnimeHtml : '') + '</div>';
+  }
 
-${parentTripInfo ? `【重要】この旅行記は「${parentTripInfo.name}」${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部です。親トリップの説明を参照するのはマイルストーン（ランドマーク）の写真のみにしてください。ランドマークでない写真では親の説明を参照しないでください。` : ''}
+  // 🚀 プロンプト大幅短縮：最速生成のために必要最小限に
+  const systemPrompt = `HTMLのみを出力してください。説明文や\`\`\`htmlなどのマークダウンは不要です。
 
-出力形式（HTML）:
-
-1. 最初に旅の表題を魅力的に表記:
-<h2 class="travelogue-title">トリップ名とトリップ説明${parentTripInfo ? '、そして親トリップの情報' : ''}を元に、旅の魅力を表す表題を生成（例：「瀬戸内の風を感じる しまなみ海道サイクリング紀行」「古都を巡る 京都・奈良の寺社仏閣めぐり」など）${parentTripInfo ? '。親トリップの一部であることを表題に反映させてください。' : ''}</h2>
-
-2. 最初のセクション（上段: 左にアニメ表紙・右にサマリー、その下に詳細アニメ、さらにその下に地図）:
-${hasAnimeCover ? `【上段】左にアニメ表紙、右に旅のサマリー（220字）を横並びで配置:
-<div class="travelogue-summary" style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;margin:2rem 0;">
-  <div style="flex:0 0 auto;min-width:200px;">
-${animeCoverHtml}
-  </div>
-  <div style="flex:1;min-width:250px;">
-    <p>旅のサマリーを<strong>220字</strong>で記述（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
-  </div>
-</div>
-` : `【上段】旅のサマリーを<strong>220字</strong>で記述:
-<div class="travelogue-summary">
-  <p>旅行のサマリー220字（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
-</div>
-`}
-${hasDetailAnimes ? `【詳細アニメ】その下に詳細アニメ画像を1/3サイズで横並び配置:
-${detailAnimeHtml}
-` : ''}
-【地図】その下にGPSルート地図用のコンテナ:
+構造:
+1. タイトル: <h2 class="travelogue-title">魅力的な表題</h2>
+2. サマリー: ${summaryStructure}
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
+3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
+<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
 
-3. その下にランドマーク毎にセクション分けして旅行記を記述（マイルストーンの写真のみ、親トリップの説明を参照して旅の流れを反映可）:
-
-**重要: スタンプフラグがついている写真の扱い**
-- スタンプフラグ（isStamp: true）がついている写真は、独立したセクションにしないでください
-- スタンプ写真は、その直前のランドマークセクションの一部として含めてください
-- スタンプ写真も通常の写真と同じレイアウトで表示してください
-
-<div class="travelogue-landmark-section">
-  <h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍 ランドマーク番号: ポイント名</h3>
-
-  そのランドマークに関連する写真を表示（ランドマーク写真の後にスタンプ写真がある場合は、それも含める）:
-  <div style="margin:1.5rem 0;">
-    <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
-      <div style="position:relative;width:500px;max-width:100%;">
-        動画URLがない場合: <img src="写真URL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;">
-        動画URLがある場合（必ず動画サムネイルURLを使用し、全体を動画リンクでラップ）:
-        <a href="動画URL" target="_blank" rel="noopener" style="display:block;position:relative;">
-          <img src="動画サムネイルURL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;">
-          <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:56px;height:56px;background:rgba(0,0,0,0.72);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff;pointer-events:none;">▶</div>
-        </a>
-        <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;font-size:1rem;box-shadow:0 2px 6px rgba(0,0,0,0.4);">ポイント名</div>
-        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;line-height:1.4;">[ポイント説明をここに記載]</div>
-      </div>
-      <div style="flex:1;min-width:250px;">
-        <p>100字程度の旅の情景（その場所での体験、見た景色、感じた雰囲気を、旅行記全体の流れを踏まえて描写。同じ表現の繰り返しを避け、各写真ごとに固有の描写を）</p>
-      </div>
-    </div>
-  </div>
-
-  追加の写真がある場合も同様に配置
-
-  Wikipedia情報がある場合（ランドマークの最後に1回だけ）:
-  <p style="background:#f8f9fa;padding:1rem;border-radius:6px;border-left:3px solid ${tripColor};margin:1.5rem 0;">
-    <strong>📚 （Wikipediaのtitleフィールドの値）について：</strong>Wikipedia情報の内容
-  </p>
-  ※「（Wikipediaのtitleフィールドの値）について」の部分には、実際に取得したWikipedia記事のタイトルを使用してください（例：「観音寺について」「しまなみ海道について」など）
-</div>
-
-4. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）。※ランドマークでない写真では親トリップの説明は参照しないでください
-
-5. スタンプ一覧はアプリ側で自動表示するため、旅行記のHTMLには含めないでください。
-
-重要事項:
-- トリップカラーは${tripColor}です
-- ランドマーク見出しにトリップカラーを使用してください
-- 旅の表題はトリップ名とトリップ説明を元に魅力的な表題を生成してください
-- サマリーは220字で、旅の見どころ、特徴、魅力を具体的に
-- 写真は500px幅で表示してください
-- 写真の左上にポイント名をオーバーレイで配置
-- 写真の下部に[ポイント説明]をオーバーレイで配置（ブラケット付きで表示）
-- 写真の右側には100字程度の旅の情景を記述（その場所での体験、見た景色、感じた雰囲気など）
-- ⚠️旅行記全体を通して「ロードバイク」「お遍路」などの同じ言葉を繰り返さないでください。各写真ごとにその場面に特化した固有の説明を書き、同じフレーズの重複を避けてください
-- 親トリップの説明を参照するのはマイルストーン（ランドマーク）の写真のみ。ランドマークでない写真では参照しないでください
-- 写真毎のセクション分けは不要です（ランドマーク毎のみ）
-- **スタンプフラグ（isStamp: true）がついている写真は、独立したセクションにせず、直前のランドマークセクションの一部として含めてください**
-- Wikipedia情報は同じ内容を重複して書かないでください（ランドマークごとに1回のみ）
-- Wikipedia情報のタイトルは、実際に参照した地域名や観光名所の名前を使用してください（例：「観音寺について」「しまなみ海道について」など）
-- Wikipedia情報は、その場所の歴史、特徴、見どころなど、旅行者に役立つ情報を含めてください
-- GPSルート地図は自動表示されるのでHTMLに含めない
-- スタンプ一覧はアプリ側で自動表示するため旅行記HTMLに含めない
-- ナビゲーションリンクはアプリ側で自動追加するため旅行記HTMLに含めない
-- 写真情報に「動画URL」が記載されている場合は、写真URLではなく動画サムネイルURLをメイン画像（<img src>）として使用してください。画像全体を動画URLへのリンク（<a href>）でラップし、中央に再生ボタン（▶）のオーバーレイを重ねてください
-- 動画URLがない写真は通常の写真URLを使用してください`;
+重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
+注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
+  // 進捗表示用のインターバル（10秒ごとに更新）
+  let progressInterval = null;
+
   try {
-    setStatus('旅行記を生成中...');
+    setStatus('旅行記を生成中... (数分かかる場合があります)');
     if (btn) btn.textContent = '旅行記生成中...';
+
+    let elapsedSeconds = 0;
+    progressInterval = setInterval(() => {
+      elapsedSeconds += 10;
+      setStatus(`旅行記を生成中... ${elapsedSeconds}秒経過`);
+    }, 10000);
+
     let content = '';
     const provider = cfg.provider || 'gemini';
-    if (provider === 'gemini') {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
-          generationConfig: { temperature: 0.7 }
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else if (provider === 'openai') {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${cfg.apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.7
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      content = data.choices?.[0]?.message?.content || '';
-    } else if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': cfg.apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
-          max_tokens: 4096,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      content = data.content?.[0]?.text || '';
-    } else {
-      throw new Error('未対応のプロバイダーです');
-    }
-    if (!content.trim()) throw new Error('応答が空です');
 
+    // 写真が非常に多い場合のみ警告（閾値を50枚に引き上げ）
+    const photoCount = photos.length;
+    if (photoCount > 50) {
+      const proceed = confirm(
+        `写真が${photoCount}枚あります。\n\n` +
+        '高速モードでも生成に時間がかかる可能性があります。\n\n' +
+        'このまま生成を続けますか？'
+      );
+      if (!proceed) {
+        setStatus('旅行記生成をキャンセルしました');
+        return;
+      }
+    }
+
+    // 🚀 高速モード: タイムアウトを短縮（基本90秒 + 写真20枚ごとに20秒）
+    const baseTimeout = 90000;
+    const additionalTimeout = Math.floor(photoCount / 20) * 20000;
+    const timeout = baseTimeout + additionalTimeout;
+    console.log(`⚡ 高速モード - タイムアウト設定: ${timeout / 1000}秒 (写真${photoCount}枚)`);
+
+    const fetchWithTimeout = async (url, options, timeoutMs = timeout) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timeoutId);
+        return response;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new Error(`API呼び出しがタイムアウトしました（${timeoutMs / 1000}秒）。写真が多い場合は数を減らしてみてください。`);
+        }
+        throw error;
+      }
+    };
+
+    if (provider === 'gemini') {
+      const res = await fetchWithTimeout(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+            generationConfig: { temperature: 0.7 }
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`Gemini API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (!data.candidates || !data.candidates[0]) {
+        throw new Error('Gemini APIからの応答が不正です。candidatesが空です。');
+      }
+      content = data.candidates[0]?.content?.parts?.[0]?.text || '';
+    } else if (provider === 'openai') {
+      const res = await fetchWithTimeout(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cfg.apiKey}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-3.5-turbo',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.7
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`OpenAI API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (!data.choices || !data.choices[0]) {
+        throw new Error('OpenAI APIからの応答が不正です。choicesが空です。');
+      }
+      content = data.choices[0]?.message?.content || '';
+    } else if (provider === 'anthropic') {
+      const res = await fetchWithTimeout(
+        'https://api.anthropic.com/v1/messages',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': cfg.apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-3-haiku-20240307',
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }]
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`Anthropic API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (!data.content || !data.content[0]) {
+        throw new Error('Anthropic APIからの応答が不正です。contentが空です。');
+      }
+      content = data.content[0]?.text || '';
+    } else {
+      throw new Error('未対応のプロバイダーです: ' + provider);
+    }
+    if (!content.trim()) {
+      throw new Error('AIからの応答が空です。APIキーが正しいか、プロバイダーの設定を確認してください。');
+    }
+
+    // 進捗表示を停止
+    clearInterval(progressInterval);
+    console.log(`✓ AI生成完了: ${content.length} 文字 (${Date.now() - startTime}ms)`);
+
+    // AIの出力から不要な前置き文とマークダウンを削除
     let finalHtml = content.trim();
+
+    // ```html と ``` を削除
+    finalHtml = finalHtml.replace(/```html\s*/gi, '').replace(/```\s*$/g, '');
+
+    // HTMLタグ（<h2, <div など）より前にある前置き文を削除
+    const htmlTagMatch = finalHtml.match(/(<h2\s|<div\s)/i);
+    if (htmlTagMatch && htmlTagMatch.index > 0) {
+      finalHtml = finalHtml.substring(htmlTagMatch.index);
+    }
+
+    finalHtml = finalHtml.trim();
 
     // 動画URLがあるポイントの写真をサムネイルに差し替え（AIが従わなかった場合のフォールバック）
     photos.filter(p => p.url && p.videoUrl && p.videoUrl.trim()).forEach(p => {
@@ -5841,8 +5926,11 @@ ${detailAnimeHtml}
     });
 
     // 旅行記の最後にナビゲーターを追加
-    const allTrips = getOrderedTrips();
-    const currentIndex = allTrips.findIndex(t => t.id === trip.id);
+    if (!trip || !trip.id) {
+      throw new Error('ナビゲーター生成時にトリップ情報が不正です');
+    }
+    const allTrips = getOrderedTrips() || [];
+    const currentIndex = allTrips.findIndex(t => t && t.id === trip.id);
     const prevTrip = currentIndex > 0 ? allTrips[currentIndex - 1] : null;
     const nextTrip = currentIndex >= 0 && currentIndex < allTrips.length - 1 ? allTrips[currentIndex + 1] : null;
 
@@ -5868,14 +5956,17 @@ ${detailAnimeHtml}
     navHtml += '</div>';
 
     // 旅行記に目次を追加
-    // ランドマークセクション（h3タグ）を抽出して目次を生成
+    // ランドマークセクション（h3タグ）を抽出して目次を生成（スタンプは除外）
     const landmarks = [];
     const landmarkRegex = /<div class="travelogue-landmark-section"[^>]*>\s*<h3[^>]*>([^<]*)<\/h3>/gi;
     let match;
     while ((match = landmarkRegex.exec(finalHtml)) !== null) {
       const landmarkTitle = match[1].replace(/<[^>]+>/g, ''); // HTMLタグを除去
-      const landmarkId = `landmark-${landmarks.length + 1}`;
-      landmarks.push({ id: landmarkId, title: landmarkTitle });
+      // スタンプ項目は目次から除外（「スタンプ」「✅」を含むタイトルを除外）
+      if (!landmarkTitle.includes('スタンプ') && !landmarkTitle.includes('✅')) {
+        const landmarkId = `landmark-${landmarks.length + 1}`;
+        landmarks.push({ id: landmarkId, title: landmarkTitle });
+      }
     }
 
     // ランドマークセクションのdivにidを追加
@@ -5916,12 +6007,25 @@ ${detailAnimeHtml}
 
     // 旅行記をStorageに保存（Firestoreの1MB制限を回避）
     try {
-      console.log('旅行記をStorageに保存開始...');
+      // tripとcurrentTripの整合性を確認
+      if (!trip || !trip.id) {
+        throw new Error('トリップ情報が不正です（trip.idがありません）');
+      }
+      if (!currentTrip || !currentTrip.id) {
+        throw new Error('現在のトリップ情報が不正です（currentTrip.idがありません）');
+      }
+      if (trip.id !== currentTrip.id) {
+        throw new Error('トリップIDが一致しません。旅行記生成中に別のトリップが選択された可能性があります。');
+      }
+
+      console.log('旅行記をStorageに保存開始...', { tripId: trip.id });
       const travelogueUrl = await uploadTravelogueToStorage(trip.id, finalHtml);
       currentTrip.travelogueUrl = travelogueUrl;
       // HTMLはStorageに保存したのでFirestoreには保存しない（1MB制限回避）
       currentTrip.travelogueHtml = null;
       currentTrip.travelogueGeneratedAt = Date.now();
+      // 旅行記の内容ハッシュを保存（差分更新用）
+      currentTrip.travelogueContentHash = currentHash;
 
       // 履歴に追加
       if (!currentTrip.travelogueHistory) {
@@ -5935,7 +6039,8 @@ ${detailAnimeHtml}
       console.log('旅行記をStorageに保存しました:', {
         url: travelogueUrl,
         htmlSize: finalHtml.length,
-        historyCount: currentTrip.travelogueHistory.length
+        historyCount: currentTrip.travelogueHistory.length,
+        contentHash: currentHash
       });
     } catch (err) {
       console.error('旅行記のStorage保存エラー:', err);
@@ -5945,6 +6050,8 @@ ${detailAnimeHtml}
         currentTrip.travelogueHtml = finalHtml;
         currentTrip.travelogueUrl = null;
         currentTrip.travelogueGeneratedAt = Date.now();
+        // 旅行記の内容ハッシュを保存（差分更新用）
+        currentTrip.travelogueContentHash = currentHash;
 
         // 履歴に追加（HTMLの場合はURLとして特殊値を使用）
         if (!currentTrip.travelogueHistory) {
@@ -5961,9 +6068,10 @@ ${detailAnimeHtml}
       }
     }
 
-    console.log('トリップを保存します...');
+    console.log('💾 トリップを保存します...');
     await saveTrip();
-    console.log('トリップ保存完了');
+    const totalTime = Date.now() - startTime;
+    console.log(`✅ 旅行記生成完了: 合計 ${totalTime}ms (${(totalTime / 1000).toFixed(1)}秒)`);
     updateCoverPreview();
     updateTravelogueActionButtons();
     updateTravelogueHistoryLinks();
@@ -5971,8 +6079,37 @@ ${detailAnimeHtml}
     showTravelogueModal();
   } catch (err) {
     console.error('旅行記生成エラー:', err);
-    alert('旅行記の生成に失敗しました: ' + (err.message || String(err)));
+    console.error('エラースタック:', err.stack);
+    console.error('トリップ情報:', { trip, currentTrip });
+    let errorMessage = '旅行記の生成に失敗しました。\n\n';
+
+    if (err.message) {
+      errorMessage += `エラー: ${err.message}\n\n`;
+    }
+
+    if (err.message && err.message.includes('トリップ')) {
+      errorMessage += 'トリップ情報が不正です。\n';
+      errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
+    } else if (err.message && err.message.includes('API')) {
+      errorMessage += 'APIキーが正しいか確認してください。\n';
+      errorMessage += 'AI設定でプロバイダーとAPIキーを確認してください。';
+    } else if (err.message && err.message.includes('timeout')) {
+      errorMessage += 'APIの応答に時間がかかりすぎています。\n';
+      errorMessage += '写真の数を減らすか、しばらく待ってから再試行してください。';
+    } else if (err.message && err.message.includes('undefined')) {
+      errorMessage += 'データが不完全です。\n';
+      errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
+    } else {
+      errorMessage += 'コンソールログを確認してください。';
+    }
+
+    alert(errorMessage);
+    setStatus('旅行記生成に失敗しました');
   } finally {
+    // 進捗表示を確実に停止
+    if (progressInterval) {
+      clearInterval(progressInterval);
+    }
     if (btn) btn.textContent = originalBtnText;
   }
 }
@@ -6344,6 +6481,51 @@ async function showTravelogueModal(trip) {
       }
     }
 
+    // 詳細アニメの後に出来事アニメ（event-story）を「出来事、出会い」セクションとして表示
+    content.querySelectorAll('.travelogue-event-stories').forEach(el => el.remove());
+    const eventAnimes = allAnimes.filter(a => a.style === 'event-story');
+    if (eventAnimes.length > 0) {
+      // 詳細アニメの後、または詳細アニメがなければサマリーの後に挿入
+      const detailAnimesStrip = content.querySelector('.travelogue-detail-animes-strip');
+      const insertAfter = detailAnimesStrip || content.querySelector('.travelogue-summary');
+      if (insertAfter) {
+        const eventSection = document.createElement('div');
+        eventSection.className = 'travelogue-event-stories';
+        eventSection.style.cssText = 'margin:2rem 0;padding:1.5rem;background:rgba(255,250,240,0.5);border-radius:12px;border-left:4px solid #ff9a9e;';
+
+        const eventTitle = document.createElement('h3');
+        eventTitle.textContent = '✨ 出来事、出会い';
+        eventTitle.style.cssText = 'font-size:1.3rem;color:#ff6b81;margin-bottom:1rem;font-weight:600;';
+        eventSection.appendChild(eventTitle);
+
+        eventAnimes.forEach(anime => {
+          const eventItem = document.createElement('div');
+          eventItem.className = 'travelogue-event-item';
+
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = '出来事のアニメ';
+          img.loading = 'lazy';
+          img.title = 'クリックで拡大表示';
+          img.dataset.isAnime = 'true';
+          img.className = 'travelogue-event-anime';
+          img.onclick = () => showAnimeImageViewer(allAnimes, t.name);
+          eventItem.appendChild(img);
+
+          if (anime.eventText) {
+            const eventText = document.createElement('p');
+            eventText.textContent = anime.eventText;
+            eventText.className = 'travelogue-event-text';
+            eventItem.appendChild(eventText);
+          }
+
+          eventSection.appendChild(eventItem);
+        });
+
+        insertAfter.insertAdjacentElement('afterend', eventSection);
+      }
+    }
+
     // 旅行記内のナビゲーションリンクにイベントを追加
     content.querySelectorAll('.travelogue-nav-prev, .travelogue-nav-next').forEach((link) => {
       link.addEventListener('click', async (e) => {
@@ -6503,7 +6685,86 @@ async function showTravelogueModal(trip) {
     }
   }
 
+  // 共有ボタンを生成
+  renderTravelogueShareButtons(t);
+
   modal.classList.add('open');
+}
+
+/** 旅行記の共有ボタンを生成 */
+function renderTravelogueShareButtons(trip) {
+  const shareButtonsWrap = document.getElementById('travelogueShareButtons');
+  if (!shareButtonsWrap || !trip) return;
+
+  // 親トリップの場合は共有ボタンを非表示
+  if (trip.isParent) {
+    shareButtonsWrap.style.display = 'none';
+    return;
+  }
+
+  // 共有用のURL（現在のページURL + トリップ名 + 旅行記フラグ）
+  const baseUrl = window.location.origin + window.location.pathname;
+  const tripName = trip.name || '';
+  const shareUrl = `${baseUrl}?trip=${encodeURIComponent(tripName)}&travelogue=true`;
+  const shareText = `${tripName}の旅行記`;
+
+  shareButtonsWrap.innerHTML = '';
+  shareButtonsWrap.style.display = 'flex';
+
+  // X (Twitter) ボタン
+  const twitterBtn = document.createElement('a');
+  twitterBtn.href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
+  twitterBtn.target = '_blank';
+  twitterBtn.rel = 'noopener noreferrer';
+  twitterBtn.className = 'travelogue-share-btn twitter';
+  twitterBtn.innerHTML = '𝕏';
+  twitterBtn.title = 'Xでシェア';
+  shareButtonsWrap.appendChild(twitterBtn);
+
+  // Instagram ボタン（Instagramは直接共有URLがないため、モバイル版のみ対応）
+  const instagramBtn = document.createElement('button');
+  instagramBtn.type = 'button';
+  instagramBtn.className = 'travelogue-share-btn instagram';
+  instagramBtn.innerHTML = '📷';
+  instagramBtn.title = 'Instagram（URLをコピーしてアプリで共有）';
+  instagramBtn.onclick = () => {
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      alert('URLをコピーしました。Instagramアプリで共有してください。');
+    });
+  };
+  shareButtonsWrap.appendChild(instagramBtn);
+
+  // Facebook ボタン
+  const facebookBtn = document.createElement('a');
+  facebookBtn.href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
+  facebookBtn.target = '_blank';
+  facebookBtn.rel = 'noopener noreferrer';
+  facebookBtn.className = 'travelogue-share-btn facebook';
+  facebookBtn.innerHTML = 'f';
+  facebookBtn.title = 'Facebookでシェア';
+  shareButtonsWrap.appendChild(facebookBtn);
+
+  // URLコピー ボタン
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'travelogue-share-btn copy-url';
+  copyBtn.innerHTML = '🔗';
+  copyBtn.title = 'URLをコピー';
+  copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      copyBtn.classList.add('copied');
+      copyBtn.innerHTML = '✓';
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        copyBtn.innerHTML = '🔗';
+      }, 2000);
+    } catch (err) {
+      console.error('URLコピー失敗:', err);
+      alert('URLのコピーに失敗しました');
+    }
+  };
+  shareButtonsWrap.appendChild(copyBtn);
 }
 
 /** 画像を大きなポップアップで表示（旅行記内の写真・アニメクリック用） */
@@ -6832,6 +7093,12 @@ const ANIME_STYLES = {
     brand: '地球の歩き方',
     prompt: '',
     brandClass: 'anime-brand-chikyu'
+  },
+  'event-story': {
+    label: '出来事生成',
+    brand: '旅の思い出',
+    prompt: '',
+    brandClass: 'anime-brand-event'
   }
 };
 
@@ -7158,12 +7425,71 @@ async function showAnimeModal() {
   const styleId = getSelectedAnimeStyle();
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
   const isDetail4Pages = styleId === 'detail4pages';
+  const isEventStory = styleId === 'event-story';
 
   try {
     if (btn) btn.textContent = '画像生成中...';
     setStatus('アニメ画像を生成中...');
 
     const charImg = await getCharacterImageForGeneration();
+
+    // 出来事生成: ユーザーが入力した出来事を元に5コマアニメを生成（キャラ画像必須）
+    if (isEventStory) {
+      if (!charImg) {
+        alert('出来事生成ではキャラ画像が必須です。キャラ画像をアップロードしてください。');
+        return;
+      }
+      const eventStoryInput = document.getElementById('eventStoryInput');
+      const eventText = eventStoryInput?.value?.trim();
+      if (!eventText) {
+        alert('出来事の説明を入力してください。\n例：山道で老夫婦が運転する車に遭遇して、それに乗せてもらい難を逃れた');
+        return;
+      }
+
+      setStatus('出来事から5コマアニメを生成中...');
+      if (btn) btn.textContent = '出来事アニメ生成中...';
+
+      const tripName = trip.name || '旅行';
+      const eventPrompt = [
+        `旅行「${tripName}」での以下の出来事を、5コマのマンガ形式で優しいタッチのアニメとして表現してください。`,
+        '',
+        '【重要】画像内のすべての言葉・説明・吹き出しのセリフ・ラベル・タイトルは必ず日本語のみで記述してください。英語は一切使用しないでください。',
+        '',
+        '【スタイル】優しく温かみのあるタッチ。柔らかい色調、アニメ調。ソフトで親しみやすいイラスト。',
+        '',
+        '【必須】',
+        '- 1枚の画像内に5コマを縦に並べた旅行記ページのレイアウト。',
+        '- アップロードされたキャラクターを主人公として、全5コマに登場させる。',
+        '- 各コマでキャラクターが吹き出しで出来事を説明・表現する。吹き出しの言葉は全て日本語。',
+        '- 出来事の流れを5コマで順に展開して表現する。',
+        '- 実写感は残さず、優しいアニメ調で統一。',
+        '',
+        '【出来事の内容 - 5コマで展開して表現】',
+        eventText,
+        ''
+      ].join('\n');
+
+      const generatedDataUrl = await generateImageWithAI(eventPrompt, charImg, animeCfg);
+      if (generatedDataUrl) {
+        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'event');
+        const animeData = {
+          url: storageUrl,
+          timestamp: Date.now(),
+          style: 'event-story',
+          eventText: eventText
+        };
+        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
+        currentTrip.generatedAnimes.push(animeData);
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+        setStatus('出来事の5コマアニメを生成しました');
+        // 入力欄をクリア
+        if (eventStoryInput) eventStoryInput.value = '';
+      } else {
+        alert('出来事アニメの生成に失敗しました。APIキーと入力内容を確認してください。');
+      }
+      return;
+    }
 
     // 詳細4ページ: キャラ主人公で4枚の5コマアニメ画像を生成（キャラ画像必須）
     if (isDetail4Pages) {
@@ -7984,18 +8310,23 @@ function updateMapTripNameOverlay() {
       hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
     }
 
+    // トリップ名に旅行記ラベルを追加
+    const tripNameDisplay = hasTravelogue
+      ? `${escapeHtml(currentTrip.name)} <span class="map-trip-travelogue-label">旅行記</span>`
+      : escapeHtml(currentTrip.name);
+
     if (isMobileView()) {
       // モバイル：トリップ名のみ表示（ボタンなし）
       overlay.innerHTML = `
         <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
-          <div class="map-trip-name-text" id="mapTripNameText">${escapeHtml(currentTrip.name)}</div>
+          <div class="map-trip-name-text" id="mapTripNameText">${tripNameDisplay}</div>
         </div>
       `;
     } else {
       // デスクトップ：従来通り
       overlay.innerHTML = `
         <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
-          <div class="map-trip-name-text">${escapeHtml(currentTrip.name)}</div>
+          <div class="map-trip-name-text">${tripNameDisplay}</div>
         </div>
       `;
     }
@@ -8665,6 +8996,16 @@ function initEventListeners() {
   if (animePlayBtn) animePlayBtn.onclick = () => toggleAnimePlay();
   if (animeModal) animeModal.onclick = (e) => { if (e.target === animeModal) closeAnimeModal(); };
 
+  // アニメスタイル選択時に出来事入力欄の表示を切り替え
+  const animeStyleSelect = document.getElementById('animeStyleSelect');
+  const eventStoryInputWrap = document.getElementById('eventStoryInputWrap');
+  if (animeStyleSelect && eventStoryInputWrap) {
+    animeStyleSelect.onchange = () => {
+      const isEventStory = animeStyleSelect.value === 'event-story';
+      eventStoryInputWrap.style.display = isEventStory ? '' : 'none';
+    };
+  }
+
   const animeImageViewerModal = document.getElementById('animeImageViewerModal');
   const animeImageViewerClose = document.getElementById('animeImageViewerClose');
   const animeViewerPrevBtn = document.getElementById('animeImageViewerPrev');
@@ -8817,6 +9158,7 @@ function init() {
       // URLパラメータからトリップ名を取得
       const urlParams = new URLSearchParams(window.location.search);
       const tripNameParam = urlParams.get('trip');
+      const openTravelogue = urlParams.get('travelogue') === 'true';
 
       let tripToLoad = null;
 
@@ -8843,6 +9185,13 @@ function init() {
       if (tripToLoad) {
         try {
           await loadTripById(tripToLoad);
+
+          // 旅行記パラメータがある場合、旅行記モーダルを開く
+          if (openTravelogue && currentTrip) {
+            setTimeout(() => {
+              showTravelogueModal(currentTrip);
+            }, 500); // トリップの読み込みが完全に完了するまで少し待つ
+          }
         } catch (err) {
           console.error('トリップ読み込みエラー:', err);
           // トリップ読み込みに失敗した場合は、デフォルトビューを表示
