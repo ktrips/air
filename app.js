@@ -1,5 +1,12 @@
 /* Air — 地図と写真でエア旅行（Firebase + Firestore） */
 
+// Mapbox GL JS アクセストークンをconfig.jsからインポート
+import { MAPBOX_TOKEN } from './config.js';
+
+if (window.mapboxgl) {
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+}
+
 // 15色: ピンク〜シアンのレインボー順＋緑系（地図マーカー・ルート線の色分け用）
 const TRIP_COLORS = ['#e1306c', '#fd1d1d', '#f56040', '#ffdc80', '#fcaf45', '#f77737', '#17bf63', '#2ecc71', '#1abc9c', '#c13584', '#833ab4', '#5851db', '#405de6', '#4facfe', '#00f2fe'];
 
@@ -31,6 +38,33 @@ const LAST_TRIP_ID_KEY = 'air-last-trip-id';
 let corsWarningShown = false;
 let characterImageData = null; // キャラクター画像（Base64形式・メモリキャッシュ）
 let pendingMarkerDrag = null; // マーカードラッグ中の保留データ { tripRef, photoIdx, originalLat, originalLng, originalPlaceName }
+
+// パフォーマンス最適化: Firestoreクエリのキャッシュ
+const tripsCache = {
+  data: null,
+  timestamp: 0,
+  userId: null
+};
+const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ
+
+// パフォーマンス最適化: 画像の遅延読み込み用Observer
+let imageObserver = null;
+if ('IntersectionObserver' in window) {
+  imageObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const img = entry.target;
+        if (img.dataset.src) {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+          imageObserver.unobserve(img);
+        }
+      }
+    });
+  }, {
+    rootMargin: '50px' // 50px手前から読み込み開始
+  });
+}
 
 /** アニメ生成用のキャラ画像を取得（トリップ保存分またはメモリ） */
 async function getCharacterImageForGeneration() {
@@ -472,8 +506,8 @@ function initMap3d() {
       resolve();
       return;
     }
-    if (!window.maplibregl) {
-      console.warn('MapLibre GL未読み込み');
+    if (!window.mapboxgl) {
+      console.warn('Mapbox GL JS未読み込み');
       resolve();
       return;
     }
@@ -483,152 +517,113 @@ function initMap3d() {
       return;
     }
     const center = map.getCenter();
-    map3d = new maplibregl.Map({
-      container: 'map3d',
-      zoom: 17,
-      center: [center.lng, center.lat],
-      pitch: 70,
-      bearing: 0,
-      antialias: true,
-      preserveDrawingBuffer: true,
-      style: {
-        version: 8,
-        sources: {
-          satellite: {
-            type: 'raster',
-            tiles: [
-              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-            ],
-            tileSize: 256,
-            scheme: 'xyz',
-            attribution: '© Esri, Maxar, Earthstar Geographics',
-            maxzoom: 20,
-            bounds: [-180, -85.0511, 180, 85.0511]
-          },
-          terrainSource: {
-            type: 'raster-dem',
-            tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            encoding: 'terrarium',
-            maxzoom: 15
-          },
-          hillshadeSource: {
-            type: 'raster-dem',
-            tiles: ['https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            encoding: 'terrarium',
-            maxzoom: 15
-          },
-          labels: {
-            type: 'raster',
-            tiles: [
-              'https://a.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png',
-              'https://b.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png',
-              'https://c.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png',
-              'https://d.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png'
-            ],
-            tileSize: 512,
-            attribution: '© OpenStreetMap, © CartoDB',
-            minzoom: 0,
-            maxzoom: 20
-          },
-          roads: {
-            type: 'raster',
-            tiles: [
-              'https://a.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}@2x.png'
-            ],
-            tileSize: 512,
-            attribution: '© OpenStreetMap, © CartoDB',
-            minzoom: 0,
-            maxzoom: 20
-          }
-        },
-        layers: [
-          {
-            id: 'satellite',
-            type: 'raster',
-            source: 'satellite',
-            paint: {
-              'raster-saturation': 0.2,
-              'raster-contrast': 0.35,
-              'raster-brightness-min': 0.0,
-              'raster-brightness-max': 1.0,
-              'raster-fade-duration': 100,
-              'raster-resampling': 'linear'
-            }
-          },
-          {
-            id: 'hills',
-            type: 'hillshade',
-            source: 'hillshadeSource',
-            layout: { visibility: 'visible' },
-            paint: {
-              'hillshade-shadow-color': '#2A2A2A',
-              'hillshade-accent-color': '#FFFFFF',
-              'hillshade-exaggeration': 0.5,
-              'hillshade-illumination-direction': 315,
-              'hillshade-illumination-anchor': 'viewport',
-              'hillshade-highlight-color': '#F8F8F8',
-              'hillshade-shadow-opacity': 0.6
-            }
-          },
-          {
-            id: 'roads-layer',
-            type: 'raster',
-            source: 'roads',
-            layout: { visibility: 'visible' },
-            paint: {
-              'raster-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.2, 15, 0.4, 18, 0.5],
-              'raster-fade-duration': 100
-            }
-          },
-          {
-            id: 'labels-layer',
-            type: 'raster',
-            source: 'labels',
-            layout: { visibility: 'visible' },
-            paint: {
-              'raster-opacity': 1.0,
-              'raster-fade-duration': 100
-            }
-          }
-        ],
+
+    // 航空写真モードの場合（Mapbox Satellite Streets スタイル）
+    if (currentMapLayer === 'satellite') {
+      map3d = new mapboxgl.Map({
+        container: 'map3d',
+        zoom: 17,
+        center: [center.lng, center.lat],
+        pitch: 60,
+        bearing: 0,
+        antialias: false,  // パフォーマンス最適化: アンチエイリアスを無効化
+        preserveDrawingBuffer: false,  // パフォーマンス最適化: 描画バッファを保持しない
+        style: 'mapbox://styles/mapbox/satellite-streets-v12',
+        maxZoom: 20,
+        maxPitch: 85,
+        minPitch: 0,
+        renderWorldCopies: false,
+        fadeDuration: 0,  // パフォーマンス最適化: フェードを無効化
+        attributionControl: false,
+        refreshExpiredTiles: false,  // パフォーマンス最適化: キャッシュを優先
         terrain: {
-          source: 'terrainSource',
-          exaggeration: 2.2
-        },
-        sky: {
-          'sky-color': '#7AB8E0',
-          'horizon-color': '#D8E8F4',
-          'fog-color': '#E8F0F8',
-          'fog-ground-blend': 0.4
+          source: 'mapbox-dem',
+          exaggeration: 1.2  // パフォーマンス最適化: 地形の誇張を軽量化
         }
-      },
-      maxZoom: 20,
-      maxPitch: 85,
-      minPitch: 0,
-      renderWorldCopies: false,
-      fadeDuration: 100,
-      localIdeographFontFamily: "'Noto Sans', 'Noto Sans CJK JP', sans-serif",
-      attributionControl: false,
-      refreshExpiredTiles: true,
-      optimizeForTerrain: true
-    });
-    map3d.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
+      });
+    } else {
+      // ベクトル地図モード（Mapbox標準スタイル + 3D建物表示）
+      map3d = new mapboxgl.Map({
+        container: 'map3d',
+        zoom: 17,
+        center: [center.lng, center.lat],
+        pitch: 60,
+        bearing: 0,
+        antialias: false,  // パフォーマンス最適化
+        preserveDrawingBuffer: false,  // パフォーマンス最適化
+        style: 'mapbox://styles/mapbox/streets-v12',
+        maxZoom: 20,
+        maxPitch: 85,
+        minPitch: 0,
+        renderWorldCopies: false,
+        fadeDuration: 0,  // パフォーマンス最適化
+        attributionControl: false,
+        refreshExpiredTiles: false  // パフォーマンス最適化
+      });
+    }
+    map3d.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right');
     map3d.on('load', () => {
-      // 地形の立体感を強調
-      if (map3d.getTerrain()) {
-        map3d.setTerrain({ source: 'terrainSource', exaggeration: 2.2 });
+      // 地形を設定（Mapboxの組み込み地形データ）
+      if (currentMapLayer === 'satellite') {
+        map3d.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
       }
-      // 霧効果で遠景に深みを追加（航空写真用・控えめに）
+
+      // 3D建物を有効化（すべてのモードで）
+      const layers = map3d.getStyle().layers;
+
+      // satellite-streets-v12には'building'レイヤーが含まれている
+      const buildingLayer = layers.find(layer => layer.id === 'building');
+      if (buildingLayer) {
+        // 既存の建物レイヤーを削除して3D化
+        map3d.removeLayer('building');
+
+        // 3D建物レイヤーを追加（パフォーマンス最適化: 高ズームのみ3D化）
+        map3d.addLayer({
+          id: 'building-3d',
+          type: 'fill-extrusion',
+          source: buildingLayer.source,
+          'source-layer': buildingLayer['source-layer'] || 'building',
+          minzoom: 15.5,  // パフォーマンス最適化: 15.5以上で表示
+          paint: {
+            'fill-extrusion-color': [
+              'case',
+              ['==', ['get', 'type'], 'building:part'],
+              '#d0d0d0',
+              '#c0c0c0'
+            ],
+            'fill-extrusion-height': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              15.5,
+              0,
+              16,
+              ['get', 'height']
+            ],
+            'fill-extrusion-base': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              15.5,
+              0,
+              16,
+              ['get', 'min_height']
+            ],
+            'fill-extrusion-opacity': 0.8
+          }
+        });
+      }
+
+      // 霧効果で遠景に深みを追加
       map3d.setFog({
-        range: [1.0, 15],
+        range: [1.0, 12],
         color: '#E8F0F8',
-        'horizon-blend': 0.1,
+        'horizon-blend': 0.05,
         'high-color': '#C8DCF0',
         'space-color': '#A0C0E0',
         'star-intensity': 0.1
       });
+
       map3d.resize();
       resolve();
     });
@@ -1975,18 +1970,32 @@ function renderThumbnails() {
         };
       }
       if (p.url) {
-        // 写真がある場合
+        // 写真がある場合（遅延読み込み対応）
         const img = document.createElement('img');
-        img.src = p.url;
+        if (imageObserver && i > 5) {
+          // パフォーマンス最適化: 最初の6枚以降は遅延読み込み
+          img.dataset.src = p.url;
+          img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3C/svg%3E';
+          imageObserver.observe(img);
+        } else {
+          img.src = p.url;
+        }
         img.alt = p.name;
         img.onclick = () => showPhotoAtIndex(i);
         item.appendChild(img);
       } else if (p.videoUrl) {
-        // 写真はないが動画URLがある場合
+        // 写真はないが動画URLがある場合（遅延読み込み対応）
         const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
         if (videoThumbnailUrl) {
           const img = document.createElement('img');
-          img.src = videoThumbnailUrl;
+          if (imageObserver && i > 5) {
+            // パフォーマンス最適化: 最初の6枚以降は遅延読み込み
+            img.dataset.src = videoThumbnailUrl;
+            img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3C/svg%3E';
+            imageObserver.observe(img);
+          } else {
+            img.src = videoThumbnailUrl;
+          }
           img.alt = p.name || '動画';
           img.onclick = () => showPhotoAtIndex(i);
           // 動画アイコンを追加
@@ -2745,6 +2754,29 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
 function hidePlaybackPhotoOverlay() {
   const overlay = document.getElementById('playbackPhotoOverlay');
   if (overlay) {
+    // 動画のiframeを明示的に削除して完全に停止
+    const videoWrap = overlay.querySelector('.playback-photo-wrap');
+    if (videoWrap) {
+      const iframe = videoWrap.querySelector('iframe');
+      if (iframe) {
+        // iframeのsrcを空にして動画を停止
+        iframe.src = '';
+        // iframeを削除
+        iframe.remove();
+      }
+    }
+
+    // video-fullscreenクラスも削除
+    overlay.classList.remove('playback-video-fullscreen');
+    overlay.classList.remove('playback-video-portrait');
+
+    // カードのvideo-cardクラスも削除
+    const card = document.getElementById('playbackPhotoCard');
+    if (card) {
+      card.classList.remove('playback-video-card');
+    }
+
+    // オーバーレイを非表示
     overlay.classList.add('hidden');
   }
 }
@@ -3584,14 +3616,44 @@ async function onPlaybackComplete() {
     playTimer = null;
   }
   playbackVideoEndCallback = null;
+  currentAutoplayTick = null;
   if (playbackVideoTimer) {
     clearTimeout(playbackVideoTimer);
     playbackVideoTimer = null;
   }
   hidePlaybackPhotoOverlay();
-  stopPlay();
+
+  // 再生完了時の停止処理（最初には戻らない）
+  playbackPhotos = [];
+  const playBtn = document.getElementById('playBtn');
+  if (playBtn) playBtn.textContent = '▶ 再生';
+  const mapPlayBtn = document.getElementById('mapPlayBtn');
+  if (mapPlayBtn) mapPlayBtn.textContent = '▶ 再生';
+  const mobilePlayBtn = document.getElementById('mobilePlayBtn');
+  if (mobilePlayBtn) mobilePlayBtn.textContent = '▶';
+  document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+  document.body.classList.remove('app-playing');
+  hidePlayOverlay();
+  lastPlaybackPhotoUrl = null;
+
+  // 3D地図のレイヤーをクリア
+  if (map3d) {
+    try {
+      if (map3d.getLayer('route')) map3d.removeLayer('route');
+      if (map3d.getSource('route')) map3d.removeSource('route');
+      if (map3d.getLayer('points')) map3d.removeLayer('points');
+      if (map3d.getSource('points')) map3d.removeSource('points');
+    } catch (e) {
+      console.warn('3D地図レイヤークリアエラー:', e);
+    }
+  }
+
   await updateMapMarkers();
   await updateHeaderInfo();
+
+  // トリップ全体のマップに戻る
+  showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
+
   if (!thumbnailsVisible) {
     thumbnailsVisible = true;
     renderThumbnails();
@@ -3599,25 +3661,58 @@ async function onPlaybackComplete() {
 }
 
 function stopPlay() {
-  // 動画表示中の場合は、動画をスキップして次の画像に移り、自動再生を継続
-  const isPlayingVideo = playbackVideoEndCallback !== null || playbackVideoTimer !== null;
   const isAutoPlaying = document.body.classList.contains('app-playing');
 
-  if (isAutoPlaying && isPlayingVideo && playbackPhotos && playbackPhotos.length > 0) {
-    // 動画を停止
-    playbackVideoEndCallback = null;
-    if (playbackVideoTimer) {
-      clearTimeout(playbackVideoTimer);
-      playbackVideoTimer = null;
-    }
-    if (playTimer) {
-      clearTimeout(playTimer);
-      playTimer = null;
-    }
+  // 自動再生中で動画が表示されている場合は、動画を停止してウィンドウを閉じる
+  if (isAutoPlaying) {
+    const overlay = document.getElementById('playbackPhotoOverlay');
+    const isVideoDisplayed = overlay && !overlay.classList.contains('hidden') &&
+                             overlay.classList.contains('playback-video-fullscreen');
 
-    // 次の画像にジャンプして自動再生を継続
-    jumpPlayback(1);
-    return;
+    // または、現在のポイントが動画の場合
+    const currentP = playbackPhotos && playbackPhotos[currentPhotoIndex];
+    const isCurrentVideo = currentP && currentP.videoUrl && currentP.videoUrl.trim();
+
+    if (isVideoDisplayed || (isCurrentVideo && currentAutoplayTick)) {
+      console.log('動画再生中に停止ボタン押下: 動画を停止してウィンドウを閉じる');
+
+      // 動画を停止
+      playbackVideoEndCallback = null;
+      if (playbackVideoTimer) {
+        clearTimeout(playbackVideoTimer);
+        playbackVideoTimer = null;
+      }
+      if (playTimer) {
+        clearTimeout(playTimer);
+        playTimer = null;
+      }
+
+      // 自動再生を完全に停止
+      currentAutoplayTick = null;
+
+      // 再生ボタンのテキストを「再生」に戻す
+      const playBtn = document.getElementById('playBtn');
+      if (playBtn) playBtn.textContent = '▶ 再生';
+      const mapPlayBtn = document.getElementById('mapPlayBtn');
+      if (mapPlayBtn) mapPlayBtn.textContent = '▶ 再生';
+      const mobilePlayBtn = document.getElementById('mobilePlayBtn');
+      if (mobilePlayBtn) mobilePlayBtn.textContent = '▶';
+
+      // app-playingクラスを削除
+      document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+      document.body.classList.remove('app-playing');
+
+      // 動画ウィンドウを閉じる（iframe内の動画も停止される）
+      hidePlaybackPhotoOverlay();
+      hidePlayOverlay();
+
+      // ルート表示を通常モードに戻す
+      updateMapMarkers();
+
+      // 現在の位置を保持したまま停止（playbackPhotos・currentPhotoIndexはクリアしない）
+      // 次回再生ボタンを押すと、この位置から継続再生される
+      return;
+    }
   }
 
   // 通常の停止処理
@@ -3765,11 +3860,17 @@ async function startPlay() {
   }
 
   const allPhotos = getDisplayPhotos();
-  // 写真または動画URLがあるポイントを再生対象にする
-  playbackPhotos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
-  if (!playbackPhotos.length) {
-    alert('再生できる写真または動画がありません。写真または動画URLを追加してください。');
-    return;
+
+  // playbackPhotosが既にある場合は継続再生、ない場合は新規再生
+  const isContinuingPlayback = playbackPhotos && playbackPhotos.length > 0;
+
+  if (!isContinuingPlayback) {
+    // 新規再生: 写真または動画URLがあるポイントを再生対象にする
+    playbackPhotos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
+    if (!playbackPhotos.length) {
+      alert('再生できる写真または動画がありません。写真または動画URLを追加してください。');
+      return;
+    }
   }
 
   // モバイルでヘッダーを隠す
@@ -3781,8 +3882,10 @@ async function startPlay() {
   const startingPlay = true; // 開始中フラグ
 
   try {
-    // 必ず1枚目の写真から再生開始
-    currentPhotoIndex = 0;
+    // 継続再生の場合は現在のインデックスから、新規再生の場合は1枚目から
+    if (!isContinuingPlayback) {
+      currentPhotoIndex = 0;
+    }
 
     // 前回の再生状態をリセット
     lastPlaybackPhotoUrl = null;
@@ -3795,8 +3898,13 @@ async function startPlay() {
     if (mapPlayBtn) mapPlayBtn.textContent = '■ 停止';
     const mobilePlayBtn = document.getElementById('mobilePlayBtn');
     if (mobilePlayBtn) mobilePlayBtn.textContent = '■';
-    // 2D地図のまま自動再生（パフォーマンス向上）
+
+    // 3D地図で自動再生
+    document.querySelector('.map-container')?.classList.add('map-playback-cinematic');
     document.body.classList.add('app-playing');
+
+    // 3D地図を初期化
+    await initMap3d();
 
     // ルート表示を目立つモードに切り替え
     await updateMapMarkers();
@@ -3805,9 +3913,20 @@ async function startPlay() {
     thumbnailsVisible = false;
     renderThumbnails();
 
-    const p0 = playbackPhotos[0];
-    if (p0?.lat != null && p0?.lng != null) {
-      map.setView([p0.lat, p0.lng], 17);
+    // 継続再生の場合は現在のインデックス、新規再生の場合は最初から
+    const startP = playbackPhotos[currentPhotoIndex];
+    if (startP?.lat != null && startP?.lng != null) {
+      map.setView([startP.lat, startP.lng], 17);
+      // 3D地図の初期位置を設定
+      if (map3d) {
+        map3d.flyTo({
+          center: [startP.lng, startP.lat],
+          zoom: 17,
+          pitch: 60,
+          bearing: 0,
+          duration: 1500
+        });
+      }
     }
 
     const tick = async () => {
@@ -3820,9 +3939,18 @@ async function startPlay() {
         currentPhotoIndex++;
         const nextP = playbackPhotos[currentPhotoIndex];
 
-        // 2D地図で次のポイントにスムーズに移動
+        // 3D地図で次のポイントにスムーズに移動
         if (nextP?.lat != null && nextP?.lng != null) {
           map.panTo([nextP.lat, nextP.lng], { animate: true, duration: 1.0 });
+          // 3D地図も同時に移動
+          if (map3d) {
+            map3d.flyTo({
+              center: [nextP.lng, nextP.lat],
+              zoom: 17,
+              pitch: 60,
+              duration: 1500
+            });
+          }
         }
 
         // 動画がある場合は動画終了まで待つ
@@ -3848,16 +3976,16 @@ async function startPlay() {
     };
     currentAutoplayTick = tick;
 
-    // 1枚目の写真を即座に表示して再生開始（3D地図の初期化を待たない）
-    if (p0.videoUrl && p0.videoUrl.trim()) {
-      console.log(`自動再生開始: 最初のポイントは動画です (${p0.name || 'ポイント名なし'})`);
-      await showPlaybackPhotoOverlay(p0, () => {
+    // 継続再生の場合は現在のポイントから、新規再生の場合は最初から表示
+    if (startP.videoUrl && startP.videoUrl.trim()) {
+      console.log(`自動再生開始: ${isContinuingPlayback ? '継続' : '最初の'}ポイントは動画です (${startP.name || 'ポイント名なし'})`);
+      await showPlaybackPhotoOverlay(startP, () => {
         console.log('動画終了: 次のポイントへ移動します');
         playTimer = setTimeout(tick, 500);
       });
     } else {
-      console.log(`自動再生開始: 最初のポイントは写真です (${p0.name || 'ポイント名なし'})`);
-      await showPlaybackPhotoOverlay(p0);
+      console.log(`自動再生開始: ${isContinuingPlayback ? '継続' : '最初の'}ポイントは写真です (${startP.name || 'ポイント名なし'})`);
+      await showPlaybackPhotoOverlay(startP);
       playTimer = setTimeout(tick, 2500);
     }
   } catch (err) {
@@ -4134,6 +4262,9 @@ async function saveTrip(opts = {}) {
       travelogueHistory: currentTrip.travelogueHistory,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt
     };
+    // パフォーマンス最適化: トリップ保存時にキャッシュを無効化
+    tripsCache.data = null;
+    tripsCache.timestamp = 0;
     await loadMyTrips();
     const saved = myTrips.find(t => t.id === currentTrip.id);
     if (saved) {
@@ -4186,6 +4317,17 @@ async function loadMyTrips() {
     return;
   }
 
+  // パフォーマンス最適化: キャッシュをチェック
+  const currentUserId = window.firebaseAuth?.currentUser?.uid || 'public';
+  const now = Date.now();
+  if (tripsCache.data &&
+      tripsCache.userId === currentUserId &&
+      now - tripsCache.timestamp < CACHE_DURATION) {
+    myTrips = tripsCache.data;
+    console.log(`✓ キャッシュから ${myTrips.length} 件のトリップを読み込みました`);
+    return;
+  }
+
   const maxRetries = 2;
   let lastError = null;
 
@@ -4211,6 +4353,11 @@ async function loadMyTrips() {
         myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
         console.log(`✓ ${myTrips.length} 件の公開トリップを読み込みました`);
       }
+
+      // キャッシュを更新
+      tripsCache.data = myTrips;
+      tripsCache.timestamp = now;
+      tripsCache.userId = currentUserId;
 
       return; // 成功したら終了
 
