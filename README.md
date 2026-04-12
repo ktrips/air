@@ -102,6 +102,22 @@ cp firebase-config.example.js firebase-config.js
 2. 「マイアプリ」セクションの構成をコピー
 3. `firebase-config.js` に貼り付け
 
+#### 2-2b. Mapbox アクセストークンを設定
+
+1. `config.example.js` をコピーして `config.js` を作成
+   ```bash
+   cp config.example.js config.js
+   ```
+
+2. [Mapbox](https://account.mapbox.com/) でアカウントを作成（無料）
+3. **Default public token** をコピー（または新規生成）
+4. `config.js` の `MAPBOX_TOKEN` に貼り付け
+   ```javascript
+   export const MAPBOX_TOKEN = 'YOUR_MAPBOX_PUBLIC_TOKEN_HERE';
+   ```
+
+**注意**: `config.js` は `.gitignore` に含まれており、GitHubにはコミットされません。
+
 #### 2-3. ローカルサーバーで起動
 
 ```bash
@@ -126,6 +142,10 @@ python3 -m http.server 8080
 ```json
 {"apiKey":"YOUR_API_KEY","authDomain":"YOUR_PROJECT.firebaseapp.com","projectId":"YOUR_PROJECT","storageBucket":"YOUR_PROJECT.appspot.com","messagingSenderId":"YOUR_ID","appId":"YOUR_APP_ID","measurementId":"YOUR_MEASUREMENT_ID"}
 ```
+
+**MAPBOX_TOKEN**
+- [Mapbox](https://account.mapbox.com/) → **Tokens** → **Default public token** をコピー（または新規生成）
+- トークンをそのまま貼り付け（例: `pk.eyJ1IjoieW91cndlYnNpdGUiLCJhIjoiY...`）
 
 #### 3-2. 自動デプロイ
 
@@ -258,6 +278,7 @@ URLパラメータ `?region=japan` または `?region=global` でも指定可能
 
 ### セキュリティ
 - **firebase-config.js**: ローカル開発用。`.gitignore` に含まれており、GitHubにコミットされません
+- **config.js**: Mapbox Public Access Token を含むローカル開発用設定。`.gitignore` に含まれており、GitHubにコミットされません
 - **GitHub Secrets**: 本番環境では GitHub Secrets から自動生成されます
 - **AI API キー**: Firestore の `users` コレクションにユーザーごとに保存。共有環境では使用しないこと
 
