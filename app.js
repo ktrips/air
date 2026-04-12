@@ -39,13 +39,114 @@ let corsWarningShown = false;
 let characterImageData = null; // キャラクター画像（Base64形式・メモリキャッシュ）
 let pendingMarkerDrag = null; // マーカードラッグ中の保留データ { tripRef, photoIdx, originalLat, originalLng, originalPlaceName }
 
+// ─── Phase 1: パフォーマンス最適化ユーティリティ ──────────────────────────
+
+/**
+ * debounce: 連続呼び出しをまとめて 1 回に抑制する
+ * @param {Function} fn  実行したい関数
+ * @param {number}   wait ミリ秒
+ */
+function debounce(fn, wait) {
+  let timer = null;
+  return function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+
+// updateMapMarkers の連続呼び出しを 300ms にまとめる（fire-and-forget 用）
+// 重要なパス（await が必要な箇所）では引き続き updateMapMarkers() を直接呼ぶ
+const scheduleMapMarkersUpdate = debounce(() => updateMapMarkers(), 300);
+
+// ─── IndexedDB GPX キャッシュ ─────────────────────────────────────────────
+
+const GPX_IDB_NAME    = 'air-gpx-cache';
+const GPX_IDB_STORE   = 'gpx';
+const GPX_IDB_VERSION = 1;
+const GPX_CACHE_TTL   = 24 * 60 * 60 * 1000; // 24時間
+
+/** IndexedDB を開く（なければ作成） */
+function _openGpxDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(GPX_IDB_NAME, GPX_IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore(GPX_IDB_STORE);
+    };
+    req.onsuccess  = (e) => resolve(e.target.result);
+    req.onerror    = (e) => reject(e.target.error);
+  });
+}
+
+/** IndexedDB から GPX を取得（期限切れの場合は null を返す） */
+async function getGpxFromIDB(url) {
+  try {
+    const db = await _openGpxDB();
+    return new Promise((resolve) => {
+      const tx  = db.transaction(GPX_IDB_STORE, 'readonly');
+      const req = tx.objectStore(GPX_IDB_STORE).get(url);
+      req.onsuccess = (e) => {
+        const cached = e.target.result;
+        if (cached && Date.now() - cached.ts < GPX_CACHE_TTL) {
+          resolve(cached.text);
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null; // IndexedDB 非対応環境はスキップ
+  }
+}
+
+/** GPX テキストを IndexedDB に保存（失敗しても無視） */
+async function saveGpxToIDB(url, text) {
+  try {
+    const db = await _openGpxDB();
+    await new Promise((resolve) => {
+      const tx = db.transaction(GPX_IDB_STORE, 'readwrite');
+      tx.objectStore(GPX_IDB_STORE).put({ text, ts: Date.now() }, url);
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve(); // エラーでも続行
+    });
+  } catch {
+    // 書き込み失敗は無視（メモリキャッシュのみで動作継続）
+  }
+}
+
+/** 期限切れ GPX エントリを IDB から一括削除（起動時に 1 回呼ぶ） */
+async function purgeExpiredGpxIDB() {
+  try {
+    const db = await _openGpxDB();
+    await new Promise((resolve) => {
+      const tx    = db.transaction(GPX_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(GPX_IDB_STORE);
+      const req   = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) { resolve(); return; }
+        if (Date.now() - (cursor.value?.ts || 0) >= GPX_CACHE_TTL) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // パフォーマンス最適化: Firestoreクエリのキャッシュ
 const tripsCache = {
   data: null,
   timestamp: 0,
   userId: null
 };
-const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ
+const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ（onSnapshot が無効な環境向けのフォールバック）
+
+// Firestore onSnapshot リスナーの解除関数（null = 未設定）
+let _tripsUnsubscribe = null;
 
 // パフォーマンス最適化: 画像の遅延読み込み用Observer
 let imageObserver = null;
@@ -1175,7 +1276,18 @@ async function persistGpxToTrip(tripId, gpxDataUrl, gpxFileName) {
 }
 
 async function fetchGpxFromUrl(url) {
+  // 1. メモリキャッシュ（最速）
   if (gpxCache[url]) return gpxCache[url];
+
+  // 2. IndexedDB キャッシュ（ページリロード後も有効・24時間）
+  const idbCached = await getGpxFromIDB(url);
+  if (idbCached) {
+    gpxCache[url] = idbCached; // メモリにも載せる
+    console.log('✓ GPX IndexedDBキャッシュから取得:', url.slice(-40));
+    return idbCached;
+  }
+
+  // 3. ネットワーク取得 → 両キャッシュに保存
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -1184,6 +1296,7 @@ async function fetchGpxFromUrl(url) {
     }
     const text = await res.text();
     gpxCache[url] = text;
+    saveGpxToIDB(url, text); // 非同期・fire-and-forget（失敗しても無視）
     return text;
   } catch (err) {
     console.error('GPX 取得エラー:', url, err);
@@ -1590,7 +1703,7 @@ function updateTripMenuThumbnail() {
         currentTrip.photos.splice(idx, 1);
         saveTrip({ silent: true });
         updateTripMenuThumbnail();
-        updateMapMarkers();
+        scheduleMapMarkersUpdate();
         renderThumbnails();
       }
     };
@@ -1938,7 +2051,7 @@ function reorderThumbnail(fromIndex, toIndex) {
   currentTrip.photos = photos;
   currentPhotoIndex = toIndex;
   renderThumbnails();
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   setStatus('表示順を変更しました。保存してください');
 }
 
@@ -1955,7 +2068,7 @@ async function deleteThumbnail(index) {
   currentTrip.photos.splice(index, 1);
   currentPhotoIndex = Math.min(index, Math.max(0, currentTrip.photos.length - 1));
   renderThumbnails();
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   renderTripDetailPane();
   setStatus('写真を削除しました。保存してください');
 }
@@ -3289,7 +3402,7 @@ function showPhotoPopupEditMode(lat, lng) {
       try {
         await saveTrip({ silent: true });
         renderThumbnails();
-        updateMapMarkers();
+        scheduleMapMarkersUpdate();
         if (closeAfter && photoPopup) {
           map.removeLayer(photoPopup);
           photoPopup = null;
@@ -3453,7 +3566,7 @@ function showPhotoPopupEditMode(lat, lng) {
     }
     if (saved) {
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       showPhotoAtIndex(currentPhotoIndex, true);
       setStatus('✓ 写真を削除しました（ポイントは残っています）');
     }
@@ -3513,7 +3626,7 @@ function showPhotoPopupEditMode(lat, lng) {
     }
     if (saved) {
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       if (photos.length > 0) {
         showPhotoAtIndex(currentPhotoIndex, true);
       } else {
@@ -3779,7 +3892,7 @@ function stopPlay() {
       hidePlayOverlay();
 
       // ルート表示を通常モードに戻す
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
 
       // 現在の位置を保持したまま停止（playbackPhotos・currentPhotoIndexはクリアしない）
       // 次回再生ボタンを押すと、この位置から継続再生される
@@ -3814,7 +3927,7 @@ function stopPlay() {
   hidePlaybackPhotoOverlay();
   hidePlayOverlay();
   // ルート表示を通常モードに戻す
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   // キャッシュクリア
   lastPlaybackPhotoUrl = null;
   // 3D地図のレイヤーをクリア
@@ -4346,9 +4459,9 @@ async function saveTrip(opts = {}) {
       travelogueHistory: currentTrip.travelogueHistory,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt
     };
-    // パフォーマンス最適化: トリップ保存時にキャッシュを無効化
-    tripsCache.data = null;
-    tripsCache.timestamp = 0;
+    // onSnapshot リスナーが Firestore 書き込みを即時検知して myTrips を自動更新するため、
+    // キャッシュ無効化・loadMyTrips() 再呼び出しは不要。
+    // ただし onSnapshot が未設定の環境（テスト等）のために呼び出しは残す（即返るだけ）。
     await loadMyTrips();
     const saved = myTrips.find(t => t.id === currentTrip.id);
     if (saved) {
@@ -4394,6 +4507,13 @@ async function saveTrip(opts = {}) {
   }
 }
 
+/**
+ * Firestore からトリップ一覧を読み込む。
+ *
+ * 初回呼び出し時に onSnapshot リスナーを設定し、
+ * 以降はリスナーが myTrips を自動更新するためこの関数は即返す。
+ * 認証ユーザーが変わった場合は _tripsUnsubscribe を null にしてから呼ぶこと。
+ */
 async function loadMyTrips() {
   if (!window.firebaseDb) {
     console.warn('Firebase DB が初期化されていません');
@@ -4401,76 +4521,66 @@ async function loadMyTrips() {
     return;
   }
 
-  // パフォーマンス最適化: キャッシュをチェック
   const currentUserId = window.firebaseAuth?.currentUser?.uid || 'public';
-  const now = Date.now();
-  if (tripsCache.data &&
-      tripsCache.userId === currentUserId &&
-      now - tripsCache.timestamp < CACHE_DURATION) {
-    myTrips = tripsCache.data;
-    console.log(`✓ キャッシュから ${myTrips.length} 件のトリップを読み込みました`);
+
+  // リスナーが同じユーザーで既に稼働中: myTrips は最新なので即返す
+  if (_tripsUnsubscribe && tripsCache.userId === currentUserId) {
+    console.log('✓ onSnapshot リスナー稼働中 – myTrips は最新です');
     return;
   }
 
-  const maxRetries = 2;
-  let lastError = null;
+  // ユーザー変更または初回: 既存リスナーを解除してから新規設定
+  if (_tripsUnsubscribe) {
+    _tripsUnsubscribe();
+    _tripsUnsubscribe = null;
+  }
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        console.log(`トリップ一覧読み込みリトライ中... (${attempt}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
+  // onSnapshot で初回データ到着を Promise で待つ
+  return new Promise((resolve, reject) => {
+    let firstFire = true;
 
-      if (window.firebaseAuth?.currentUser) {
-        console.log('自分のトリップ一覧を取得中...');
-        const snapshot = await window.firebaseDb.collection('trips')
+    const query = window.firebaseAuth?.currentUser
+      ? window.firebaseDb.collection('trips')
           .where('userId', '==', window.firebaseAuth.currentUser.uid)
-          .get();
-        myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        console.log(`✓ ${myTrips.length} 件のトリップを読み込みました（自分のトリップ）`);
-      } else {
-        console.log('公開トリップ一覧を取得中...');
-        const snapshot = await window.firebaseDb.collection('trips')
-          .where('public', '==', true)
-          .get();
-        myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        console.log(`✓ ${myTrips.length} 件の公開トリップを読み込みました`);
+      : window.firebaseDb.collection('trips')
+          .where('public', '==', true);
+
+    _tripsUnsubscribe = query.onSnapshot(
+      (snapshot) => {
+        myTrips = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+        tripsCache.data     = myTrips;
+        tripsCache.timestamp = Date.now();
+        tripsCache.userId   = currentUserId;
+
+        if (firstFire) {
+          firstFire = false;
+          const label = window.firebaseAuth?.currentUser ? '自分のトリップ' : '公開トリップ';
+          console.log(`✓ ${myTrips.length} 件の${label}を読み込みました（onSnapshot 初回）`);
+          resolve();
+        } else {
+          // リアルタイム更新: 別タブ／デバイスでの変更が自動反映される
+          console.log(`↻ Firestore 変更を検知 – ${myTrips.length} 件のトリップを更新`);
+          renderTripList();
+          refreshTripSelect();
+          refreshTripParentSelectOptions();
+        }
+      },
+      (err) => {
+        console.error('Firestore onSnapshot エラー:', err);
+        if (err.code === 'unavailable') {
+          console.error('→ ネットワークエラー: インターネット接続を確認してください');
+        } else if (err.code === 'permission-denied') {
+          console.error('→ アクセス権限エラー: Firestore のセキュリティルールを確認してください');
+        }
+        if (firstFire) {
+          firstFire = false;
+          myTrips = [];
+          _tripsUnsubscribe = null;
+          reject(err);
+        }
       }
-
-      // キャッシュを更新
-      tripsCache.data = myTrips;
-      tripsCache.timestamp = now;
-      tripsCache.userId = currentUserId;
-
-      return; // 成功したら終了
-
-    } catch (err) {
-      lastError = err;
-      console.error(`トリップ一覧読み込みエラー (試行 ${attempt + 1}/${maxRetries + 1}):`, err);
-
-      const isNetworkError = err.message?.includes('Failed to fetch') ||
-                            err.message?.includes('NetworkError') ||
-                            err.message?.includes('network') ||
-                            err.code === 'unavailable';
-
-      if (!isNetworkError || attempt === maxRetries) {
-        break;
-      }
-    }
-  }
-
-  // すべてのリトライが失敗した場合
-  console.error('トリップ一覧読み込み最終エラー:', lastError);
-  myTrips = [];
-
-  if (lastError.message?.includes('Failed to fetch') || lastError.message?.includes('NetworkError') || lastError.code === 'unavailable') {
-    console.error('→ ネットワークエラー: インターネット接続を確認してください');
-  } else if (lastError.code === 'permission-denied') {
-    console.error('→ アクセス権限エラー: Firestore のセキュリティルールを確認してください');
-  }
-
-  throw lastError; // エラーを再スローして呼び出し元で処理
+    );
+  });
 }
 
 async function loadTripOrder() {
@@ -4941,7 +5051,7 @@ async function deleteTripFromList(id) {
       window.history.replaceState({}, '', newUrl.toString());
 
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       updateTripInputs();
       renderTripDetailPane();
     }
@@ -8952,6 +9062,13 @@ function initEventListeners() {
       console.log('認証状態変化: ログアウト状態');
       cachedAiConfig = null;
     }
+    // 認証ユーザーが変わったので onSnapshot リスナーをリセット（loadMyTrips が再設定する）
+    if (_tripsUnsubscribe) {
+      _tripsUnsubscribe();
+      _tripsUnsubscribe = null;
+      tripsCache.data = null;
+      tripsCache.userId = null;
+    }
     updateEditorUI();
     // Firestore読み込みを並列化（パフォーマンス最適化）
     await Promise.all([loadMyTrips(), loadTripOrder()]);
@@ -9094,7 +9211,7 @@ function initEventListeners() {
         tripRef.photos[photoIdx].placeName = originalPlaceName;
       }
       hideMarkerSaveBar();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       setStatus('位置の変更を元に戻しました');
     };
   }
@@ -9520,6 +9637,7 @@ function initEventListeners() {
 }
 
 function init() {
+  purgeExpiredGpxIDB(); // 期限切れGPXキャッシュをバックグラウンドで削除
   initRegionFilterFromUrl();
   applyAppTitle();
   initMap();

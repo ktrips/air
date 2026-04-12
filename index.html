@@ -647,5 +647,16 @@
   <script src="firebase-config.js" onerror="window.FIREBASE_CONFIG_LOAD_FAILED=true"></script>
   <script src="firebase-init.js"></script>
   <script src="app.js"></script>
+
+  <!-- Service Worker 登録 -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((reg) => console.log('[SW] 登録成功:', reg.scope))
+          .catch((err) => console.warn('[SW] 登録失敗:', err));
+      });
+    }
+  </script>
 </body>
 </html>
