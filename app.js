@@ -17,6 +17,7 @@ let currentPhotoIndex = 0;
 let markers = [];
 let gpxLayers = [];
 let tripLeaderLayers = [];
+let playbackPulseMarker = null; // 自動再生中の現在ポイントパルスマーカー
 let playTimer = null;
 let playIntervalMs = 3000;
 let playbackPhotos = []; // 再生中の写真配列
@@ -510,123 +511,173 @@ function initMap3d() {
       resolve();
       return;
     }
+    if (!mapboxgl.accessToken) {
+      console.warn('Mapbox アクセストークン未設定 - 3D地図なしで自動再生を続行');
+      resolve();
+      return;
+    }
     const el = document.getElementById('map3d');
     if (!el) {
       resolve();
       return;
     }
-    const center = map.getCenter();
 
-    // 航空写真モードの場合（Mapbox Satellite Streets スタイル）
-    if (currentMapLayer === 'satellite') {
-      map3d = new mapboxgl.Map({
-        container: 'map3d',
-        zoom: 17,
-        center: [center.lng, center.lat],
-        pitch: 60,
-        bearing: 0,
-        antialias: false,  // パフォーマンス最適化: アンチエイリアスを無効化
-        preserveDrawingBuffer: false,  // パフォーマンス最適化: 描画バッファを保持しない
-        style: 'mapbox://styles/mapbox/satellite-streets-v12',
-        maxZoom: 20,
-        maxPitch: 85,
-        minPitch: 0,
-        renderWorldCopies: false,
-        fadeDuration: 0,  // パフォーマンス最適化: フェードを無効化
-        attributionControl: false,
-        refreshExpiredTiles: false,  // パフォーマンス最適化: キャッシュを優先
-        terrain: {
-          source: 'mapbox-dem',
-          exaggeration: 1.2  // パフォーマンス最適化: 地形の誇張を軽量化
-        }
-      });
-    } else {
-      // ベクトル地図モード（Mapbox標準スタイル + 3D建物表示）
-      map3d = new mapboxgl.Map({
-        container: 'map3d',
-        zoom: 17,
-        center: [center.lng, center.lat],
-        pitch: 60,
-        bearing: 0,
-        antialias: false,  // パフォーマンス最適化
-        preserveDrawingBuffer: false,  // パフォーマンス最適化
-        style: 'mapbox://styles/mapbox/streets-v12',
-        maxZoom: 20,
-        maxPitch: 85,
-        minPitch: 0,
-        renderWorldCopies: false,
-        fadeDuration: 0,  // パフォーマンス最適化
-        attributionControl: false,
-        refreshExpiredTiles: false  // パフォーマンス最適化
-      });
-    }
-    map3d.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right');
-    map3d.on('load', () => {
-      // 地形を設定（Mapboxの組み込み地形データ）
-      if (currentMapLayer === 'satellite') {
-        map3d.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+    let resolved = false;
+    const safeResolve = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve();
       }
+    };
 
-      // 3D建物を有効化（すべてのモードで）
-      const layers = map3d.getStyle().layers;
+    // 15秒タイムアウト: 3D地図が読み込めなくても自動再生を続行
+    const timeoutId = setTimeout(() => {
+      console.warn('Mapbox 3D地図の読み込みタイムアウト - 3D地図なしで続行');
+      safeResolve();
+    }, 15000);
 
-      // satellite-streets-v12には'building'レイヤーが含まれている
-      const buildingLayer = layers.find(layer => layer.id === 'building');
-      if (buildingLayer) {
-        // 既存の建物レイヤーを削除して3D化
-        map3d.removeLayer('building');
+    try {
+      const center = map.getCenter();
 
-        // 3D建物レイヤーを追加（パフォーマンス最適化: 高ズームのみ3D化）
-        map3d.addLayer({
-          id: 'building-3d',
-          type: 'fill-extrusion',
-          source: buildingLayer.source,
-          'source-layer': buildingLayer['source-layer'] || 'building',
-          minzoom: 15.5,  // パフォーマンス最適化: 15.5以上で表示
-          paint: {
-            'fill-extrusion-color': [
-              'case',
-              ['==', ['get', 'type'], 'building:part'],
-              '#d0d0d0',
-              '#c0c0c0'
-            ],
-            'fill-extrusion-height': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              15.5,
-              0,
-              16,
-              ['get', 'height']
-            ],
-            'fill-extrusion-base': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              15.5,
-              0,
-              16,
-              ['get', 'min_height']
-            ],
-            'fill-extrusion-opacity': 0.8
-          }
+      // 航空写真モードの場合（Mapbox Satellite Streets スタイル）
+      if (currentMapLayer === 'satellite') {
+        map3d = new mapboxgl.Map({
+          container: 'map3d',
+          zoom: 17,
+          center: [center.lng, center.lat],
+          pitch: 60,
+          bearing: 0,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          style: 'mapbox://styles/mapbox/satellite-streets-v12',
+          maxZoom: 20,
+          maxPitch: 85,
+          minPitch: 0,
+          renderWorldCopies: false,
+          fadeDuration: 0,
+          attributionControl: false,
+          refreshExpiredTiles: false
+        });
+      } else {
+        // ベクトル地図モード（Mapbox標準スタイル + 3D建物表示）
+        map3d = new mapboxgl.Map({
+          container: 'map3d',
+          zoom: 17,
+          center: [center.lng, center.lat],
+          pitch: 60,
+          bearing: 0,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          style: 'mapbox://styles/mapbox/streets-v12',
+          maxZoom: 20,
+          maxPitch: 85,
+          minPitch: 0,
+          renderWorldCopies: false,
+          fadeDuration: 0,
+          attributionControl: false,
+          refreshExpiredTiles: false
         });
       }
+      map3d.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right');
 
-      // 霧効果で遠景に深みを追加
-      map3d.setFog({
-        range: [1.0, 12],
-        color: '#E8F0F8',
-        'horizon-blend': 0.05,
-        'high-color': '#C8DCF0',
-        'space-color': '#A0C0E0',
-        'star-intensity': 0.1
+      map3d.on('error', (e) => {
+        console.error('Mapbox 3D地図エラー:', e);
+        clearTimeout(timeoutId);
+        map3d = null;
+        safeResolve();
       });
 
-      map3d.resize();
-      resolve();
-    });
+      map3d.on('load', () => {
+        clearTimeout(timeoutId);
+        try {
+          // 地形を設定（衛星モードのみ）
+          if (currentMapLayer === 'satellite') {
+            if (map3d.getSource('mapbox-dem')) {
+              map3d.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+            }
+          }
+
+          // 3D建物を有効化（すべてのモードで）
+          const layers = map3d.getStyle().layers;
+          const buildingLayer = layers.find(layer => layer.id === 'building');
+          if (buildingLayer) {
+            map3d.removeLayer('building');
+            map3d.addLayer({
+              id: 'building-3d',
+              type: 'fill-extrusion',
+              source: buildingLayer.source,
+              'source-layer': buildingLayer['source-layer'] || 'building',
+              minzoom: 15.5,
+              paint: {
+                'fill-extrusion-color': [
+                  'case',
+                  ['==', ['get', 'type'], 'building:part'],
+                  '#d0d0d0',
+                  '#c0c0c0'
+                ],
+                'fill-extrusion-height': [
+                  'interpolate', ['linear'], ['zoom'],
+                  15.5, 0, 16, ['get', 'height']
+                ],
+                'fill-extrusion-base': [
+                  'interpolate', ['linear'], ['zoom'],
+                  15.5, 0, 16, ['get', 'min_height']
+                ],
+                'fill-extrusion-opacity': 0.8
+              }
+            });
+          }
+
+          // 霧効果で遠景に深みを追加
+          map3d.setFog({
+            range: [1.0, 12],
+            color: '#E8F0F8',
+            'horizon-blend': 0.05,
+            'high-color': '#C8DCF0',
+            'space-color': '#A0C0E0',
+            'star-intensity': 0.1
+          });
+
+          map3d.resize();
+        } catch (e) {
+          console.warn('Mapbox 3D地図セットアップエラー:', e);
+        }
+        safeResolve();
+      });
+    } catch (e) {
+      console.error('Mapbox 3D地図初期化エラー:', e);
+      clearTimeout(timeoutId);
+      map3d = null;
+      safeResolve();
+    }
   });
+}
+
+/** 自動再生中の現在ポイントのパルスマーカーだけを軽量に更新 */
+function updatePlaybackPulseMarker() {
+  if (!map) return;
+  if (playbackPulseMarker) {
+    try { map.removeLayer(playbackPulseMarker); } catch (e) { /* ignore */ }
+    playbackPulseMarker = null;
+  }
+  if (!document.body.classList.contains('app-playing')) return;
+  if (!playbackPhotos || !playbackPhotos.length) return;
+  const p = playbackPhotos[currentPhotoIndex];
+  if (!p || p.lat == null || p.lng == null) return;
+  const coord = ensureLatLng(p.lat, p.lng);
+  if (!coord) return;
+  const trip = currentTrip;
+  const color = trip?.color || '#e1306c';
+  const pulseHtml = `<div class="playback-pulse-marker" style="--pulse-color:${color}"></div>`;
+  playbackPulseMarker = L.marker([coord.lat, coord.lng], {
+    icon: L.divIcon({
+      className: '',
+      html: pulseHtml,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    }),
+    zIndexOffset: 2000
+  }).addTo(map);
 }
 
 async function add3dMapRouteAndMarkers() {
@@ -2149,11 +2200,23 @@ async function updateMapMarkers() {
     }
     // GPXルートを地図に表示（表示範囲の計算には含めない）
     if (pts.length > 1) {
-      // 自動再生中はルートを太く鮮明に表示
       const isPlayback = document.body.classList.contains('app-playing');
-      const routeWeight = isPlayback ? 6 : 4;
+      const routeWeight = isPlayback ? 7 : 4;
       const routeOpacity = isPlayback ? 1.0 : 0.8;
-      const layer = L.polyline(pts, { color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5 }).addTo(map);
+      if (isPlayback) {
+        // 自動再生中: 外側グロー + 内側ルートの二重線で目立たせる
+        const glowLayer = L.polyline(pts, {
+          color, weight: 18, opacity: 0.2, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        }).addTo(map);
+        gpxLayers.push(glowLayer);
+        const shadowLayer = L.polyline(pts, {
+          color: '#ffffff', weight: 10, opacity: 0.5, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        }).addTo(map);
+        gpxLayers.push(shadowLayer);
+      }
+      const layer = L.polyline(pts, {
+        color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+      }).addTo(map);
       gpxLayers.push(layer);
       // allLatLngsには追加しない（写真マーカーのみで範囲を決定）
     }
@@ -2303,6 +2366,7 @@ async function updateMapMarkers() {
         markers.push(marker);
         allLatLngs.push(latLng);
       });
+
     }
 
     // 親トリップ表示時: 各子トリップの旅行記・動画ボタンをGPSから少し離し、引き出し線で表示（デスクトップのみ）
@@ -2415,7 +2479,7 @@ async function updateMapMarkers() {
       }
     }
   }
-  if (allLatLngs.length > 0) {
+  if (allLatLngs.length > 0 && !document.body.classList.contains('app-playing')) {
     if (allLatLngs.length === 1) {
       map.setView(allLatLngs[0], 15);
     } else {
@@ -2423,6 +2487,9 @@ async function updateMapMarkers() {
       map.fitBounds(allLatLngs, { padding: [60, 60] });
     }
   }
+
+  // 自動再生中のパルスマーカーを更新
+  updatePlaybackPulseMarker();
 }
 
 function parseGpxPoints(xmlStr) {
@@ -2777,6 +2844,12 @@ function hidePlaybackPhotoOverlay() {
 
     // オーバーレイを非表示
     overlay.classList.add('hidden');
+  }
+
+  // パルスマーカーを削除
+  if (playbackPulseMarker && map) {
+    try { map.removeLayer(playbackPulseMarker); } catch (e) { /* ignore */ }
+    playbackPulseMarker = null;
   }
 }
 
@@ -3905,7 +3978,16 @@ async function startPlay() {
     // 3D地図を初期化
     await initMap3d();
 
-    // ルート表示を目立つモードに切り替え
+    // 3D地図の読み込み結果に応じてモードを切り替え
+    if (!map3d) {
+      // 3D地図に失敗した場合は2Dマップをそのまま使用（cinematicクラスを外す）
+      document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+    } else {
+      // 3D地図が有効な場合はルートとマーカーを追加
+      add3dMapRouteAndMarkers().catch(e => console.warn('3Dルート描画エラー:', e));
+    }
+
+    // ルート表示を目立つモードに切り替え（2D Leaflet マップ）
     await updateMapMarkers();
 
     // 自動再生時はサムネイルを非表示
@@ -3951,6 +4033,9 @@ async function startPlay() {
             });
           }
         }
+
+        // パルスマーカーを現在ポイントに更新
+        updatePlaybackPulseMarker();
 
         // 動画がある場合は動画終了まで待つ
         if (nextP.videoUrl && nextP.videoUrl.trim()) {

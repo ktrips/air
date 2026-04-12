@@ -546,7 +546,12 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 .map-container .maplibregl-ctrl-attrib-button,
 .map-container .maplibregl-ctrl-bottom-right,
 .map-container .maplibregl-ctrl-bottom-left,
-.map-container .maplibregl-ctrl-logo {
+.map-container .maplibregl-ctrl-logo,
+.map-container .mapboxgl-ctrl-attrib,
+.map-container .mapboxgl-ctrl-attrib-button,
+.map-container .mapboxgl-ctrl-bottom-right,
+.map-container .mapboxgl-ctrl-bottom-left,
+.map-container .mapboxgl-ctrl-logo {
   display: none !important;
 }
 .map-container.map-playback-cinematic {
@@ -579,34 +584,40 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* MapLibre（3D地図）のキャンバスも高品質レンダリング */
-.maplibregl-canvas {
+/* Mapbox/MapLibre（3D地図）のキャンバスも高品質レンダリング */
+.maplibregl-canvas,
+.mapboxgl-canvas {
   image-rendering: -webkit-optimize-contrast;
   image-rendering: high-quality;
 }
 
 /* 3D地図のテキストラベルを鮮明に */
 .maplibregl-ctrl,
-.maplibregl-ctrl-group button {
+.maplibregl-ctrl-group button,
+.mapboxgl-ctrl,
+.mapboxgl-ctrl-group button {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 /* 3D地図のテキストレンダリング最適化 */
-.maplibregl-canvas-container {
+.maplibregl-canvas-container,
+.mapboxgl-canvas-container {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: subpixel-antialiased;
   -moz-osx-font-smoothing: auto;
 }
 
 /* 3D地図のラベル位置精度向上 */
-.maplibregl-map {
+.maplibregl-map,
+.mapboxgl-map {
   font-synthesis: none;
   text-rendering: geometricPrecision;
 }
 
 /* ラベルテキストの鮮明化 */
-.maplibregl-canvas-container canvas {
+.maplibregl-canvas-container canvas,
+.mapboxgl-canvas-container canvas {
   font-smooth: always;
   -webkit-font-smoothing: subpixel-antialiased;
   -moz-osx-font-smoothing: auto;
@@ -646,12 +657,48 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   pointer-events: none;
 }
 /* 3D地図コントロール */
-.maplibregl-ctrl-group {
+.maplibregl-ctrl-group,
+.mapboxgl-ctrl-group {
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
 }
-.maplibregl-canvas {
+.maplibregl-canvas,
+.mapboxgl-canvas {
   outline: none;
+}
+
+/* 自動再生中の現在ポイント: パルスマーカー */
+@keyframes playback-pulse-ring {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  70% { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+@keyframes playback-pulse-core {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+.playback-pulse-marker {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+.playback-pulse-marker::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--pulse-color, #e1306c);
+  animation: playback-pulse-ring 1.6s ease-out infinite;
+}
+.playback-pulse-marker::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: var(--pulse-color, #e1306c);
+  border: 3px solid #fff;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  animation: playback-pulse-core 1.6s ease-in-out infinite;
 }
 
 /* 自動再生時の写真オーバーレイ */
@@ -1137,7 +1184,12 @@ body.app-playing .maplibregl-ctrl-attrib,
 body.app-playing .maplibregl-ctrl-attrib-button,
 body.app-playing .maplibregl-ctrl-bottom-right,
 body.app-playing .maplibregl-ctrl-bottom-left,
-body.app-playing .maplibregl-ctrl-logo {
+body.app-playing .maplibregl-ctrl-logo,
+body.app-playing .mapboxgl-ctrl-attrib,
+body.app-playing .mapboxgl-ctrl-attrib-button,
+body.app-playing .mapboxgl-ctrl-bottom-right,
+body.app-playing .mapboxgl-ctrl-bottom-left,
+body.app-playing .mapboxgl-ctrl-logo {
   display: none !important;
 }
 .video-back-btn {
