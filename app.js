@@ -6074,6 +6074,114 @@ function generateTripContentHash(trip) {
   }
 }
 
+// ─── 旅行記生成ストリーミングヘルパー ────────────────────────────────────────
+/**
+ * SSE / ストリーミングで AI からテキストを受け取り、チャンクごとに onChunk(partialText) を呼ぶ。
+ * 完成したテキスト全体を返す。
+ *
+ * @param {'gemini'|'openai'|'anthropic'} provider
+ * @param {object} cfg  { apiKey }
+ * @param {string} systemPrompt
+ * @param {string} userPrompt
+ * @param {(partial: string) => void} onChunk  チャンク受信コールバック
+ * @returns {Promise<string>}  完成テキスト
+ */
+async function streamTravelogueFromAI(provider, cfg, systemPrompt, userPrompt, onChunk) {
+  /** SSE レスポンスを行単位でパースして各チャンクを処理する共通ユーティリティ */
+  async function consumeSSE(res, extractText) {
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error?.message || `HTTP ${res.status} ${res.statusText}`);
+    }
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer  = '';
+    let content = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // 末尾の不完全行を次ループへ
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const json = line.slice(6).trim();
+        if (!json || json === '[DONE]') continue;
+        try {
+          const chunk = extractText(JSON.parse(json));
+          if (chunk) { content += chunk; onChunk(content); }
+        } catch { /* 不正 JSON は無視 */ }
+      }
+    }
+    return content;
+  }
+
+  if (provider === 'gemini') {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+          generationConfig: { temperature: 0.7 }
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.candidates?.[0]?.content?.parts?.[0]?.text || '');
+  }
+
+  if (provider === 'openai') {
+    const res = await fetch(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfg.apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt   }
+          ],
+          temperature: 0.7,
+          stream: true
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.choices?.[0]?.delta?.content || '');
+  }
+
+  if (provider === 'anthropic') {
+    const res = await fetch(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cfg.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+          stream: true
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.delta?.text || d.content_block?.text || '');
+  }
+
+  throw new Error('未対応のプロバイダーです: ' + provider);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function generateTravelogueWithAI() {
   const startTime = Date.now();
   const trip = currentTrip;
