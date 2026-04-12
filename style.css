@@ -442,6 +442,9 @@ body {
 .map-container {
   flex: 1;
   position: relative;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  will-change: transform;
 }
 
 .mobile-travelogue-view {
@@ -557,6 +560,64 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   min-height: 300px;
 }
 
+/* 地図タイルを高解像度でクリスプに表示 */
+.map-tiles-crisp,
+.leaflet-tile-container img,
+.leaflet-tile {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-font-smoothing: subpixel-antialiased;
+}
+
+/* ラベルレイヤーを鮮明に表示 */
+.leaflet-overlay-pane .leaflet-tile {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* MapLibre（3D地図）のキャンバスも高品質レンダリング */
+.maplibregl-canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
+}
+
+/* 3D地図のテキストラベルを鮮明に */
+.maplibregl-ctrl,
+.maplibregl-ctrl-group button {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 3D地図のテキストレンダリング最適化 */
+.maplibregl-canvas-container {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+}
+
+/* 3D地図のラベル位置精度向上 */
+.maplibregl-map {
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+/* ラベルテキストの鮮明化 */
+.maplibregl-canvas-container canvas {
+  font-smooth: always;
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+}
+
+/* 3D地図のズーム時の滑らかさ向上 */
+.map-3d-layer,
+#map3d {
+  transition: opacity 0.3s ease-in-out;
+}
+
 /* 3D地図（自動再生時のみ表示） */
 .map-3d-layer {
   display: none;
@@ -598,7 +659,7 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   position: absolute;
   bottom: 100px;
   right: 20px;
-  z-index: 100;
+  z-index: 1100;
   pointer-events: none;
 }
 .playback-photo-overlay.hidden {
@@ -608,12 +669,13 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 .playback-photo-overlay.playback-video-fullscreen {
   position: absolute;
   left: 50%;
-  bottom: 80px;
+  bottom: 100px;
   transform: translateX(-50%);
-  width: 85vw;
-  max-width: 1200px;
+  width: 70vw;
+  max-width: 900px;
   aspect-ratio: 16 / 9;
   height: auto;
+  max-height: calc(100vh - 200px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -626,10 +688,11 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 /* デスクトップ縦長動画：9:16比率で中央に配置 */
 .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
   width: auto;
-  height: 90vh;
-  max-height: 1100px;
+  height: 70vh;
+  max-height: calc(100vh - 150px);
+  max-width: 600px;
   aspect-ratio: 9 / 16;
-  bottom: 40px;
+  bottom: 100px;
 }
 .playback-photo-card {
   background: rgba(255, 255, 255, 0.98);
@@ -1708,27 +1771,42 @@ body.app-playing .thumbnail-close-btn {
   border: none !important;
 }
 .map-trip-action-card {
-  background: #fff;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.92) 100%);
   border-radius: 8px;
-  padding: 6px 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  padding: 5px 7px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.6),
+              0 1px 4px rgba(0, 0, 0, 0.4),
+              0 0 0 1px rgba(255, 255, 255, 0.12) inset;
   border: 2px solid var(--trip-color, #e1306c);
-  min-width: 80px;
+  min-width: 75px;
+  max-width: 140px;
   text-align: center;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
 }
 .map-trip-action-name {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 4px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
+  max-width: 100px;
+  width: 100%;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  display: block;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9),
+               0 1px 3px rgba(0, 0, 0, 0.8),
+               0 0 1px rgba(0, 0, 0, 1);
 }
 .map-trip-action-name-clickable:hover {
   color: var(--trip-color, #e1306c);
   text-decoration: underline;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.9),
+               0 2px 6px rgba(0, 0, 0, 0.9),
+               0 1px 3px rgba(0, 0, 0, 0.8);
 }
 .map-trip-action-btns {
   display: flex;
@@ -1740,19 +1818,68 @@ body.app-playing .thumbnail-close-btn {
   display: none;
 }
 
+/* 通常のトリップ名カード */
+.map-trip-name-card {
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.90) 0%, rgba(0, 0, 0, 0.94) 100%);
+  border-radius: 10px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7),
+              0 2px 8px rgba(0, 0, 0, 0.5),
+              0 0 0 1px rgba(255, 255, 255, 0.18) inset;
+  border: 2.5px solid var(--trip-color, #e1306c);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  max-width: 280px;
+}
+
+.map-trip-name-text {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 1),
+               0 1px 4px rgba(0, 0, 0, 0.9),
+               0 0 2px rgba(0, 0, 0, 1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  display: block;
+  max-width: 100%;
+}
+
 @media (max-width: 768px) {
   .map-trip-action-card {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    font-size: 0.75rem;
+    gap: 5px;
+    padding: 5px 8px;
+    font-size: 0.7rem;
+    background: rgba(0, 0, 0, 0.88);
+    backdrop-filter: blur(10px) saturate(180%);
+    -webkit-backdrop-filter: blur(10px) saturate(180%);
+    max-width: 120px;
   }
   .map-trip-action-name {
     margin-bottom: 0;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     max-width: 80px;
+    line-height: 1.1;
+  }
+
+  .map-trip-name-card {
+    padding: 7px 10px;
+    max-width: calc(100vw - 120px);
+  }
+
+  .map-trip-name-text {
+    font-size: 0.83rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.1;
   }
   .map-trip-action-btns {
     gap: 4px;
@@ -1828,6 +1955,8 @@ body.app-playing .thumbnail-close-btn {
   box-shadow: var(--shadow-md);
   overflow: hidden;
   position: relative;
+  width: fit-content;
+  max-width: min(95vw, 792px);
 }
 .photo-popup-edit-container .leaflet-popup-close-button {
   display: none !important;
@@ -1835,19 +1964,21 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-container .leaflet-popup-content {
   margin: 0;
-  min-width: 240px;
+  min-width: 0;
+  width: fit-content;
 }
 
 .photo-popup {
-  max-width: min(95vw, 550px);
+  max-width: min(95vw, 660px);
   position: relative;
+  display: inline-block;
 }
 .photo-popup img {
   width: 100%;
   height: auto;
-  max-width: 550px;
-  max-height: 400px;
-  object-fit: cover;
+  max-width: 660px;
+  max-height: 480px;
+  object-fit: contain;
   display: block;
 }
 
@@ -1912,12 +2043,15 @@ body.app-playing .thumbnail-close-btn {
 .photo-popup-photo-wrap {
   position: relative;
   line-height: 0;
+  display: inline-block;
+  max-width: 100%;
 }
 
 .photo-popup img {
-  width: 100%;
+  width: auto;
   height: auto;
-  max-height: min(85vh, 1200px);
+  max-width: 660px;
+  max-height: min(70vh, 480px);
   object-fit: contain;
   display: block;
   cursor: pointer;
@@ -2022,11 +2156,11 @@ body.app-playing .thumbnail-close-btn {
 }
 
 .photo-popup-edit-container .leaflet-popup-content {
-  min-width: 320px;
+  min-width: 461px;
 }
 
 .photo-popup-edit-mode {
-  max-width: 384px;
+  max-width: 553px;
 }
 
 .photo-popup-edit-form {
@@ -4447,11 +4581,17 @@ body.app-playing .map-photo-nav-btn {
 
 /* 地図上のトリップ名の「旅行記」ラベル */
 .map-trip-travelogue-label {
-  font-size: 0.85em;
-  font-weight: 500;
-  margin-left: 0.5rem;
-  color: inherit;
-  opacity: 0.9;
+  font-size: 0.8em;
+  font-weight: 600;
+  margin-left: 0.45rem;
+  color: #fff;
+  opacity: 1;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9),
+               0 1px 3px rgba(0, 0, 0, 0.8),
+               0 0 1px rgba(0, 0, 0, 1);
+  white-space: nowrap;
+  display: inline;
+  line-height: 1.2;
 }
 
 /* 旅行記の出来事セクション */

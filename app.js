@@ -284,20 +284,35 @@ function initMap() {
   // ズームコントロールを右上に配置
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  // 各種マップレイヤーの定義
+  // 各種マップレイヤーの定義（高解像度対応）
   mapLayers = {
     terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap, © OpenTopoMap',
-      maxZoom: 17
+      maxZoom: 17,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }),
     standard: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
-      maxZoom: 19
+      maxZoom: 19,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }),
-    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: '© Esri, Maxar, Earthstar Geographics',
-      maxZoom: 18
-    })
+    satellite: L.layerGroup([
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19,
+        detectRetina: true,
+        className: 'map-tiles-crisp'
+      }),
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CartoDB',
+        maxZoom: 19,
+        detectRetina: true,
+        subdomains: 'abcd',
+        pane: 'overlayPane'
+      })
+    ])
   };
 
   // デフォルトレイヤー（地形）を追加
@@ -472,8 +487,10 @@ function initMap3d() {
       container: 'map3d',
       zoom: 17,
       center: [center.lng, center.lat],
-      pitch: 78,
+      pitch: 70,
       bearing: 0,
+      antialias: true,
+      preserveDrawingBuffer: true,
       style: {
         version: 8,
         sources: {
@@ -483,8 +500,10 @@ function initMap3d() {
               'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
             ],
             tileSize: 256,
+            scheme: 'xyz',
             attribution: '© Esri, Maxar, Earthstar Geographics',
-            maxzoom: 19
+            maxzoom: 20,
+            bounds: [-180, -85.0511, 180, 85.0511]
           },
           terrainSource: {
             type: 'raster-dem',
@@ -499,6 +518,29 @@ function initMap3d() {
             tileSize: 256,
             encoding: 'terrarium',
             maxzoom: 15
+          },
+          labels: {
+            type: 'raster',
+            tiles: [
+              'https://a.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png',
+              'https://b.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png',
+              'https://c.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png',
+              'https://d.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png'
+            ],
+            tileSize: 512,
+            attribution: '© OpenStreetMap, © CartoDB',
+            minzoom: 0,
+            maxzoom: 20
+          },
+          roads: {
+            type: 'raster',
+            tiles: [
+              'https://a.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}@2x.png'
+            ],
+            tileSize: 512,
+            attribution: '© OpenStreetMap, © CartoDB',
+            minzoom: 0,
+            maxzoom: 20
           }
         },
         layers: [
@@ -507,11 +549,12 @@ function initMap3d() {
             type: 'raster',
             source: 'satellite',
             paint: {
-              'raster-saturation': 0.05,
-              'raster-contrast': 0.2,
-              'raster-brightness-min': 0.15,
+              'raster-saturation': 0.2,
+              'raster-contrast': 0.35,
+              'raster-brightness-min': 0.0,
               'raster-brightness-max': 1.0,
-              'raster-fade-duration': 300
+              'raster-fade-duration': 100,
+              'raster-resampling': 'linear'
             }
           },
           {
@@ -520,15 +563,40 @@ function initMap3d() {
             source: 'hillshadeSource',
             layout: { visibility: 'visible' },
             paint: {
-              'hillshade-shadow-color': '#1A1A1A',
-              'hillshade-accent-color': '#F5F5F5',
-              'hillshade-exaggeration': 0.4,
+              'hillshade-shadow-color': '#2A2A2A',
+              'hillshade-accent-color': '#FFFFFF',
+              'hillshade-exaggeration': 0.5,
               'hillshade-illumination-direction': 315,
-              'hillshade-illumination-anchor': 'viewport'
+              'hillshade-illumination-anchor': 'viewport',
+              'hillshade-highlight-color': '#F8F8F8',
+              'hillshade-shadow-opacity': 0.6
+            }
+          },
+          {
+            id: 'roads-layer',
+            type: 'raster',
+            source: 'roads',
+            layout: { visibility: 'visible' },
+            paint: {
+              'raster-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.2, 15, 0.4, 18, 0.5],
+              'raster-fade-duration': 100
+            }
+          },
+          {
+            id: 'labels-layer',
+            type: 'raster',
+            source: 'labels',
+            layout: { visibility: 'visible' },
+            paint: {
+              'raster-opacity': 1.0,
+              'raster-fade-duration': 100
             }
           }
         ],
-        terrain: { source: 'terrainSource', exaggeration: 2.0 },
+        terrain: {
+          source: 'terrainSource',
+          exaggeration: 2.2
+        },
         sky: {
           'sky-color': '#7AB8E0',
           'horizon-color': '#D8E8F4',
@@ -536,23 +604,30 @@ function initMap3d() {
           'fog-ground-blend': 0.4
         }
       },
-      maxZoom: 19,
-      maxPitch: 85
+      maxZoom: 20,
+      maxPitch: 85,
+      minPitch: 0,
+      renderWorldCopies: false,
+      fadeDuration: 100,
+      localIdeographFontFamily: "'Noto Sans', 'Noto Sans CJK JP', sans-serif",
+      attributionControl: false,
+      refreshExpiredTiles: true,
+      optimizeForTerrain: true
     });
     map3d.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
     map3d.on('load', () => {
       // 地形の立体感を強調
       if (map3d.getTerrain()) {
-        map3d.setTerrain({ source: 'terrainSource', exaggeration: 2.0 });
+        map3d.setTerrain({ source: 'terrainSource', exaggeration: 2.2 });
       }
-      // 霧効果で遠景に深みを追加（航空写真用）
+      // 霧効果で遠景に深みを追加（航空写真用・控えめに）
       map3d.setFog({
-        range: [0.8, 12],
-        color: '#D8E4F0',
-        'horizon-blend': 0.15,
-        'high-color': '#A8C8E8',
-        'space-color': '#7AB8E0',
-        'star-intensity': 0.15
+        range: [1.0, 15],
+        color: '#E8F0F8',
+        'horizon-blend': 0.1,
+        'high-color': '#C8DCF0',
+        'space-color': '#A0C0E0',
+        'star-intensity': 0.1
       });
       map3d.resize();
       resolve();
@@ -2790,10 +2865,32 @@ function showPhotoViewMode(p, lat, lng) {
     };
     div.appendChild(editBtn);
   }
-  photoPopup = L.popup({ maxWidth: 840, className: 'photo-popup-container' })
+  photoPopup = L.popup({
+      maxWidth: 1000,
+      minWidth: 0,
+      className: 'photo-popup-container',
+      autoPan: true,
+      autoPanPaddingTopLeft: [20, 20],
+      autoPanPaddingBottomRight: [20, 20],
+      keepInView: true,
+      offset: [0, -30]
+    })
     .setLatLng([lat, lng])
     .setContent(div)
     .openOn(map);
+
+  // ポップアップが開いた後、写真全体が見えるように地図を調整
+  setTimeout(() => {
+    const popupElement = photoPopup.getElement();
+    if (popupElement) {
+      const popupHeight = popupElement.offsetHeight;
+      const point = map.latLngToContainerPoint([lat, lng]);
+      const targetX = point.x;
+      const targetY = point.y - (popupHeight / 2) + 20;
+      const targetLatLng = map.containerPointToLatLng([targetX, targetY]);
+      map.panTo(targetLatLng, { animate: true, duration: 0.3 });
+    }
+  }, 50);
 }
 
 function showPhotoPopupEditMode(lat, lng) {
@@ -3323,10 +3420,33 @@ function showPhotoPopupEditMode(lat, lng) {
     }
   };
 
-  photoPopup = L.popup({ maxWidth: 840, className: 'photo-popup-container photo-popup-edit-container', closeButton: false })
+  photoPopup = L.popup({
+      maxWidth: 1000,
+      minWidth: 0,
+      className: 'photo-popup-container photo-popup-edit-container',
+      closeButton: false,
+      autoPan: true,
+      autoPanPaddingTopLeft: [20, 20],
+      autoPanPaddingBottomRight: [20, 20],
+      keepInView: true,
+      offset: [0, -30]
+    })
     .setLatLng([lat, lng])
     .setContent(div)
     .openOn(map);
+
+  // ポップアップが開いた後、編集フォーム全体が見えるように地図を調整
+  setTimeout(() => {
+    const popupElement = photoPopup.getElement();
+    if (popupElement) {
+      const popupHeight = popupElement.offsetHeight;
+      const point = map.latLngToContainerPoint([lat, lng]);
+      const targetX = point.x;
+      const targetY = point.y - (popupHeight / 2) + 20;
+      const targetLatLng = map.containerPointToLatLng([targetX, targetY]);
+      map.panTo(targetLatLng, { animate: true, duration: 0.3 });
+    }
+  }, 50);
 }
 
 // GPSポイント追加モードの切り替え
@@ -3479,6 +3599,28 @@ async function onPlaybackComplete() {
 }
 
 function stopPlay() {
+  // 動画表示中の場合は、動画をスキップして次の画像に移り、自動再生を継続
+  const isPlayingVideo = playbackVideoEndCallback !== null || playbackVideoTimer !== null;
+  const isAutoPlaying = document.body.classList.contains('app-playing');
+
+  if (isAutoPlaying && isPlayingVideo && playbackPhotos && playbackPhotos.length > 0) {
+    // 動画を停止
+    playbackVideoEndCallback = null;
+    if (playbackVideoTimer) {
+      clearTimeout(playbackVideoTimer);
+      playbackVideoTimer = null;
+    }
+    if (playTimer) {
+      clearTimeout(playTimer);
+      playTimer = null;
+    }
+
+    // 次の画像にジャンプして自動再生を継続
+    jumpPlayback(1);
+    return;
+  }
+
+  // 通常の停止処理
   playbackVideoEndCallback = null;
   currentAutoplayTick = null;
   if (playTimer) {
@@ -3653,7 +3795,7 @@ async function startPlay() {
     if (mapPlayBtn) mapPlayBtn.textContent = '■ 停止';
     const mobilePlayBtn = document.getElementById('mobilePlayBtn');
     if (mobilePlayBtn) mobilePlayBtn.textContent = '■';
-    document.querySelector('.map-container')?.classList.add('map-playback-cinematic');
+    // 2D地図のまま自動再生（パフォーマンス向上）
     document.body.classList.add('app-playing');
 
     // ルート表示を目立つモードに切り替え
@@ -3668,14 +3810,6 @@ async function startPlay() {
       map.setView([p0.lat, p0.lng], 17);
     }
 
-    // 3D地図の初期化をバックグラウンドで開始（tickでflyMap3dToを使うため）
-    const map3dReady = initMap3d()
-      .then(() => add3dMapRouteAndMarkers())
-      .then(() => {
-        if (p0?.lat != null && p0?.lng != null) setMap3dView(p0.lat, p0.lng, 17);
-      })
-      .catch(err => { console.warn('3D地図初期化エラー:', err); });
-
     const tick = async () => {
       try {
         if (!playTimer || currentPhotoIndex >= playbackPhotos.length - 1) {
@@ -3686,14 +3820,9 @@ async function startPlay() {
         currentPhotoIndex++;
         const nextP = playbackPhotos[currentPhotoIndex];
 
-        // 3D地図の準備ができていればカメラアニメーション（最大3秒待機、ブロック防止）
-        try {
-          await Promise.race([map3dReady, new Promise(r => setTimeout(r, 3000))]);
-          if (nextP?.lat != null && nextP?.lng != null) {
-            await flyMap3dTo(nextP.lat, nextP.lng, 17, 1500);
-          }
-        } catch (e) {
-          console.warn('3D地図アニメーションスキップ:', e);
+        // 2D地図で次のポイントにスムーズに移動
+        if (nextP?.lat != null && nextP?.lng != null) {
+          map.panTo([nextP.lat, nextP.lng], { animate: true, duration: 1.0 });
         }
 
         // 動画がある場合は動画終了まで待つ
@@ -3753,9 +3882,9 @@ async function jumpPlayback(delta) {
   currentPhotoIndex = newIdx;
   const p = playbackPhotos[currentPhotoIndex];
 
-  // 地図をジャンプ先に移動
+  // 地図をジャンプ先に移動（2D地図を使用）
   if (p?.lat != null && p?.lng != null) {
-    try { await flyMap3dTo(p.lat, p.lng, 17, 1500); } catch (_) {}
+    map.panTo([p.lat, p.lng], { animate: true, duration: 1.0 });
   }
 
   if (!currentAutoplayTick) return;
@@ -6150,21 +6279,35 @@ async function initTravelogueMap(trip) {
   wrap.style.display = '';
   travelogueMap = L.map('travelogueMap').setView([pts[0][0], pts[0][1]], 10);
 
-  // メインマップと同じレイヤーを使用
+  // メインマップと同じレイヤーを使用（高解像度対応）
   if (currentMapLayer === 'satellite') {
+    // 衛星画像 + ラベルレイヤー
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: '© Esri, Maxar, Earthstar Geographics',
-      maxZoom: 18
+      maxZoom: 19,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
+    }).addTo(travelogueMap);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap, © CartoDB',
+      maxZoom: 19,
+      detectRetina: true,
+      subdomains: 'abcd',
+      pane: 'overlayPane'
     }).addTo(travelogueMap);
   } else if (currentMapLayer === 'terrain') {
     L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap, © OpenTopoMap',
-      maxZoom: 17
+      maxZoom: 17,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }).addTo(travelogueMap);
   } else {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
-      maxZoom: 19
+      maxZoom: 19,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }).addTo(travelogueMap);
   }
 
