@@ -157,6 +157,36 @@ function invalidateOrderedTripsCache() {
   _orderedTripsCacheKey = '';
 }
 
+// ─── アプリ共通トースト通知 ───────────────────────────────────────────────────
+let _toastTimer = null;
+
+/**
+ * 画面中央にトースト通知を表示する（約3秒で自動消去）
+ * @param {string} message 表示メッセージ
+ * @param {number} durationMs 表示時間 (ms)
+ */
+function showToast(message, durationMs = 3000) {
+  const existing = document.getElementById('appToast');
+  if (existing) { existing.remove(); }
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const el = document.createElement('div');
+  el.id = 'appToast';
+  el.className = 'app-toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+
+  _toastTimer = setTimeout(() => {
+    if (el.parentNode) el.remove();
+    _toastTimer = null;
+  }, durationMs);
+}
+
+/** トリップ未選択 / 写真なし時に共通で表示するメッセージ */
+const MSG_NO_PHOTOS = '📂 メニューからトリップを\n選んでください';
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // パフォーマンス最適化: 画像の遅延読み込み用Observer
 let imageObserver = null;
 if ('IntersectionObserver' in window) {
@@ -4062,7 +4092,7 @@ async function startPlay() {
     // 新規再生: 写真または動画URLがあるポイントを再生対象にする
     playbackPhotos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
     if (!playbackPhotos.length) {
-      alert('再生できる写真または動画がありません。写真または動画URLを追加してください。');
+      showToast(currentTrip ? '📷 再生できる写真・動画がありません' : MSG_NO_PHOTOS);
       return;
     }
   }
@@ -4239,7 +4269,7 @@ function prevPhoto() {
     return;
   }
   const photos = getDisplayPhotos();
-  if (!photos.length) return;
+  if (!photos.length) { showToast(MSG_NO_PHOTOS); return; }
   currentPhotoIndex = (currentPhotoIndex - 1 + photos.length) % photos.length;
   if (!thumbnailsVisible) {
     thumbnailsVisible = true;
@@ -4254,7 +4284,7 @@ function nextPhoto() {
     return;
   }
   const photos = getDisplayPhotos();
-  if (!photos.length) return;
+  if (!photos.length) { showToast(MSG_NO_PHOTOS); return; }
   if (thumbnailsVisible) {
     currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;
   } else {

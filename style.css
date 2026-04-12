@@ -4689,3 +4689,35 @@ body.app-playing .map-photo-nav-btn {
     max-width: 100%;
   }
 }
+
+/* ─── アプリ共通トースト通知 ─────────────────────────────────────────────── */
+.app-toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(30, 30, 30, 0.92);
+  color: #fff;
+  padding: 14px 28px;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  white-space: pre-wrap;
+  max-width: min(88vw, 380px);
+  z-index: 99999;
+  pointer-events: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  animation: appToastIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+             appToastOut 0.3s ease 2.5s both;
+}
+
+@keyframes appToastIn {
+  from { opacity: 0; transform: translate(-50%, -42%); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
+@keyframes appToastOut {
+  from { opacity: 1; }
+  to   { opacity: 0; transform: translate(-50%, -56%); }
+}
