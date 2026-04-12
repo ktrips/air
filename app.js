@@ -1,10 +1,9 @@
 /* Air — 地図と写真でエア旅行（Firebase + Firestore） */
 
-// Mapbox GL JS アクセストークンをconfig.jsからインポート
-import { MAPBOX_TOKEN } from './config.js';
-
-if (window.mapboxgl) {
-  mapboxgl.accessToken = MAPBOX_TOKEN;
+// Mapbox GL JS アクセストークン
+// config.jsで設定（window.MAPBOX_TOKEN）
+if (window.mapboxgl && window.MAPBOX_TOKEN) {
+  mapboxgl.accessToken = window.MAPBOX_TOKEN;
 }
 
 // 15色: ピンク〜シアンのレインボー順＋緑系（地図マーカー・ルート線の色分け用）
