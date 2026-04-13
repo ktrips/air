@@ -431,12 +431,22 @@
   <div class="modal-overlay" id="helpModal">
     <div class="modal">
       <div class="modal-header">
-        <h2>Air ヘルプ</h2>
+        <h2>Air ヘルプ <span style="font-size:0.7rem; color:#888;">(v1.6.5)</span></h2>
         <button type="button" class="modal-close" id="helpModalClose">&times;</button>
       </div>
       <div class="modal-body">
         <h3>Air - 地図と写真でエア旅行</h3>
         <p>GPS付き写真を地図上に表示し、スライドショーや旅行記でトリップを楽しむWebアプリです。</p>
+
+        <h4>📋 バージョン v1.6.5 の新機能</h4>
+        <ul>
+          <li><strong>🌐 Mapbox 3D地図:</strong> 自動再生中に 3D 地図に切り替え。ルート線・ポイントがグロー効果で強調表示（<code>config.js</code> で <code>MAPBOX_TOKEN</code> を設定）</li>
+          <li><strong>📱 PWA対応:</strong> Service Worker でオフラインキャッシュ。初回以降の表示を高速化</li>
+          <li><strong>💾 IndexedDB GPXキャッシュ:</strong> GPX ファイルを 24 時間キャッシュ</li>
+          <li><strong>✨ 出来事生成:</strong> AI アニメに新スタイル。旅の印象的な出来事を 5 コマで生成（キャラ画像必須）</li>
+          <li><strong>📤 旅行記シェア:</strong> Twitter / Instagram / Facebook で旅行記を共有</li>
+          <li><strong>⚡ パフォーマンス最適化:</strong> マップマーカー更新の debounce、トリップリストのリアルタイム同期</li>
+        </ul>
 
         <h4>🌍 閲覧モード（ログインなし）</h4>
         <p><strong>公開トリップを見る:</strong></p>
