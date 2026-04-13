@@ -3,4 +3,4 @@
 
 // Mapbox GL JS Public Access Token
 // https://account.mapbox.com/ で取得してください
-export const MAPBOX_TOKEN = 'YOUR_MAPBOX_PUBLIC_TOKEN_HERE';
+window.MAPBOX_TOKEN = 'YOUR_MAPBOX_PUBLIC_TOKEN_HERE';

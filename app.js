@@ -1,10 +1,9 @@
 /* Air — 地図と写真でエア旅行（Firebase + Firestore） */
 
-// Mapbox GL JS アクセストークンをconfig.jsからインポート
-import { MAPBOX_TOKEN } from './config.js';
-
-if (window.mapboxgl) {
-  mapboxgl.accessToken = MAPBOX_TOKEN;
+// Mapbox GL JS アクセストークン
+// config.jsで設定（window.MAPBOX_TOKEN）
+if (window.mapboxgl && window.MAPBOX_TOKEN) {
+  mapboxgl.accessToken = window.MAPBOX_TOKEN;
 }
 
 // 15色: ピンク〜シアンのレインボー順＋緑系（地図マーカー・ルート線の色分け用）
@@ -18,6 +17,7 @@ let currentPhotoIndex = 0;
 let markers = [];
 let gpxLayers = [];
 let tripLeaderLayers = [];
+let playbackPulseMarker = null; // 自動再生中の現在ポイントパルスマーカー
 let playTimer = null;
 let playIntervalMs = 3000;
 let playbackPhotos = []; // 再生中の写真配列
@@ -39,13 +39,153 @@ let corsWarningShown = false;
 let characterImageData = null; // キャラクター画像（Base64形式・メモリキャッシュ）
 let pendingMarkerDrag = null; // マーカードラッグ中の保留データ { tripRef, photoIdx, originalLat, originalLng, originalPlaceName }
 
+// ─── Phase 1: パフォーマンス最適化ユーティリティ ──────────────────────────
+
+/**
+ * debounce: 連続呼び出しをまとめて 1 回に抑制する
+ * @param {Function} fn  実行したい関数
+ * @param {number}   wait ミリ秒
+ */
+function debounce(fn, wait) {
+  let timer = null;
+  return function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+
+// updateMapMarkers の連続呼び出しを 300ms にまとめる（fire-and-forget 用）
+// 重要なパス（await が必要な箇所）では引き続き updateMapMarkers() を直接呼ぶ
+const scheduleMapMarkersUpdate = debounce(() => updateMapMarkers(), 300);
+
+// ─── IndexedDB GPX キャッシュ ─────────────────────────────────────────────
+
+const GPX_IDB_NAME    = 'air-gpx-cache';
+const GPX_IDB_STORE   = 'gpx';
+const GPX_IDB_VERSION = 1;
+const GPX_CACHE_TTL   = 24 * 60 * 60 * 1000; // 24時間
+
+/** IndexedDB を開く（なければ作成） */
+function _openGpxDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(GPX_IDB_NAME, GPX_IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore(GPX_IDB_STORE);
+    };
+    req.onsuccess  = (e) => resolve(e.target.result);
+    req.onerror    = (e) => reject(e.target.error);
+  });
+}
+
+/** IndexedDB から GPX を取得（期限切れの場合は null を返す） */
+async function getGpxFromIDB(url) {
+  try {
+    const db = await _openGpxDB();
+    return new Promise((resolve) => {
+      const tx  = db.transaction(GPX_IDB_STORE, 'readonly');
+      const req = tx.objectStore(GPX_IDB_STORE).get(url);
+      req.onsuccess = (e) => {
+        const cached = e.target.result;
+        if (cached && Date.now() - cached.ts < GPX_CACHE_TTL) {
+          resolve(cached.text);
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null; // IndexedDB 非対応環境はスキップ
+  }
+}
+
+/** GPX テキストを IndexedDB に保存（失敗しても無視） */
+async function saveGpxToIDB(url, text) {
+  try {
+    const db = await _openGpxDB();
+    await new Promise((resolve) => {
+      const tx = db.transaction(GPX_IDB_STORE, 'readwrite');
+      tx.objectStore(GPX_IDB_STORE).put({ text, ts: Date.now() }, url);
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve(); // エラーでも続行
+    });
+  } catch {
+    // 書き込み失敗は無視（メモリキャッシュのみで動作継続）
+  }
+}
+
+/** 期限切れ GPX エントリを IDB から一括削除（起動時に 1 回呼ぶ） */
+async function purgeExpiredGpxIDB() {
+  try {
+    const db = await _openGpxDB();
+    await new Promise((resolve) => {
+      const tx    = db.transaction(GPX_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(GPX_IDB_STORE);
+      const req   = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) { resolve(); return; }
+        if (Date.now() - (cursor.value?.ts || 0) >= GPX_CACHE_TTL) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // パフォーマンス最適化: Firestoreクエリのキャッシュ
 const tripsCache = {
   data: null,
   timestamp: 0,
   userId: null
 };
-const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ
+const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ（onSnapshot が無効な環境向けのフォールバック）
+
+// Firestore onSnapshot リスナーの解除関数（null = 未設定）
+let _tripsUnsubscribe = null;
+
+// getOrderedTrips() メモ化キャッシュ
+let _orderedTripsCache = null;
+let _orderedTripsCacheKey = '';
+/** キャッシュを無効化する（myTrips / tripOrder が変わった時に呼ぶ） */
+function invalidateOrderedTripsCache() {
+  _orderedTripsCache = null;
+  _orderedTripsCacheKey = '';
+}
+
+// ─── アプリ共通トースト通知 ───────────────────────────────────────────────────
+let _toastTimer = null;
+
+/**
+ * 画面中央にトースト通知を表示する（約3秒で自動消去）
+ * @param {string} message 表示メッセージ
+ * @param {number} durationMs 表示時間 (ms)
+ */
+function showToast(message, durationMs = 3000) {
+  const existing = document.getElementById('appToast');
+  if (existing) { existing.remove(); }
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const el = document.createElement('div');
+  el.id = 'appToast';
+  el.className = 'app-toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+
+  _toastTimer = setTimeout(() => {
+    if (el.parentNode) el.remove();
+    _toastTimer = null;
+  }, durationMs);
+}
+
+/** トリップ未選択 / 写真なし時に共通で表示するメッセージ */
+const MSG_NO_PHOTOS = '📂 メニューからトリップを\n選んでください';
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 // パフォーマンス最適化: 画像の遅延読み込み用Observer
 let imageObserver = null;
@@ -511,123 +651,173 @@ function initMap3d() {
       resolve();
       return;
     }
+    if (!mapboxgl.accessToken) {
+      console.warn('Mapbox アクセストークン未設定 - 3D地図なしで自動再生を続行');
+      resolve();
+      return;
+    }
     const el = document.getElementById('map3d');
     if (!el) {
       resolve();
       return;
     }
-    const center = map.getCenter();
 
-    // 航空写真モードの場合（Mapbox Satellite Streets スタイル）
-    if (currentMapLayer === 'satellite') {
-      map3d = new mapboxgl.Map({
-        container: 'map3d',
-        zoom: 17,
-        center: [center.lng, center.lat],
-        pitch: 60,
-        bearing: 0,
-        antialias: false,  // パフォーマンス最適化: アンチエイリアスを無効化
-        preserveDrawingBuffer: false,  // パフォーマンス最適化: 描画バッファを保持しない
-        style: 'mapbox://styles/mapbox/satellite-streets-v12',
-        maxZoom: 20,
-        maxPitch: 85,
-        minPitch: 0,
-        renderWorldCopies: false,
-        fadeDuration: 0,  // パフォーマンス最適化: フェードを無効化
-        attributionControl: false,
-        refreshExpiredTiles: false,  // パフォーマンス最適化: キャッシュを優先
-        terrain: {
-          source: 'mapbox-dem',
-          exaggeration: 1.2  // パフォーマンス最適化: 地形の誇張を軽量化
-        }
-      });
-    } else {
-      // ベクトル地図モード（Mapbox標準スタイル + 3D建物表示）
-      map3d = new mapboxgl.Map({
-        container: 'map3d',
-        zoom: 17,
-        center: [center.lng, center.lat],
-        pitch: 60,
-        bearing: 0,
-        antialias: false,  // パフォーマンス最適化
-        preserveDrawingBuffer: false,  // パフォーマンス最適化
-        style: 'mapbox://styles/mapbox/streets-v12',
-        maxZoom: 20,
-        maxPitch: 85,
-        minPitch: 0,
-        renderWorldCopies: false,
-        fadeDuration: 0,  // パフォーマンス最適化
-        attributionControl: false,
-        refreshExpiredTiles: false  // パフォーマンス最適化
-      });
-    }
-    map3d.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right');
-    map3d.on('load', () => {
-      // 地形を設定（Mapboxの組み込み地形データ）
-      if (currentMapLayer === 'satellite') {
-        map3d.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+    let resolved = false;
+    const safeResolve = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve();
       }
+    };
 
-      // 3D建物を有効化（すべてのモードで）
-      const layers = map3d.getStyle().layers;
+    // 15秒タイムアウト: 3D地図が読み込めなくても自動再生を続行
+    const timeoutId = setTimeout(() => {
+      console.warn('Mapbox 3D地図の読み込みタイムアウト - 3D地図なしで続行');
+      safeResolve();
+    }, 15000);
 
-      // satellite-streets-v12には'building'レイヤーが含まれている
-      const buildingLayer = layers.find(layer => layer.id === 'building');
-      if (buildingLayer) {
-        // 既存の建物レイヤーを削除して3D化
-        map3d.removeLayer('building');
+    try {
+      const center = map.getCenter();
 
-        // 3D建物レイヤーを追加（パフォーマンス最適化: 高ズームのみ3D化）
-        map3d.addLayer({
-          id: 'building-3d',
-          type: 'fill-extrusion',
-          source: buildingLayer.source,
-          'source-layer': buildingLayer['source-layer'] || 'building',
-          minzoom: 15.5,  // パフォーマンス最適化: 15.5以上で表示
-          paint: {
-            'fill-extrusion-color': [
-              'case',
-              ['==', ['get', 'type'], 'building:part'],
-              '#d0d0d0',
-              '#c0c0c0'
-            ],
-            'fill-extrusion-height': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              15.5,
-              0,
-              16,
-              ['get', 'height']
-            ],
-            'fill-extrusion-base': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              15.5,
-              0,
-              16,
-              ['get', 'min_height']
-            ],
-            'fill-extrusion-opacity': 0.8
-          }
+      // 航空写真モードの場合（Mapbox Satellite Streets スタイル）
+      if (currentMapLayer === 'satellite') {
+        map3d = new mapboxgl.Map({
+          container: 'map3d',
+          zoom: 17,
+          center: [center.lng, center.lat],
+          pitch: 60,
+          bearing: 0,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          style: 'mapbox://styles/mapbox/satellite-streets-v12',
+          maxZoom: 20,
+          maxPitch: 85,
+          minPitch: 0,
+          renderWorldCopies: false,
+          fadeDuration: 0,
+          attributionControl: false,
+          refreshExpiredTiles: false
+        });
+      } else {
+        // ベクトル地図モード（Mapbox標準スタイル + 3D建物表示）
+        map3d = new mapboxgl.Map({
+          container: 'map3d',
+          zoom: 17,
+          center: [center.lng, center.lat],
+          pitch: 60,
+          bearing: 0,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          style: 'mapbox://styles/mapbox/streets-v12',
+          maxZoom: 20,
+          maxPitch: 85,
+          minPitch: 0,
+          renderWorldCopies: false,
+          fadeDuration: 0,
+          attributionControl: false,
+          refreshExpiredTiles: false
         });
       }
+      map3d.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right');
 
-      // 霧効果で遠景に深みを追加
-      map3d.setFog({
-        range: [1.0, 12],
-        color: '#E8F0F8',
-        'horizon-blend': 0.05,
-        'high-color': '#C8DCF0',
-        'space-color': '#A0C0E0',
-        'star-intensity': 0.1
+      map3d.on('error', (e) => {
+        console.error('Mapbox 3D地図エラー:', e);
+        clearTimeout(timeoutId);
+        map3d = null;
+        safeResolve();
       });
 
-      map3d.resize();
-      resolve();
-    });
+      map3d.on('load', () => {
+        clearTimeout(timeoutId);
+        try {
+          // 地形を設定（衛星モードのみ）
+          if (currentMapLayer === 'satellite') {
+            if (map3d.getSource('mapbox-dem')) {
+              map3d.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+            }
+          }
+
+          // 3D建物を有効化（すべてのモードで）
+          const layers = map3d.getStyle().layers;
+          const buildingLayer = layers.find(layer => layer.id === 'building');
+          if (buildingLayer) {
+            map3d.removeLayer('building');
+            map3d.addLayer({
+              id: 'building-3d',
+              type: 'fill-extrusion',
+              source: buildingLayer.source,
+              'source-layer': buildingLayer['source-layer'] || 'building',
+              minzoom: 15.5,
+              paint: {
+                'fill-extrusion-color': [
+                  'case',
+                  ['==', ['get', 'type'], 'building:part'],
+                  '#d0d0d0',
+                  '#c0c0c0'
+                ],
+                'fill-extrusion-height': [
+                  'interpolate', ['linear'], ['zoom'],
+                  15.5, 0, 16, ['get', 'height']
+                ],
+                'fill-extrusion-base': [
+                  'interpolate', ['linear'], ['zoom'],
+                  15.5, 0, 16, ['get', 'min_height']
+                ],
+                'fill-extrusion-opacity': 0.8
+              }
+            });
+          }
+
+          // 霧効果で遠景に深みを追加
+          map3d.setFog({
+            range: [1.0, 12],
+            color: '#E8F0F8',
+            'horizon-blend': 0.05,
+            'high-color': '#C8DCF0',
+            'space-color': '#A0C0E0',
+            'star-intensity': 0.1
+          });
+
+          map3d.resize();
+        } catch (e) {
+          console.warn('Mapbox 3D地図セットアップエラー:', e);
+        }
+        safeResolve();
+      });
+    } catch (e) {
+      console.error('Mapbox 3D地図初期化エラー:', e);
+      clearTimeout(timeoutId);
+      map3d = null;
+      safeResolve();
+    }
   });
+}
+
+/** 自動再生中の現在ポイントのパルスマーカーだけを軽量に更新 */
+function updatePlaybackPulseMarker() {
+  if (!map) return;
+  if (playbackPulseMarker) {
+    try { map.removeLayer(playbackPulseMarker); } catch (e) { /* ignore */ }
+    playbackPulseMarker = null;
+  }
+  if (!document.body.classList.contains('app-playing')) return;
+  if (!playbackPhotos || !playbackPhotos.length) return;
+  const p = playbackPhotos[currentPhotoIndex];
+  if (!p || p.lat == null || p.lng == null) return;
+  const coord = ensureLatLng(p.lat, p.lng);
+  if (!coord) return;
+  const trip = currentTrip;
+  const color = trip?.color || '#e1306c';
+  const pulseHtml = `<div class="playback-pulse-marker" style="--pulse-color:${color}"></div>`;
+  playbackPulseMarker = L.marker([coord.lat, coord.lng], {
+    icon: L.divIcon({
+      className: '',
+      html: pulseHtml,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    }),
+    zIndexOffset: 2000
+  }).addTo(map);
 }
 
 async function add3dMapRouteAndMarkers() {
@@ -1125,7 +1315,18 @@ async function persistGpxToTrip(tripId, gpxDataUrl, gpxFileName) {
 }
 
 async function fetchGpxFromUrl(url) {
+  // 1. メモリキャッシュ（最速）
   if (gpxCache[url]) return gpxCache[url];
+
+  // 2. IndexedDB キャッシュ（ページリロード後も有効・24時間）
+  const idbCached = await getGpxFromIDB(url);
+  if (idbCached) {
+    gpxCache[url] = idbCached; // メモリにも載せる
+    console.log('✓ GPX IndexedDBキャッシュから取得:', url.slice(-40));
+    return idbCached;
+  }
+
+  // 3. ネットワーク取得 → 両キャッシュに保存
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -1134,6 +1335,7 @@ async function fetchGpxFromUrl(url) {
     }
     const text = await res.text();
     gpxCache[url] = text;
+    saveGpxToIDB(url, text); // 非同期・fire-and-forget（失敗しても無視）
     return text;
   } catch (err) {
     console.error('GPX 取得エラー:', url, err);
@@ -1540,7 +1742,7 @@ function updateTripMenuThumbnail() {
         currentTrip.photos.splice(idx, 1);
         saveTrip({ silent: true });
         updateTripMenuThumbnail();
-        updateMapMarkers();
+        scheduleMapMarkersUpdate();
         renderThumbnails();
       }
     };
@@ -1888,7 +2090,7 @@ function reorderThumbnail(fromIndex, toIndex) {
   currentTrip.photos = photos;
   currentPhotoIndex = toIndex;
   renderThumbnails();
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   setStatus('表示順を変更しました。保存してください');
 }
 
@@ -1905,7 +2107,7 @@ async function deleteThumbnail(index) {
   currentTrip.photos.splice(index, 1);
   currentPhotoIndex = Math.min(index, Math.max(0, currentTrip.photos.length - 1));
   renderThumbnails();
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   renderTripDetailPane();
   setStatus('写真を削除しました。保存してください');
 }
@@ -2150,11 +2352,23 @@ async function updateMapMarkers() {
     }
     // GPXルートを地図に表示（表示範囲の計算には含めない）
     if (pts.length > 1) {
-      // 自動再生中はルートを太く鮮明に表示
       const isPlayback = document.body.classList.contains('app-playing');
-      const routeWeight = isPlayback ? 6 : 4;
+      const routeWeight = isPlayback ? 7 : 4;
       const routeOpacity = isPlayback ? 1.0 : 0.8;
-      const layer = L.polyline(pts, { color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5 }).addTo(map);
+      if (isPlayback) {
+        // 自動再生中: 外側グロー + 内側ルートの二重線で目立たせる
+        const glowLayer = L.polyline(pts, {
+          color, weight: 18, opacity: 0.2, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        }).addTo(map);
+        gpxLayers.push(glowLayer);
+        const shadowLayer = L.polyline(pts, {
+          color: '#ffffff', weight: 10, opacity: 0.5, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        }).addTo(map);
+        gpxLayers.push(shadowLayer);
+      }
+      const layer = L.polyline(pts, {
+        color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+      }).addTo(map);
       gpxLayers.push(layer);
       // allLatLngsには追加しない（写真マーカーのみで範囲を決定）
     }
@@ -2304,6 +2518,7 @@ async function updateMapMarkers() {
         markers.push(marker);
         allLatLngs.push(latLng);
       });
+
     }
 
     // 親トリップ表示時: 各子トリップの旅行記・動画ボタンをGPSから少し離し、引き出し線で表示（デスクトップのみ）
@@ -2416,7 +2631,7 @@ async function updateMapMarkers() {
       }
     }
   }
-  if (allLatLngs.length > 0) {
+  if (allLatLngs.length > 0 && !document.body.classList.contains('app-playing')) {
     if (allLatLngs.length === 1) {
       map.setView(allLatLngs[0], 15);
     } else {
@@ -2424,6 +2639,9 @@ async function updateMapMarkers() {
       map.fitBounds(allLatLngs, { padding: [60, 60] });
     }
   }
+
+  // 自動再生中のパルスマーカーを更新
+  updatePlaybackPulseMarker();
 }
 
 function parseGpxPoints(xmlStr) {
@@ -2778,6 +2996,12 @@ function hidePlaybackPhotoOverlay() {
 
     // オーバーレイを非表示
     overlay.classList.add('hidden');
+  }
+
+  // パルスマーカーを削除
+  if (playbackPulseMarker && map) {
+    try { map.removeLayer(playbackPulseMarker); } catch (e) { /* ignore */ }
+    playbackPulseMarker = null;
   }
 }
 
@@ -3217,7 +3441,7 @@ function showPhotoPopupEditMode(lat, lng) {
       try {
         await saveTrip({ silent: true });
         renderThumbnails();
-        updateMapMarkers();
+        scheduleMapMarkersUpdate();
         if (closeAfter && photoPopup) {
           map.removeLayer(photoPopup);
           photoPopup = null;
@@ -3381,7 +3605,7 @@ function showPhotoPopupEditMode(lat, lng) {
     }
     if (saved) {
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       showPhotoAtIndex(currentPhotoIndex, true);
       setStatus('✓ 写真を削除しました（ポイントは残っています）');
     }
@@ -3441,7 +3665,7 @@ function showPhotoPopupEditMode(lat, lng) {
     }
     if (saved) {
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       if (photos.length > 0) {
         showPhotoAtIndex(currentPhotoIndex, true);
       } else {
@@ -3707,7 +3931,7 @@ function stopPlay() {
       hidePlayOverlay();
 
       // ルート表示を通常モードに戻す
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
 
       // 現在の位置を保持したまま停止（playbackPhotos・currentPhotoIndexはクリアしない）
       // 次回再生ボタンを押すと、この位置から継続再生される
@@ -3742,7 +3966,7 @@ function stopPlay() {
   hidePlaybackPhotoOverlay();
   hidePlayOverlay();
   // ルート表示を通常モードに戻す
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   // キャッシュクリア
   lastPlaybackPhotoUrl = null;
   // 3D地図のレイヤーをクリア
@@ -3868,7 +4092,7 @@ async function startPlay() {
     // 新規再生: 写真または動画URLがあるポイントを再生対象にする
     playbackPhotos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
     if (!playbackPhotos.length) {
-      alert('再生できる写真または動画がありません。写真または動画URLを追加してください。');
+      showToast(currentTrip ? '📷 再生できる写真・動画がありません' : MSG_NO_PHOTOS);
       return;
     }
   }
@@ -3906,7 +4130,16 @@ async function startPlay() {
     // 3D地図を初期化
     await initMap3d();
 
-    // ルート表示を目立つモードに切り替え
+    // 3D地図の読み込み結果に応じてモードを切り替え
+    if (!map3d) {
+      // 3D地図に失敗した場合は2Dマップをそのまま使用（cinematicクラスを外す）
+      document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+    } else {
+      // 3D地図が有効な場合はルートとマーカーを追加
+      add3dMapRouteAndMarkers().catch(e => console.warn('3Dルート描画エラー:', e));
+    }
+
+    // ルート表示を目立つモードに切り替え（2D Leaflet マップ）
     await updateMapMarkers();
 
     // 自動再生時はサムネイルを非表示
@@ -3952,6 +4185,9 @@ async function startPlay() {
             });
           }
         }
+
+        // パルスマーカーを現在ポイントに更新
+        updatePlaybackPulseMarker();
 
         // 動画がある場合は動画終了まで待つ
         if (nextP.videoUrl && nextP.videoUrl.trim()) {
@@ -4033,7 +4269,7 @@ function prevPhoto() {
     return;
   }
   const photos = getDisplayPhotos();
-  if (!photos.length) return;
+  if (!photos.length) { showToast(MSG_NO_PHOTOS); return; }
   currentPhotoIndex = (currentPhotoIndex - 1 + photos.length) % photos.length;
   if (!thumbnailsVisible) {
     thumbnailsVisible = true;
@@ -4048,7 +4284,7 @@ function nextPhoto() {
     return;
   }
   const photos = getDisplayPhotos();
-  if (!photos.length) return;
+  if (!photos.length) { showToast(MSG_NO_PHOTOS); return; }
   if (thumbnailsVisible) {
     currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;
   } else {
@@ -4262,9 +4498,9 @@ async function saveTrip(opts = {}) {
       travelogueHistory: currentTrip.travelogueHistory,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt
     };
-    // パフォーマンス最適化: トリップ保存時にキャッシュを無効化
-    tripsCache.data = null;
-    tripsCache.timestamp = 0;
+    // onSnapshot リスナーが Firestore 書き込みを即時検知して myTrips を自動更新するため、
+    // キャッシュ無効化・loadMyTrips() 再呼び出しは不要。
+    // ただし onSnapshot が未設定の環境（テスト等）のために呼び出しは残す（即返るだけ）。
     await loadMyTrips();
     const saved = myTrips.find(t => t.id === currentTrip.id);
     if (saved) {
@@ -4280,9 +4516,8 @@ async function saveTrip(opts = {}) {
     }
     renderThumbnails();
     await updateMapMarkers();
-    renderTripDetailPane();
-    await updateHeaderInfo();
-    renderTripList();
+    await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
+    // updateHeaderInfo / renderTripList は renderTripDetailPane() 内で呼ばれるため除去
     refreshTripSelect();
     refreshTripParentSelectOptions();
 
@@ -4310,6 +4545,13 @@ async function saveTrip(opts = {}) {
   }
 }
 
+/**
+ * Firestore からトリップ一覧を読み込む。
+ *
+ * 初回呼び出し時に onSnapshot リスナーを設定し、
+ * 以降はリスナーが myTrips を自動更新するためこの関数は即返す。
+ * 認証ユーザーが変わった場合は _tripsUnsubscribe を null にしてから呼ぶこと。
+ */
 async function loadMyTrips() {
   if (!window.firebaseDb) {
     console.warn('Firebase DB が初期化されていません');
@@ -4317,81 +4559,73 @@ async function loadMyTrips() {
     return;
   }
 
-  // パフォーマンス最適化: キャッシュをチェック
   const currentUserId = window.firebaseAuth?.currentUser?.uid || 'public';
-  const now = Date.now();
-  if (tripsCache.data &&
-      tripsCache.userId === currentUserId &&
-      now - tripsCache.timestamp < CACHE_DURATION) {
-    myTrips = tripsCache.data;
-    console.log(`✓ キャッシュから ${myTrips.length} 件のトリップを読み込みました`);
+
+  // リスナーが同じユーザーで既に稼働中: myTrips は最新なので即返す
+  if (_tripsUnsubscribe && tripsCache.userId === currentUserId) {
+    console.log('✓ onSnapshot リスナー稼働中 – myTrips は最新です');
     return;
   }
 
-  const maxRetries = 2;
-  let lastError = null;
+  // ユーザー変更または初回: 既存リスナーを解除してから新規設定
+  if (_tripsUnsubscribe) {
+    _tripsUnsubscribe();
+    _tripsUnsubscribe = null;
+  }
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        console.log(`トリップ一覧読み込みリトライ中... (${attempt}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
+  // onSnapshot で初回データ到着を Promise で待つ
+  return new Promise((resolve, reject) => {
+    let firstFire = true;
 
-      if (window.firebaseAuth?.currentUser) {
-        console.log('自分のトリップ一覧を取得中...');
-        const snapshot = await window.firebaseDb.collection('trips')
+    const query = window.firebaseAuth?.currentUser
+      ? window.firebaseDb.collection('trips')
           .where('userId', '==', window.firebaseAuth.currentUser.uid)
-          .get();
-        myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        console.log(`✓ ${myTrips.length} 件のトリップを読み込みました（自分のトリップ）`);
-      } else {
-        console.log('公開トリップ一覧を取得中...');
-        const snapshot = await window.firebaseDb.collection('trips')
-          .where('public', '==', true)
-          .get();
-        myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        console.log(`✓ ${myTrips.length} 件の公開トリップを読み込みました`);
+      : window.firebaseDb.collection('trips')
+          .where('public', '==', true);
+
+    _tripsUnsubscribe = query.onSnapshot(
+      (snapshot) => {
+        myTrips = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+        invalidateOrderedTripsCache(); // myTrips 更新時にキャッシュ無効化
+        tripsCache.data     = myTrips;
+        tripsCache.timestamp = Date.now();
+        tripsCache.userId   = currentUserId;
+
+        if (firstFire) {
+          firstFire = false;
+          const label = window.firebaseAuth?.currentUser ? '自分のトリップ' : '公開トリップ';
+          console.log(`✓ ${myTrips.length} 件の${label}を読み込みました（onSnapshot 初回）`);
+          resolve();
+        } else {
+          // リアルタイム更新: 別タブ／デバイスでの変更が自動反映される
+          console.log(`↻ Firestore 変更を検知 – ${myTrips.length} 件のトリップを更新`);
+          renderTripList();
+          refreshTripSelect();
+          refreshTripParentSelectOptions();
+        }
+      },
+      (err) => {
+        console.error('Firestore onSnapshot エラー:', err);
+        if (err.code === 'unavailable') {
+          console.error('→ ネットワークエラー: インターネット接続を確認してください');
+        } else if (err.code === 'permission-denied') {
+          console.error('→ アクセス権限エラー: Firestore のセキュリティルールを確認してください');
+        }
+        if (firstFire) {
+          firstFire = false;
+          myTrips = [];
+          _tripsUnsubscribe = null;
+          reject(err);
+        }
       }
-
-      // キャッシュを更新
-      tripsCache.data = myTrips;
-      tripsCache.timestamp = now;
-      tripsCache.userId = currentUserId;
-
-      return; // 成功したら終了
-
-    } catch (err) {
-      lastError = err;
-      console.error(`トリップ一覧読み込みエラー (試行 ${attempt + 1}/${maxRetries + 1}):`, err);
-
-      const isNetworkError = err.message?.includes('Failed to fetch') ||
-                            err.message?.includes('NetworkError') ||
-                            err.message?.includes('network') ||
-                            err.code === 'unavailable';
-
-      if (!isNetworkError || attempt === maxRetries) {
-        break;
-      }
-    }
-  }
-
-  // すべてのリトライが失敗した場合
-  console.error('トリップ一覧読み込み最終エラー:', lastError);
-  myTrips = [];
-
-  if (lastError.message?.includes('Failed to fetch') || lastError.message?.includes('NetworkError') || lastError.code === 'unavailable') {
-    console.error('→ ネットワークエラー: インターネット接続を確認してください');
-  } else if (lastError.code === 'permission-denied') {
-    console.error('→ アクセス権限エラー: Firestore のセキュリティルールを確認してください');
-  }
-
-  throw lastError; // エラーを再スローして呼び出し元で処理
+    );
+  });
 }
 
 async function loadTripOrder() {
   if (!window.firebaseDb || !window.firebaseAuth?.currentUser) {
     tripOrder = [];
+    invalidateOrderedTripsCache();
     return;
   }
   try {
@@ -4401,6 +4635,7 @@ async function loadTripOrder() {
     console.warn('トリップ順序読み込みエラー:', err);
     tripOrder = [];
   }
+  invalidateOrderedTripsCache(); // tripOrder 更新時にキャッシュ無効化
 }
 
 async function saveTripOrder(ids) {
@@ -4411,6 +4646,7 @@ async function saveTripOrder(ids) {
       { merge: true }
     );
     tripOrder = [...ids];
+    invalidateOrderedTripsCache(); // tripOrder 保存時にキャッシュ無効化
     // バッチ書き込みで一括更新（N回のAPI呼び出し→1回に削減）
     const batch = window.firebaseDb.batch();
     for (let i = 0; i < ids.length; i++) {
@@ -4426,6 +4662,12 @@ async function saveTripOrder(ids) {
 }
 
 function getOrderedTrips() {
+  // メモ化: myTrips の長さ・先頭 ID・末尾 ID・tripOrder・フィルタが同じなら再計算不要
+  const cacheKey = `${myTrips.length}|${myTrips[0]?.id || ''}|${myTrips[myTrips.length - 1]?.id || ''}|${tripOrder.join(',')}|${tripFilterParentName || ''}`;
+  if (_orderedTripsCache && _orderedTripsCacheKey === cacheKey) {
+    return _orderedTripsCache;
+  }
+
   let trips = myTrips;
   if (tripFilterParentName) {
     const parent = myTrips.find(t => (t.name || '').trim() === tripFilterParentName && t.isParent);
@@ -4435,6 +4677,7 @@ function getOrderedTrips() {
     }
   }
   const byId = new Map(trips.map(t => [t.id, t]));
+  let result;
   if (tripOrder.length > 0) {
     const ordered = [];
     for (const id of tripOrder) {
@@ -4444,18 +4687,23 @@ function getOrderedTrips() {
       }
     }
     const rest = [...byId.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    return [...ordered, ...rest];
+    result = [...ordered, ...rest];
+  } else {
+    const list = [...byId.values()];
+    result = list.sort((a, b) => {
+      const uidA = a.userId || '';
+      const uidB = b.userId || '';
+      if (uidA !== uidB) return uidA.localeCompare(uidB);
+      const oa = a.order ?? Infinity;
+      const ob = b.order ?? Infinity;
+      if (oa !== ob) return oa - ob;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
   }
-  const list = [...byId.values()];
-  return list.sort((a, b) => {
-    const uidA = a.userId || '';
-    const uidB = b.userId || '';
-    if (uidA !== uidB) return uidA.localeCompare(uidB);
-    const oa = a.order ?? Infinity;
-    const ob = b.order ?? Infinity;
-    if (oa !== ob) return oa - ob;
-    return (b.updatedAt || 0) - (a.updatedAt || 0);
-  });
+
+  _orderedTripsCache = result;
+  _orderedTripsCacheKey = cacheKey;
+  return result;
 }
 
 /** 表示用: 親→子の順、子はインデント対象。regionフィルタ（japan/global）を適用 */
@@ -4857,7 +5105,7 @@ async function deleteTripFromList(id) {
       window.history.replaceState({}, '', newUrl.toString());
 
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       updateTripInputs();
       renderTripDetailPane();
     }
@@ -5092,11 +5340,11 @@ async function loadTripById(id) {
       window.history.replaceState({}, '', newUrl.toString());
 
       await updateTripInputs();
-      renderTripList();
+      // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
       refreshTripSelect();
       renderThumbnails();
       await updateMapMarkers();
-      await renderTripDetailPane();
+      await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
       // トリップの全ポイントが収まるように地図を調整
       const photos = getDisplayPhotos();
@@ -5112,8 +5360,6 @@ async function loadTripById(id) {
         }
       }
 
-      // トリップ選択時は写真ポップアップを表示しない（地図のマーカーのみ）
-
       // アニメ画像一覧を表示
       console.log('トリップロード（キャッシュ）:', {
         tripId: id,
@@ -5121,9 +5367,7 @@ async function loadTripById(id) {
         travelogueUrl: currentTrip.travelogueUrl || 'なし'
       });
       renderGeneratedAnimesList();
-
-      // ヘッダー情報を更新（トリップ名など）
-      await updateHeaderInfo();
+      // updateHeaderInfo は renderTripDetailPane() 内で呼ばれるため除去
 
       // モバイルタブを地図に戻す
       if (isMobileView()) {
@@ -5184,12 +5428,12 @@ async function loadTripById(id) {
       currentTrip = tripData;
       currentPhotoIndex = 0;
       await updateTripInputs();
-      renderTripList();
+      // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
       refreshTripSelect();
       renderThumbnails();
       await updateMapMarkers();
       if (map) map.invalidateSize();
-      await renderTripDetailPane();
+      await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
       // トリップの全ポイントが収まるように地図を調整
       const photos = getDisplayPhotos();
@@ -5205,8 +5449,6 @@ async function loadTripById(id) {
         }
       }
 
-      // トリップ選択時は写真ポップアップを表示しない（地図のマーカーのみ）
-
       // アニメ画像一覧を表示
       console.log('トリップロード（Firestore）:', {
         tripId: id,
@@ -5214,9 +5456,7 @@ async function loadTripById(id) {
         travelogueUrl: currentTrip.travelogueUrl || 'なし'
       });
       renderGeneratedAnimesList();
-
-      // ヘッダー情報を更新（トリップ名など）
-      await updateHeaderInfo();
+      // updateHeaderInfo は renderTripDetailPane() 内で呼ばれるため除去
 
       // モバイルタブを地図に戻す
       if (isMobileView()) {
@@ -5879,6 +6119,114 @@ function generateTripContentHash(trip) {
     return Math.random().toString(36).substring(2);
   }
 }
+
+// ─── 旅行記生成ストリーミングヘルパー ────────────────────────────────────────
+/**
+ * SSE / ストリーミングで AI からテキストを受け取り、チャンクごとに onChunk(partialText) を呼ぶ。
+ * 完成したテキスト全体を返す。
+ *
+ * @param {'gemini'|'openai'|'anthropic'} provider
+ * @param {object} cfg  { apiKey }
+ * @param {string} systemPrompt
+ * @param {string} userPrompt
+ * @param {(partial: string) => void} onChunk  チャンク受信コールバック
+ * @returns {Promise<string>}  完成テキスト
+ */
+async function streamTravelogueFromAI(provider, cfg, systemPrompt, userPrompt, onChunk) {
+  /** SSE レスポンスを行単位でパースして各チャンクを処理する共通ユーティリティ */
+  async function consumeSSE(res, extractText) {
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error?.message || `HTTP ${res.status} ${res.statusText}`);
+    }
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer  = '';
+    let content = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // 末尾の不完全行を次ループへ
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const json = line.slice(6).trim();
+        if (!json || json === '[DONE]') continue;
+        try {
+          const chunk = extractText(JSON.parse(json));
+          if (chunk) { content += chunk; onChunk(content); }
+        } catch { /* 不正 JSON は無視 */ }
+      }
+    }
+    return content;
+  }
+
+  if (provider === 'gemini') {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+          generationConfig: { temperature: 0.7 }
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.candidates?.[0]?.content?.parts?.[0]?.text || '');
+  }
+
+  if (provider === 'openai') {
+    const res = await fetch(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfg.apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt   }
+          ],
+          temperature: 0.7,
+          stream: true
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.choices?.[0]?.delta?.content || '');
+  }
+
+  if (provider === 'anthropic') {
+    const res = await fetch(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cfg.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+          stream: true
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.delta?.text || d.content_block?.text || '');
+  }
+
+  throw new Error('未対応のプロバイダーです: ' + provider);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function generateTravelogueWithAI() {
   const startTime = Date.now();
@@ -8382,10 +8730,14 @@ async function updateHeaderInfo() {
   let hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
     (currentTrip.travelogueHistory?.length > 0);
 
+  // 親トリップ用の子トリップリストを 1 回だけ取得（以下で複数回利用）
+  const _childTrips = currentTrip.isParent
+    ? getOrderedTrips().filter(t => t.parentId === currentTrip.id)
+    : [];
+
   // 親トリップの場合は、子トリップに旅行記があるかどうかで判定
   if (currentTrip.isParent) {
-    const children = getOrderedTrips().filter(c => c.parentId === currentTrip.id);
-    hasTravelogue = children.some(c =>
+    hasTravelogue = _childTrips.some(c =>
       (c.travelogueHtml && c.travelogueHtml.trim()) ||
       c.travelogueUrl ||
       (c.travelogueHistory?.length > 0)
@@ -8398,8 +8750,7 @@ async function updateHeaderInfo() {
   let animes = [];
   if (currentTrip.isParent) {
     // 親トリップの場合、全ての子トリップのアニメとスタンプを集める
-    const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
-    childTrips.forEach(child => {
+    _childTrips.forEach(child => {
       const childAnimes = child.generatedAnimes || child.animes || [];
       animes = animes.concat(childAnimes);
     });
@@ -8408,8 +8759,7 @@ async function updateHeaderInfo() {
   }
   let hasStamps = false;
   if (currentTrip.isParent) {
-    const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
-    hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
+    hasStamps = _childTrips.some(child => (child.photos || []).some(p => p.isStamp));
   } else {
     hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
   }
@@ -8573,7 +8923,7 @@ function updateTripSheetTriggerLabel() {
       tripSheetTriggerLabel.style.fontWeight = '600';
     }
 
-    // 前後のボタンの有効/無効を設定
+    // 前後のボタンの有効/無効を設定（getOrderedTrips はメモ化済みなので再取得は低コスト）
     const trips = getOrderedTrips();
     const currentIndex = trips.findIndex(t => t.id === currentTrip.id);
     if (prevBtn) {
@@ -8604,14 +8954,13 @@ function updateMapTripNameOverlay() {
     const tripColor = currentTrip.color || '#e1306c';
     const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
       (currentTrip.travelogueHistory?.length > 0);
-    const trips = getOrderedTrips();
-    let hasStamps = false;
-    if (currentTrip.isParent) {
-      const childTrips = trips.filter(t => t.parentId === currentTrip.id);
-      hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
-    } else {
-      hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
-    }
+    // getOrderedTrips() はメモ化済みのため再取得は O(1) に近い
+    const childTripsForOverlay = currentTrip.isParent
+      ? getOrderedTrips().filter(t => t.parentId === currentTrip.id)
+      : [];
+    const hasStamps = currentTrip.isParent
+      ? childTripsForOverlay.some(child => (child.photos || []).some(p => p.isStamp))
+      : (currentTrip.photos || []).some(p => p.isStamp);
 
     // トリップ名に旅行記ラベルを追加
     const tripNameDisplay = hasTravelogue
@@ -8868,6 +9217,13 @@ function initEventListeners() {
       console.log('認証状態変化: ログアウト状態');
       cachedAiConfig = null;
     }
+    // 認証ユーザーが変わったので onSnapshot リスナーをリセット（loadMyTrips が再設定する）
+    if (_tripsUnsubscribe) {
+      _tripsUnsubscribe();
+      _tripsUnsubscribe = null;
+      tripsCache.data = null;
+      tripsCache.userId = null;
+    }
     updateEditorUI();
     // Firestore読み込みを並列化（パフォーマンス最適化）
     await Promise.all([loadMyTrips(), loadTripOrder()]);
@@ -9010,7 +9366,7 @@ function initEventListeners() {
         tripRef.photos[photoIdx].placeName = originalPlaceName;
       }
       hideMarkerSaveBar();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       setStatus('位置の変更を元に戻しました');
     };
   }
@@ -9436,6 +9792,7 @@ function initEventListeners() {
 }
 
 function init() {
+  purgeExpiredGpxIDB(); // 期限切れGPXキャッシュをバックグラウンドで削除
   initRegionFilterFromUrl();
   applyAppTitle();
   initMap();
@@ -9462,6 +9819,7 @@ function init() {
       const urlParams = new URLSearchParams(window.location.search);
       const tripNameParam = urlParams.get('trip');
       const openTravelogue = urlParams.get('travelogue') === 'true';
+      const isHomeUrl = !tripNameParam; // ?trip= 指定なし = ホームURL
 
       let tripToLoad = null;
 
@@ -9477,7 +9835,30 @@ function init() {
         }
       }
 
-      // URLパラメータで見つからなかった場合は、前回のトリップを開く
+      // ホームURL（?trip= なし）の場合はドメインに応じたデフォルト親トリップを自動選択
+      if (!tripToLoad && isHomeUrl) {
+        const host = window.location.hostname || '';
+        const orderedTrips = getOrderedTrips();
+
+        if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
+          // ohenro.ktrips.net: 「しまなみ街道と四国お遍路旅」を自動選択
+          const defaultParentName = 'しまなみ街道と四国お遍路旅';
+          const defaultTrip = orderedTrips.find(t => t.name === defaultParentName);
+          if (defaultTrip) {
+            console.log(`[${host}] デフォルト親トリップを自動選択: ${defaultParentName}`);
+            tripToLoad = defaultTrip.id;
+          }
+        } else if (/^air\.ktrips\.net$/.test(host)) {
+          // air.ktrips.net: 一番上の親トリップを自動選択
+          const firstParent = orderedTrips.find(t => t.isParent);
+          if (firstParent) {
+            console.log(`[${host}] 先頭の親トリップを自動選択: ${firstParent.name}`);
+            tripToLoad = firstParent.id;
+          }
+        }
+      }
+
+      // ドメインデフォルトも見つからなかった場合は、前回のトリップを開く
       if (!tripToLoad) {
         const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
         if (lastTripId) {

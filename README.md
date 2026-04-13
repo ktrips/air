@@ -4,17 +4,15 @@ GPS付き写真をアップロードすると撮影場所を地図上に表示�
 
 **URL**: https://air.ktrips.net
 
-## 最新アップデート（v1.5.x）
+## 最新アップデート（v1.6.x）
 
-- 📖 **旅行記レイアウト大幅改善**: PC では地図とTOC（目次）を横並び表示。モバイルでは地図・目次をアコーディオン（デフォルト閉じ）
-- 📋 **旅行記目次**: ランドマーク一覧をサマリー直下にコンパクトに配置（折り畳み式）
-- 🎬 **旅行記に動画連携**: 動画URLがあるポイントは写真の代わりに動画サムネイルをメイン表示。クリックで動画を再生
-- 🖼️ **旅行記アニメストリップ**: サマリー直下に詳細アニメを横並び表示、旅の内容が一目でわかる
-- 🗑️ **旅行記履歴の削除**: 右側メニューの旅行記履歴ボタンに ✕ 削除ボタンを追加
-- 🎨 **AIアニメ生成改善**: 表紙タイトルがトリップ名から自動生成（「Day7 淡路島の走り方」→「淡路島の歩き方」）。表紙にルートミニマップを追加
-- 🔄 **アニメ並び替え**: 生成済みアニメを ← → ボタンで順序変更、✕で削除
-- 🗺️ **自動再生中の地図表示強化**: ルート線・ポイントをグロー効果付きで目立たせる
-- ▶️ **写真ナビゲーション改善**: 写真が非表示の状態で「次へ」を押すと最初の写真を表示
+- 🌐 **Mapbox 3D地図**: 自動再生中に Mapbox GL JS による 3D 地図に切り替え。ルート線・ポイントがグロー効果で強調表示される（`config.js` に `MAPBOX_TOKEN` を設定すると有効）
+- 📱 **PWA対応**: Service Worker（`sw.js`）を追加。静的アセットをオフラインキャッシュし、初回以降の表示を高速化
+- 💾 **IndexedDB GPXキャッシュ**: GPX ファイルを IndexedDB に 24 時間キャッシュ。再アクセス時の読み込みを省略
+- 🔑 **config.js でMapboxトークン管理**: `config.js`（`.gitignore` 対象）で `window.MAPBOX_TOKEN` を設定。Git 管理外でトークンを安全に保持
+- ✨ **出来事生成（AI アニメ）**: AI アニメ生成に「出来事生成」スタイルを追加。旅の印象的な出来事をキャラアニメ 5 コマで生成（キャラ画像必須）
+- 📤 **旅行記シェアボタン**: 旅行記を Twitter / Instagram（URL コピー）/ Facebook でシェア可能
+- ⚡ **パフォーマンス最適化**: マップマーカー更新の debounce（300ms）、トリップ一覧の onSnapshot リアルタイム同期＋5分間メモリキャッシュ
 
 ## 機能
 
@@ -54,11 +52,13 @@ GPS付き写真をアップロードすると撮影場所を地図上に表示�
   - ランドマーク一覧をサマリー直下に目次として表示（折り畳み式）
   - 動画URLがあるポイントは動画サムネイルをメイン画像として使用
   - 旅行記履歴を右側メニューから表示・削除可能
+  - **旅行記シェア**: Twitter / Instagram（URL コピー）/ Facebook でシェア可能
 - **AIアニメ生成**: 生成した旅行記を元にスタイルを適用して画像を生成（Gemini画像生成）
   - 表紙タイトルをトリップ名から自動生成（「Day7 淡路島の走り方」→「淡路島の歩き方」）
   - 地球の歩き方表紙風には手描きミニマップを表紙に追加
   - 生成済みアニメを ← → で並び替え、✕ で削除
   - 詳細4ページ（旅行記マンガ形式）と表紙スタイル（地球の歩き方風・少年ジャンプ風・旅行雑誌風）
+  - **出来事生成**: 旅の印象的な出来事をキャラアニメ 5 コマで生成（キャラ画像必須・テキスト入力）
   - サマリー直下に詳細アニメをストリップ表示（旅の内容を一目で把握）
 
 ## セットアップ
@@ -102,30 +102,23 @@ cp firebase-config.example.js firebase-config.js
 2. 「マイアプリ」セクションの構成をコピー
 3. `firebase-config.js` に貼り付け
 
-#### 2-2b. Mapbox アクセストークンを設定
+#### 2-3. Mapboxトークンを設定（オプション・3D地図用）
 
-1. `config.example.js` をコピーして `config.js` を作成
-   ```bash
-   cp config.example.js config.js
-   ```
+```bash
+cp config.example.js config.js
+```
 
-2. [Mapbox](https://account.mapbox.com/) でアカウントを作成（無料）
-3. **Default public token** をコピー（または新規生成）
-4. `config.js` の `MAPBOX_TOKEN` に貼り付け
-   ```javascript
-   export const MAPBOX_TOKEN = 'YOUR_MAPBOX_PUBLIC_TOKEN_HERE';
-   ```
+`config.js` を開き、[Mapbox](https://account.mapbox.com/) のアクセストークンを設定してください。  
+設定しない場合、自動再生中の 3D 地図表示はスキップされます（2D 地図で動作）。
 
-**注意**: `config.js` は `.gitignore` に含まれており、GitHubにはコミットされません。
-
-#### 2-3. ローカルサーバーで起動
+#### 2-4. ローカルサーバーで起動
 
 ```bash
 python3 -m http.server 8080
 # ブラウザで http://localhost:8080
 ```
 
-**注意**: `firebase-config.js` は `.gitignore` に含まれており、GitHubにはコミットされません。
+**注意**: `firebase-config.js` と `config.js` は `.gitignore` に含まれており、GitHubにはコミットされません。
 
 ### 3. 本番デプロイ（GitHub Actions）
 
@@ -143,9 +136,9 @@ python3 -m http.server 8080
 {"apiKey":"YOUR_API_KEY","authDomain":"YOUR_PROJECT.firebaseapp.com","projectId":"YOUR_PROJECT","storageBucket":"YOUR_PROJECT.appspot.com","messagingSenderId":"YOUR_ID","appId":"YOUR_APP_ID","measurementId":"YOUR_MEASUREMENT_ID"}
 ```
 
-**MAPBOX_TOKEN**
-- [Mapbox](https://account.mapbox.com/) → **Tokens** → **Default public token** をコピー（または新規生成）
-- トークンをそのまま貼り付け（例: `pk.eyJ1IjoieW91cndlYnNpdGUiLCJhIjoiY...`）
+**MAPBOX_TOKEN**（オプション・3D地図用）:
+- [Mapbox](https://account.mapbox.com/) のアクセストークンを設定
+- 設定しない場合、自動再生中の 3D 地図表示はスキップ（2D 地図で動作）
 
 #### 3-2. 自動デプロイ
 
@@ -278,7 +271,6 @@ URLパラメータ `?region=japan` または `?region=global` でも指定可能
 
 ### セキュリティ
 - **firebase-config.js**: ローカル開発用。`.gitignore` に含まれており、GitHubにコミットされません
-- **config.js**: Mapbox Public Access Token を含むローカル開発用設定。`.gitignore` に含まれており、GitHubにコミットされません
 - **GitHub Secrets**: 本番環境では GitHub Secrets から自動生成されます
 - **AI API キー**: Firestore の `users` コレクションにユーザーごとに保存。共有環境では使用しないこと
 
