@@ -2,9 +2,10 @@
 
 GPS付き写真をアップロードすると撮影場所を地図上に表示し、スライドショーで楽しめるWebアプリ。Google ログインで Firestore にトリップを保存・共有。
 
-**URL**: https://air.ktrips.net
+**URL**: https://air.ktrips.net  
+**バージョン**: v1.6.5
 
-## 最新アップデート（v1.6.x）
+## 最新アップデート（v1.6.5）
 
 - 🌐 **Mapbox 3D地図**: 自動再生中に Mapbox GL JS による 3D 地図に切り替え。ルート線・ポイントがグロー効果で強調表示される（`config.js` に `MAPBOX_TOKEN` を設定すると有効）
 - 📱 **PWA対応**: Service Worker（`sw.js`）を追加。静的アセットをオフラインキャッシュし、初回以降の表示を高速化
@@ -258,14 +259,15 @@ URLパラメータ `?region=japan` または `?region=global` でも指定可能
 | カテゴリ | 技術 |
 |----------|------|
 | フロントエンド | HTML5, CSS3, JavaScript（ビルド不要） |
-| 地図 | Leaflet 1.9.4, MapLibre GL JS 4.7.1 |
-| タイル | OpenStreetMap, USGS（地形）, Esri（航空写真） |
+| 地図 | Leaflet 1.9.4, MapLibre GL JS 4.7.1, Mapbox GL JS 3.0.1 (3D地図) |
+| タイル | OpenStreetMap, USGS（地形）, Esri（航空写真）, Mapbox |
 | EXIF/GPS | exifr 7.1.3 |
 | 認証・DB | Firebase Auth (Google), Firestore, Storage |
+| キャッシュ | IndexedDB (GPX 24時間キャッシュ), Service Worker (PWA) |
 | ホスティング | Firebase Hosting |
 | CI/CD | GitHub Actions |
 | AI | Google Gemini / OpenAI / Anthropic Claude |
-| 画像生成 | Nano Banana Pro2 |
+| 画像生成 | Nano Banana Pro2 (Stable Diffusion) |
 
 ## 注意事項
 
