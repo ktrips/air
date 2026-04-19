@@ -2853,9 +2853,14 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
 
       const iframe = document.createElement('iframe');
       iframe.src = iframeSrc;
-      iframe.style.cssText = 'width:100%;height:100%;border:none;';
+      // 縦長動画（portrait）はより大きく表示するため、アスペクト比を自動調整
+      iframe.style.cssText = 'width:100%;height:100%;border:none;object-fit:contain;';
       iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
       iframe.allowFullscreen = true;
+      // 動画容器を柔軟に対応（縦長動画を大きく表示）
+      photoWrap.style.display = 'flex';
+      photoWrap.style.alignItems = 'center';
+      photoWrap.style.justifyContent = 'center';
       photoWrap.appendChild(iframe);
 
       // YouTube: postMessage で動画終了を検知
