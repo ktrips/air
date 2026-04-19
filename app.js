@@ -1,7 +1,13 @@
 /* Air — 地図と写真でエア旅行（Firebase + Firestore） */
 
-// 12色: ピンク〜濃い紫のレインボー順（地図マーカー・ルート線の色分け用）
-const TRIP_COLORS = ['#e1306c', '#fd1d1d', '#f56040', '#ffdc80', '#fcaf45', '#f77737', '#c13584', '#833ab4', '#5851db', '#405de6', '#4facfe', '#00f2fe'];
+// Mapbox GL JS アクセストークン
+// config.jsで設定（window.MAPBOX_TOKEN）
+if (window.mapboxgl && window.MAPBOX_TOKEN) {
+  mapboxgl.accessToken = window.MAPBOX_TOKEN;
+}
+
+// 15色: ピンク〜シアンのレインボー順＋緑系（地図マーカー・ルート線の色分け用）
+const TRIP_COLORS = ['#e1306c', '#fd1d1d', '#f56040', '#ffdc80', '#fcaf45', '#f77737', '#17bf63', '#2ecc71', '#1abc9c', '#c13584', '#833ab4', '#5851db', '#405de6', '#4facfe', '#00f2fe'];
 
 let map = null;
 let travelogueMap = null;
@@ -11,14 +17,14 @@ let currentPhotoIndex = 0;
 let markers = [];
 let gpxLayers = [];
 let tripLeaderLayers = [];
+let playbackPulseMarker = null; // 自動再生中の現在ポイントパルスマーカー
 let playTimer = null;
 let playIntervalMs = 3000;
 let playbackPhotos = []; // 再生中の写真配列
-let currentYouTubePlayer = null;
-let youtubeApiReady = false;
 let playbackVideoEndCallback = null;
 let playbackVideoTimer = null; // 動画再生時の30秒タイマー
 let videoSequenceTimer = null; // 動画シーケンス再生時のタイマー
+let currentAutoplayTick = null; // 自動再生のtick関数参照（jumpPlaybackで使用）
 let map3d = null;
 let photoPopup = null;
 let myTrips = [];
@@ -31,6 +37,174 @@ const gpxCache = {};
 const LAST_TRIP_ID_KEY = 'air-last-trip-id';
 let corsWarningShown = false;
 let characterImageData = null; // キャラクター画像（Base64形式・メモリキャッシュ）
+let pendingMarkerDrag = null; // マーカードラッグ中の保留データ { tripRef, photoIdx, originalLat, originalLng, originalPlaceName }
+
+// ─── Phase 1: パフォーマンス最適化ユーティリティ ──────────────────────────
+
+/**
+ * debounce: 連続呼び出しをまとめて 1 回に抑制する
+ * @param {Function} fn  実行したい関数
+ * @param {number}   wait ミリ秒
+ */
+function debounce(fn, wait) {
+  let timer = null;
+  return function (...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), wait);
+  };
+}
+
+// updateMapMarkers の連続呼び出しを 300ms にまとめる（fire-and-forget 用）
+// 重要なパス（await が必要な箇所）では引き続き updateMapMarkers() を直接呼ぶ
+const scheduleMapMarkersUpdate = debounce(() => updateMapMarkers(), 300);
+
+// ─── IndexedDB GPX キャッシュ ─────────────────────────────────────────────
+
+const GPX_IDB_NAME    = 'air-gpx-cache';
+const GPX_IDB_STORE   = 'gpx';
+const GPX_IDB_VERSION = 1;
+const GPX_CACHE_TTL   = 24 * 60 * 60 * 1000; // 24時間
+
+/** IndexedDB を開く（なければ作成） */
+function _openGpxDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(GPX_IDB_NAME, GPX_IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      e.target.result.createObjectStore(GPX_IDB_STORE);
+    };
+    req.onsuccess  = (e) => resolve(e.target.result);
+    req.onerror    = (e) => reject(e.target.error);
+  });
+}
+
+/** IndexedDB から GPX を取得（期限切れの場合は null を返す） */
+async function getGpxFromIDB(url) {
+  try {
+    const db = await _openGpxDB();
+    return new Promise((resolve) => {
+      const tx  = db.transaction(GPX_IDB_STORE, 'readonly');
+      const req = tx.objectStore(GPX_IDB_STORE).get(url);
+      req.onsuccess = (e) => {
+        const cached = e.target.result;
+        if (cached && Date.now() - cached.ts < GPX_CACHE_TTL) {
+          resolve(cached.text);
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null; // IndexedDB 非対応環境はスキップ
+  }
+}
+
+/** GPX テキストを IndexedDB に保存（失敗しても無視） */
+async function saveGpxToIDB(url, text) {
+  try {
+    const db = await _openGpxDB();
+    await new Promise((resolve) => {
+      const tx = db.transaction(GPX_IDB_STORE, 'readwrite');
+      tx.objectStore(GPX_IDB_STORE).put({ text, ts: Date.now() }, url);
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => resolve(); // エラーでも続行
+    });
+  } catch {
+    // 書き込み失敗は無視（メモリキャッシュのみで動作継続）
+  }
+}
+
+/** 期限切れ GPX エントリを IDB から一括削除（起動時に 1 回呼ぶ） */
+async function purgeExpiredGpxIDB() {
+  try {
+    const db = await _openGpxDB();
+    await new Promise((resolve) => {
+      const tx    = db.transaction(GPX_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(GPX_IDB_STORE);
+      const req   = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (!cursor) { resolve(); return; }
+        if (Date.now() - (cursor.value?.ts || 0) >= GPX_CACHE_TTL) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// パフォーマンス最適化: Firestoreクエリのキャッシュ
+const tripsCache = {
+  data: null,
+  timestamp: 0,
+  userId: null
+};
+const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ（onSnapshot が無効な環境向けのフォールバック）
+
+// Firestore onSnapshot リスナーの解除関数（null = 未設定）
+let _tripsUnsubscribe = null;
+
+// getOrderedTrips() メモ化キャッシュ
+let _orderedTripsCache = null;
+let _orderedTripsCacheKey = '';
+/** キャッシュを無効化する（myTrips / tripOrder が変わった時に呼ぶ） */
+function invalidateOrderedTripsCache() {
+  _orderedTripsCache = null;
+  _orderedTripsCacheKey = '';
+}
+
+// ─── アプリ共通トースト通知 ───────────────────────────────────────────────────
+let _toastTimer = null;
+
+/**
+ * 画面中央にトースト通知を表示する（約3秒で自動消去）
+ * @param {string} message 表示メッセージ
+ * @param {number} durationMs 表示時間 (ms)
+ */
+function showToast(message, durationMs = 3000) {
+  const existing = document.getElementById('appToast');
+  if (existing) { existing.remove(); }
+  if (_toastTimer) { clearTimeout(_toastTimer); _toastTimer = null; }
+
+  const el = document.createElement('div');
+  el.id = 'appToast';
+  el.className = 'app-toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+
+  _toastTimer = setTimeout(() => {
+    if (el.parentNode) el.remove();
+    _toastTimer = null;
+  }, durationMs);
+}
+
+/** トリップ未選択 / 写真なし時に共通で表示するメッセージ */
+const MSG_NO_PHOTOS = '📂 メニューからトリップを\n選んでください';
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// パフォーマンス最適化: 画像の遅延読み込み用Observer
+let imageObserver = null;
+if ('IntersectionObserver' in window) {
+  imageObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const img = entry.target;
+        if (img.dataset.src) {
+          img.src = img.dataset.src;
+          img.removeAttribute('data-src');
+          imageObserver.unobserve(img);
+        }
+      }
+    });
+  }, {
+    rootMargin: '50px' // 50px手前から読み込み開始
+  });
+}
 
 /** アニメ生成用のキャラ画像を取得（トリップ保存分またはメモリ） */
 async function getCharacterImageForGeneration() {
@@ -284,20 +458,35 @@ function initMap() {
   // ズームコントロールを右上に配置
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  // 各種マップレイヤーの定義
+  // 各種マップレイヤーの定義（高解像度対応）
   mapLayers = {
     terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap, © OpenTopoMap',
-      maxZoom: 17
+      maxZoom: 17,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }),
     standard: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
-      maxZoom: 19
+      maxZoom: 19,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }),
-    satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      attribution: '© Esri, Maxar, Earthstar Geographics',
-      maxZoom: 18
-    })
+    satellite: L.layerGroup([
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri, Maxar, Earthstar Geographics',
+        maxZoom: 19,
+        detectRetina: true,
+        className: 'map-tiles-crisp'
+      }),
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CartoDB',
+        maxZoom: 19,
+        detectRetina: true,
+        subdomains: 'abcd',
+        pane: 'overlayPane'
+      })
+    ])
   };
 
   // デフォルトレイヤー（地形）を追加
@@ -457,8 +646,13 @@ function initMap3d() {
       resolve();
       return;
     }
-    if (!window.maplibregl) {
-      console.warn('MapLibre GL未読み込み');
+    if (!window.mapboxgl) {
+      console.warn('Mapbox GL JS未読み込み');
+      resolve();
+      return;
+    }
+    if (!mapboxgl.accessToken) {
+      console.warn('Mapbox アクセストークン未設定 - 3D地図なしで自動再生を続行');
       resolve();
       return;
     }
@@ -467,101 +661,173 @@ function initMap3d() {
       resolve();
       return;
     }
-    const center = map.getCenter();
-    map3d = new maplibregl.Map({
-      container: 'map3d',
-      zoom: 17,
-      center: [center.lng, center.lat],
-      pitch: 78,
-      bearing: 0,
-      style: {
-        version: 8,
-        sources: {
-          satellite: {
-            type: 'raster',
-            tiles: [
-              'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-            ],
-            tileSize: 256,
-            attribution: '© Esri, Maxar, Earthstar Geographics',
-            maxzoom: 19
-          },
-          terrainSource: {
-            type: 'raster-dem',
-            url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-            tileSize: 256
-          },
-          hillshadeSource: {
-            type: 'raster-dem',
-            url: 'https://demotiles.maplibre.org/terrain-tiles/tiles.json',
-            tileSize: 256
-          }
-        },
-        layers: [
-          {
-            id: 'satellite',
-            type: 'raster',
-            source: 'satellite',
-            paint: {
-              'raster-saturation': 0.05,
-              'raster-contrast': 0.2,
-              'raster-brightness-min': 0.15,
-              'raster-brightness-max': 1.0,
-              'raster-fade-duration': 300
-            }
-          },
-          {
-            id: 'hills',
-            type: 'hillshade',
-            source: 'hillshadeSource',
-            layout: { visibility: 'visible' },
-            paint: {
-              'hillshade-shadow-color': '#1A1A1A',
-              'hillshade-accent-color': '#F5F5F5',
-              'hillshade-exaggeration': 0.4,
-              'hillshade-illumination-direction': 315,
-              'hillshade-illumination-anchor': 'viewport'
-            }
-          }
-        ],
-        terrain: { source: 'terrainSource', exaggeration: 2.0 },
-        sky: {
-          'sky-color': '#7AB8E0',
-          'horizon-color': '#D8E8F4',
-          'fog-color': '#E8F0F8',
-          'fog-ground-blend': 0.4
-        }
-      },
-      maxZoom: 19,
-      maxPitch: 85
-    });
-    map3d.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
-    map3d.on('load', () => {
-      // 地形の立体感を強調
-      if (map3d.getTerrain()) {
-        map3d.setTerrain({ source: 'terrainSource', exaggeration: 2.0 });
+
+    let resolved = false;
+    const safeResolve = () => {
+      if (!resolved) {
+        resolved = true;
+        resolve();
       }
-      // 霧効果で遠景に深みを追加（航空写真用）
-      map3d.setFog({
-        range: [0.8, 12],
-        color: '#D8E4F0',
-        'horizon-blend': 0.15,
-        'high-color': '#A8C8E8',
-        'space-color': '#7AB8E0',
-        'star-intensity': 0.15
+    };
+
+    // 15秒タイムアウト: 3D地図が読み込めなくても自動再生を続行
+    const timeoutId = setTimeout(() => {
+      console.warn('Mapbox 3D地図の読み込みタイムアウト - 3D地図なしで続行');
+      safeResolve();
+    }, 15000);
+
+    try {
+      const center = map.getCenter();
+
+      // 航空写真モードの場合（Mapbox Satellite Streets スタイル）
+      if (currentMapLayer === 'satellite') {
+        map3d = new mapboxgl.Map({
+          container: 'map3d',
+          zoom: 17,
+          center: [center.lng, center.lat],
+          pitch: 60,
+          bearing: 0,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          style: 'mapbox://styles/mapbox/satellite-streets-v12',
+          maxZoom: 20,
+          maxPitch: 85,
+          minPitch: 0,
+          renderWorldCopies: false,
+          fadeDuration: 0,
+          attributionControl: false,
+          refreshExpiredTiles: false
+        });
+      } else {
+        // ベクトル地図モード（Mapbox標準スタイル + 3D建物表示）
+        map3d = new mapboxgl.Map({
+          container: 'map3d',
+          zoom: 17,
+          center: [center.lng, center.lat],
+          pitch: 60,
+          bearing: 0,
+          antialias: false,
+          preserveDrawingBuffer: false,
+          style: 'mapbox://styles/mapbox/streets-v12',
+          maxZoom: 20,
+          maxPitch: 85,
+          minPitch: 0,
+          renderWorldCopies: false,
+          fadeDuration: 0,
+          attributionControl: false,
+          refreshExpiredTiles: false
+        });
+      }
+      map3d.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), 'top-right');
+
+      map3d.on('error', (e) => {
+        console.error('Mapbox 3D地図エラー:', e);
+        clearTimeout(timeoutId);
+        map3d = null;
+        safeResolve();
       });
-      map3d.resize();
-      resolve();
-    });
+
+      map3d.on('load', () => {
+        clearTimeout(timeoutId);
+        try {
+          // 地形を設定（衛星モードのみ）
+          if (currentMapLayer === 'satellite') {
+            if (map3d.getSource('mapbox-dem')) {
+              map3d.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
+            }
+          }
+
+          // 3D建物を有効化（すべてのモードで）
+          const layers = map3d.getStyle().layers;
+          const buildingLayer = layers.find(layer => layer.id === 'building');
+          if (buildingLayer) {
+            map3d.removeLayer('building');
+            map3d.addLayer({
+              id: 'building-3d',
+              type: 'fill-extrusion',
+              source: buildingLayer.source,
+              'source-layer': buildingLayer['source-layer'] || 'building',
+              minzoom: 15.5,
+              paint: {
+                'fill-extrusion-color': [
+                  'case',
+                  ['==', ['get', 'type'], 'building:part'],
+                  '#d0d0d0',
+                  '#c0c0c0'
+                ],
+                'fill-extrusion-height': [
+                  'interpolate', ['linear'], ['zoom'],
+                  15.5, 0, 16, ['get', 'height']
+                ],
+                'fill-extrusion-base': [
+                  'interpolate', ['linear'], ['zoom'],
+                  15.5, 0, 16, ['get', 'min_height']
+                ],
+                'fill-extrusion-opacity': 0.8
+              }
+            });
+          }
+
+          // 霧効果で遠景に深みを追加
+          map3d.setFog({
+            range: [1.0, 12],
+            color: '#E8F0F8',
+            'horizon-blend': 0.05,
+            'high-color': '#C8DCF0',
+            'space-color': '#A0C0E0',
+            'star-intensity': 0.1
+          });
+
+          map3d.resize();
+        } catch (e) {
+          console.warn('Mapbox 3D地図セットアップエラー:', e);
+        }
+        safeResolve();
+      });
+    } catch (e) {
+      console.error('Mapbox 3D地図初期化エラー:', e);
+      clearTimeout(timeoutId);
+      map3d = null;
+      safeResolve();
+    }
   });
+}
+
+/** 自動再生中の現在ポイントのパルスマーカーだけを軽量に更新 */
+function updatePlaybackPulseMarker() {
+  if (!map) return;
+  if (playbackPulseMarker) {
+    try { map.removeLayer(playbackPulseMarker); } catch (e) { /* ignore */ }
+    playbackPulseMarker = null;
+  }
+  if (!document.body.classList.contains('app-playing')) return;
+  if (!playbackPhotos || !playbackPhotos.length) return;
+  const p = playbackPhotos[currentPhotoIndex];
+  if (!p || p.lat == null || p.lng == null) return;
+  const coord = ensureLatLng(p.lat, p.lng);
+  if (!coord) return;
+  const trip = currentTrip;
+  const color = trip?.color || '#e1306c';
+  const pulseHtml = `<div class="playback-pulse-marker" style="--pulse-color:${color}"></div>`;
+  playbackPulseMarker = L.marker([coord.lat, coord.lng], {
+    icon: L.divIcon({
+      className: '',
+      html: pulseHtml,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20]
+    }),
+    zIndexOffset: 2000
+  }).addTo(map);
 }
 
 async function add3dMapRouteAndMarkers() {
   if (!map3d || !currentTrip) return;
 
   // 既存のレイヤーとソースをクリア
+  if (map3d.getLayer('route-glow')) map3d.removeLayer('route-glow');
   if (map3d.getLayer('route')) map3d.removeLayer('route');
   if (map3d.getSource('route')) map3d.removeSource('route');
+  if (map3d.getLayer('points-glow')) map3d.removeLayer('points-glow');
   if (map3d.getLayer('points')) map3d.removeLayer('points');
   if (map3d.getSource('points')) map3d.removeSource('points');
 
@@ -600,14 +866,26 @@ async function add3dMapRouteAndMarkers() {
       }
     });
 
+    // グロー（発光）レイヤー — ルートを目立たせる
+    map3d.addLayer({
+      id: 'route-glow',
+      type: 'line',
+      source: 'route',
+      paint: {
+        'line-color': color,
+        'line-width': 22,
+        'line-opacity': 0.25,
+        'line-blur': 6
+      }
+    });
     map3d.addLayer({
       id: 'route',
       type: 'line',
       source: 'route',
       paint: {
         'line-color': color,
-        'line-width': 7,
-        'line-opacity': 0.8
+        'line-width': 10,
+        'line-opacity': 1.0
       }
     });
   }
@@ -637,16 +915,28 @@ async function add3dMapRouteAndMarkers() {
       }
     });
 
+    // グロー（発光）レイヤー — ポイントを目立たせる
+    map3d.addLayer({
+      id: 'points-glow',
+      type: 'circle',
+      source: 'points',
+      paint: {
+        'circle-radius': 22,
+        'circle-color': color,
+        'circle-opacity': 0.2,
+        'circle-blur': 1
+      }
+    });
     map3d.addLayer({
       id: 'points',
       type: 'circle',
       source: 'points',
       paint: {
-        'circle-radius': 6,
+        'circle-radius': 11,
         'circle-color': color,
         'circle-stroke-color': '#ffffff',
-        'circle-stroke-width': 2,
-        'circle-opacity': 0.9
+        'circle-stroke-width': 3,
+        'circle-opacity': 1.0
       }
     });
   }
@@ -898,7 +1188,12 @@ async function uploadGpxToStorage(tripId, gpxText) {
 }
 
 async function uploadTravelogueToStorage(tripId, htmlContent) {
-  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
+  if (!tripId) {
+    throw new Error('tripIdが指定されていません');
+  }
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) {
+    throw new Error('Storage not ready');
+  }
   const path = `trips/${tripId}/travelogue/content.html`;
   const ref = window.firebaseStorage.ref(path);
   const blob = new Blob([htmlContent], { type: 'text/html; charset=utf-8' });
@@ -908,7 +1203,12 @@ async function uploadTravelogueToStorage(tripId, htmlContent) {
 }
 
 async function uploadAnimeImageToStorage(tripId, imageDataUrl, filePrefix = 'anime') {
-  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
+  if (!tripId) {
+    throw new Error('tripIdが指定されていません');
+  }
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) {
+    throw new Error('Storage not ready');
+  }
 
   // Data URLからBase64データとMIMEタイプを抽出
   const matches = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
@@ -1015,7 +1315,18 @@ async function persistGpxToTrip(tripId, gpxDataUrl, gpxFileName) {
 }
 
 async function fetchGpxFromUrl(url) {
+  // 1. メモリキャッシュ（最速）
   if (gpxCache[url]) return gpxCache[url];
+
+  // 2. IndexedDB キャッシュ（ページリロード後も有効・24時間）
+  const idbCached = await getGpxFromIDB(url);
+  if (idbCached) {
+    gpxCache[url] = idbCached; // メモリにも載せる
+    console.log('✓ GPX IndexedDBキャッシュから取得:', url.slice(-40));
+    return idbCached;
+  }
+
+  // 3. ネットワーク取得 → 両キャッシュに保存
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -1024,6 +1335,7 @@ async function fetchGpxFromUrl(url) {
     }
     const text = await res.text();
     gpxCache[url] = text;
+    saveGpxToIDB(url, text); // 非同期・fire-and-forget（失敗しても無視）
     return text;
   } catch (err) {
     console.error('GPX 取得エラー:', url, err);
@@ -1260,6 +1572,24 @@ async function handleFiles(files, options = {}) {
         alert(`「${file.name}」のアップロードに失敗しました: ${msg}${hint}`);
       }
     }
+
+    // GPS地名からトリップ名・説明を自動セット（どちらも未入力の場合）
+    const nameEl = document.getElementById('tripNameInput');
+    const descEl = document.getElementById('tripDescInput');
+    if (nameEl && descEl && added > 0) {
+      const firstGeo = currentTrip.photos.find(p => p.placeName);
+      if (firstGeo?.placeName) {
+        if (!nameEl.value.trim()) {
+          nameEl.value = firstGeo.placeName;
+          currentTrip.name = firstGeo.placeName;
+        }
+        if (!descEl.value.trim()) {
+          descEl.value = firstGeo.placeName;
+          currentTrip.description = firstGeo.placeName;
+        }
+      }
+    }
+
     renderThumbnails();
     await updateMapMarkers();
     await updateTripInputs();
@@ -1328,6 +1658,97 @@ function syncFormToCurrentTrip() {
   if (colorEl) currentTrip.color = colorEl.value || TRIP_COLORS[0];
 }
 
+function updateTripMenuThumbnail() {
+  const wrap = document.getElementById('tripThumbnailWrap');
+  const container = document.getElementById('tripMenuThumbnails');
+  const gpsBtn = document.getElementById('tripMenuGpsBtn');
+  if (!wrap || !container || !gpsBtn) return;
+
+  // ログイン中かつトリップがあり、写真がある場合のみ表示
+  const isEditor = document.body.classList.contains('editor');
+  const photos = isEditor && currentTrip ? (currentTrip.photos || []).filter(p => p.url) : [];
+
+  if (!isEditor || photos.length === 0) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  wrap.style.display = '';
+  container.innerHTML = photos
+    .map((photo, idx) => `
+      <div class="trip-menu-thumbnail-item" draggable="true" data-index="${idx}">
+        <img src="${escapeHtml(photo.url)}" alt="写真${idx + 1}" title="${escapeHtml(photo.name || photo.placeName || '写真')}">
+        <button type="button" class="trip-menu-thumbnail-delete" title="削除">✕</button>
+      </div>
+    `)
+    .join('');
+
+  // GPS button state sync
+  const isActive = typeof addingGpsPointMode !== 'undefined' && addingGpsPointMode;
+  gpsBtn.classList.toggle('active', isActive);
+  gpsBtn.onclick = () => toggleAddGpsPointMode();
+
+  // ドラッグ&ドロップで並び替え
+  let draggedIndex = null;
+  container.querySelectorAll('.trip-menu-thumbnail-item').forEach((item, idx) => {
+    item.ondragstart = (e) => {
+      draggedIndex = idx;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    };
+    item.ondragend = () => {
+      item.classList.remove('dragging');
+      container.querySelectorAll('.trip-menu-thumbnail-item').forEach(i => i.classList.remove('drag-over'));
+    };
+    item.ondragover = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const overIdx = parseInt(item.dataset.index);
+      if (draggedIndex !== null && draggedIndex !== overIdx) {
+        item.classList.add('drag-over');
+      }
+    };
+    item.ondragleave = () => {
+      item.classList.remove('drag-over');
+    };
+    item.ondrop = (e) => {
+      e.preventDefault();
+      if (draggedIndex !== null && draggedIndex !== idx) {
+        const draggedPhoto = currentTrip.photos[draggedIndex];
+        currentTrip.photos.splice(draggedIndex, 1);
+        currentTrip.photos.splice(idx, 0, draggedPhoto);
+        saveTrip({ silent: true });
+        updateTripMenuThumbnail();
+      }
+    };
+  });
+
+  // 写真クリックで該当写真を表示
+  container.querySelectorAll('img').forEach(img => {
+    img.onclick = () => {
+      const item = img.closest('.trip-menu-thumbnail-item');
+      const idx = parseInt(item.dataset.index);
+      showPhotoAtIndex(idx, true);
+    };
+  });
+
+  // 削除ボタンイベント
+  container.querySelectorAll('.trip-menu-thumbnail-delete').forEach((deleteBtn, btnIdx) => {
+    deleteBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (confirm('この写真を削除しますか？')) {
+        const item = deleteBtn.closest('.trip-menu-thumbnail-item');
+        const idx = parseInt(item.dataset.index);
+        currentTrip.photos.splice(idx, 1);
+        saveTrip({ silent: true });
+        updateTripMenuThumbnail();
+        scheduleMapMarkersUpdate();
+        renderThumbnails();
+      }
+    };
+  });
+}
+
 async function updateTripInputs() {
   await updateHeaderInfo();
   const gpxZone = document.getElementById('gpxZone');
@@ -1367,6 +1788,7 @@ async function updateTripInputs() {
   }
   updateCharacterPreview();
   updateViewerSection();
+  updateTripMenuThumbnail();
 }
 
 function updateCharacterPreview() {
@@ -1523,7 +1945,7 @@ function updateViewerSection() {
       }
     }
 
-    // アニメ一覧（generatedAnimes または animes）
+    // アニメ一覧（全子トリップのアニメをまとめて表示）
     const animeChildren = childTrips.filter(c => {
       const animes = c.generatedAnimes || c.animes || [];
       return animes.length > 0;
@@ -1531,32 +1953,23 @@ function updateViewerSection() {
     if (childAnimesWrap && childAnimesEl) {
       if (animeChildren.length > 0) {
         childAnimesEl.innerHTML = '';
-        animeChildren.forEach(c => {
-          const animes = c.generatedAnimes || c.animes || [];
-          const item = document.createElement('div');
-          item.className = 'viewer-child-anime-row';
-          const label = document.createElement('span');
-          label.className = 'viewer-child-anime-label';
-          label.textContent = c.name || '（無題）';
-          label.onclick = async () => { await loadTripById(c.id); };
-          item.appendChild(label);
-          const thumbs = document.createElement('div');
-          thumbs.className = 'viewer-child-anime-thumbs';
-          animes.forEach((anime, idx) => {
-            const img = document.createElement('img');
-            img.src = anime.url;
-            img.alt = anime.style || '';
-            img.title = c.name ? `${c.name} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
-            img.onclick = (e) => {
-              e.stopPropagation();
-              const list = c.generatedAnimes || c.animes || [];
-              showAnimeImageViewer(list, c.name);
-            };
-            thumbs.appendChild(img);
-          });
-          item.appendChild(thumbs);
-          childAnimesEl.appendChild(item);
+        const allAnimes = animeChildren.flatMap(c =>
+          (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name }))
+        );
+        const thumbs = document.createElement('div');
+        thumbs.className = 'viewer-child-anime-thumbs';
+        allAnimes.forEach((anime) => {
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = anime.style || '';
+          img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+          img.onclick = (e) => {
+            e.stopPropagation();
+            showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), currentTrip?.name || '');
+          };
+          thumbs.appendChild(img);
         });
+        childAnimesEl.appendChild(thumbs);
         childAnimesWrap.style.display = '';
       } else {
         childAnimesWrap.style.display = 'none';
@@ -1677,7 +2090,7 @@ function reorderThumbnail(fromIndex, toIndex) {
   currentTrip.photos = photos;
   currentPhotoIndex = toIndex;
   renderThumbnails();
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   setStatus('表示順を変更しました。保存してください');
 }
 
@@ -1694,7 +2107,7 @@ async function deleteThumbnail(index) {
   currentTrip.photos.splice(index, 1);
   currentPhotoIndex = Math.min(index, Math.max(0, currentTrip.photos.length - 1));
   renderThumbnails();
-  updateMapMarkers();
+  scheduleMapMarkersUpdate();
   renderTripDetailPane();
   setStatus('写真を削除しました。保存してください');
 }
@@ -1759,12 +2172,49 @@ function renderThumbnails() {
         };
       }
       if (p.url) {
-        // 写真がある場合
+        // 写真がある場合（遅延読み込み対応）
         const img = document.createElement('img');
-        img.src = p.url;
+        if (imageObserver && i > 5) {
+          // パフォーマンス最適化: 最初の6枚以降は遅延読み込み
+          img.dataset.src = p.url;
+          img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3C/svg%3E';
+          imageObserver.observe(img);
+        } else {
+          img.src = p.url;
+        }
         img.alt = p.name;
         img.onclick = () => showPhotoAtIndex(i);
         item.appendChild(img);
+      } else if (p.videoUrl) {
+        // 写真はないが動画URLがある場合（遅延読み込み対応）
+        const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
+        if (videoThumbnailUrl) {
+          const img = document.createElement('img');
+          if (imageObserver && i > 5) {
+            // パフォーマンス最適化: 最初の6枚以降は遅延読み込み
+            img.dataset.src = videoThumbnailUrl;
+            img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3C/svg%3E';
+            imageObserver.observe(img);
+          } else {
+            img.src = videoThumbnailUrl;
+          }
+          img.alt = p.name || '動画';
+          img.onclick = () => showPhotoAtIndex(i);
+          // 動画アイコンを追加
+          const videoIcon = document.createElement('div');
+          videoIcon.className = 'thumbnail-video-icon';
+          videoIcon.innerHTML = '▶️';
+          item.appendChild(img);
+          item.appendChild(videoIcon);
+        } else {
+          // 動画URLがあるがサムネイルが取得できない場合
+          const placeholder = document.createElement('div');
+          placeholder.className = 'thumbnail-video-placeholder';
+          placeholder.innerHTML = '🎬';
+          placeholder.title = '動画ポイント';
+          placeholder.onclick = () => showPhotoAtIndex(i);
+          item.appendChild(placeholder);
+        }
       } else {
         // 写真なしのGPSポイント
         const placeholder = document.createElement('div');
@@ -1902,7 +2352,23 @@ async function updateMapMarkers() {
     }
     // GPXルートを地図に表示（表示範囲の計算には含めない）
     if (pts.length > 1) {
-      const layer = L.polyline(pts, { color, weight: 4, opacity: 0.8, smoothFactor: 1.5 }).addTo(map);
+      const isPlayback = document.body.classList.contains('app-playing');
+      const routeWeight = isPlayback ? 7 : 4;
+      const routeOpacity = isPlayback ? 1.0 : 0.8;
+      if (isPlayback) {
+        // 自動再生中: 外側グロー + 内側ルートの二重線で目立たせる
+        const glowLayer = L.polyline(pts, {
+          color, weight: 18, opacity: 0.2, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        }).addTo(map);
+        gpxLayers.push(glowLayer);
+        const shadowLayer = L.polyline(pts, {
+          color: '#ffffff', weight: 10, opacity: 0.5, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        }).addTo(map);
+        gpxLayers.push(shadowLayer);
+      }
+      const layer = L.polyline(pts, {
+        color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+      }).addTo(map);
       gpxLayers.push(layer);
       // allLatLngsには追加しない（写真マーカーのみで範囲を決定）
     }
@@ -2016,13 +2482,15 @@ async function updateMapMarkers() {
           });
         }
         if (isEditor() && m.dragging) {
-          m.on('dragend', async () => {
+          m.on('dragend', () => {
             const pos = m.getLatLng();
             if (tripRef.photos?.[photoIdx]) {
+              const originalLat = tripRef.photos[photoIdx].lat;
+              const originalLng = tripRef.photos[photoIdx].lng;
+              const originalPlaceName = tripRef.photos[photoIdx].placeName;
               tripRef.photos[photoIdx].lat = parseFloat(pos.lat.toFixed(6));
               tripRef.photos[photoIdx].lng = parseFloat(pos.lng.toFixed(6));
-              tripRef.photos[photoIdx].placeName = await reverseGeocode(pos.lat, pos.lng);
-              setStatus('位置を更新しました。保存してください');
+              showMarkerSaveBar({ tripRef, photoIdx, originalLat, originalLng, originalPlaceName });
               updateHeaderInfo();
             }
           });
@@ -2050,6 +2518,7 @@ async function updateMapMarkers() {
         markers.push(marker);
         allLatLngs.push(latLng);
       });
+
     }
 
     // 親トリップ表示時: 各子トリップの旅行記・動画ボタンをGPSから少し離し、引き出し線で表示（デスクトップのみ）
@@ -2136,7 +2605,6 @@ async function updateMapMarkers() {
                 ${hasTravelogue ? '<button type="button" class="map-trip-action-btn map-trip-action-travelogue" title="旅行記"><span class="map-trip-action-label">旅行記</span>📖</button>' : ''}
                 ${hasVideo ? '<button type="button" class="map-trip-action-btn map-trip-action-video" title="動画">🎬</button>' : ''}
               </div>
-              ${hasAnime ? '<div class="map-trip-action-btns-right"><button type="button" class="map-trip-action-btn map-trip-action-anime" title="アニメ">🎨</button></div>' : ''}
             </div>`;
           const leaderLine = L.polyline([[anchorLat, anchorLng], [cardLat, cardLng]], {
             color: color,
@@ -2163,7 +2631,7 @@ async function updateMapMarkers() {
       }
     }
   }
-  if (allLatLngs.length > 0) {
+  if (allLatLngs.length > 0 && !document.body.classList.contains('app-playing')) {
     if (allLatLngs.length === 1) {
       map.setView(allLatLngs[0], 15);
     } else {
@@ -2171,6 +2639,9 @@ async function updateMapMarkers() {
       map.fitBounds(allLatLngs, { padding: [60, 60] });
     }
   }
+
+  // 自動再生中のパルスマーカーを更新
+  updatePlaybackPulseMarker();
 }
 
 function parseGpxPoints(xmlStr) {
@@ -2330,16 +2801,6 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
   const card = document.getElementById('playbackPhotoCard');
   if (!overlay || !card) return;
 
-  // 既存のYouTubeプレイヤーを破棄
-  if (currentYouTubePlayer) {
-    try {
-      currentYouTubePlayer.destroy();
-    } catch (e) {
-      console.warn('YouTube Player破棄エラー:', e);
-    }
-    currentYouTubePlayer = null;
-  }
-
   // 動画URLがある場合は動画優先
   const hasVideo = p.videoUrl && p.videoUrl.trim();
   const contentKey = hasVideo ? p.videoUrl : p.url;
@@ -2363,101 +2824,111 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
   photoWrap.innerHTML = '';
 
   if (hasVideo) {
-    // 動画の場合は下半分表示モードに
+    // 動画の縦横を判定してクラスを設定
+    const orientation = await detectVideoOrientation(p.videoUrl);
     overlay.classList.add('playback-video-fullscreen');
     card.classList.add('playback-video-card');
-
-    // 戻るボタンを追加
-    let backBtn = card.querySelector('.playback-video-back-btn');
-    if (!backBtn) {
-      backBtn = document.createElement('button');
-      backBtn.type = 'button';
-      backBtn.className = 'playback-video-back-btn';
-      backBtn.textContent = '← 戻る';
-      backBtn.title = '動画をスキップして次へ';
-      card.appendChild(backBtn);
-    }
-    backBtn.style.display = '';
-    playbackVideoEndCallback = onVideoEnd || null;
-    backBtn.onclick = () => {
-      if (onVideoEnd) {
-        playbackVideoEndCallback = null;
-        // 30秒タイマーをクリア
-        if (playbackVideoTimer) {
-          clearTimeout(playbackVideoTimer);
-          playbackVideoTimer = null;
-        }
-        // YouTubeプレイヤーを破棄
-        if (currentYouTubePlayer) {
-          try {
-            currentYouTubePlayer.destroy();
-          } catch (e) {
-            console.warn('YouTube Player破棄エラー:', e);
-          }
-          currentYouTubePlayer = null;
-        }
-        // 次へ進むコールバックを即座に呼ぶ
-        onVideoEnd();
-      }
-    };
-
-    // YouTube動画の場合はYouTube IFrame APIを使用
-    const youtubeId = getYouTubeVideoId(p.videoUrl);
-    if (youtubeId) {
-      // YouTube IFrame APIをロード
-      await loadYouTubeIFrameAPI();
-
-      // プレイヤー用のdivを作成
-      const playerDiv = document.createElement('div');
-      playerDiv.id = 'playbackYoutubePlayer';
-      playerDiv.style.cssText = 'width:100%;height:100%;';
-      photoWrap.appendChild(playerDiv);
-
-      // YouTube Playerを作成
-      currentYouTubePlayer = new YT.Player('playbackYoutubePlayer', {
-        videoId: youtubeId,
-        width: '100%',
-        height: '100%',
-        playerVars: {
-          autoplay: 1,
-          mute: 1,
-          controls: 1,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1
-        }
-      });
-
-      // 30秒後に次へ進む
-      if (onVideoEnd) {
-        playbackVideoTimer = setTimeout(onVideoEnd, 30000);
-      }
+    if (orientation === 'portrait') {
+      overlay.classList.add('playback-video-portrait');
     } else {
-      // Vimeoやその他の動画
-      const embedUrl = getVideoEmbedUrl(p.videoUrl);
-      if (embedUrl) {
-        const iframe = document.createElement('iframe');
-        iframe.src = embedUrl + '?autoplay=1&muted=1';
-        iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:8px;';
-        iframe.allow = 'autoplay; encrypted-media';
-        iframe.allowFullscreen = true;
-        photoWrap.appendChild(iframe);
+      overlay.classList.remove('playback-video-portrait');
+    }
 
-        // 30秒後に次へ進む
-        if (onVideoEnd) {
-          playbackVideoTimer = setTimeout(onVideoEnd, 30000);
-        }
+    playbackVideoEndCallback = onVideoEnd || null;
+
+    // YouTube/Vimeo/その他の動画をiframeで埋め込み（autoplay + muted で自動再生を確保）
+    const youtubeId = getYouTubeVideoId(p.videoUrl);
+    const embedUrl = youtubeId
+      ? `https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+      : getVideoEmbedUrl(p.videoUrl);
+
+    if (embedUrl) {
+      const isYouTube = !!youtubeId;
+      const isVimeo = embedUrl.includes('vimeo.com');
+      let iframeSrc = embedUrl;
+      if (!isYouTube) {
+        iframeSrc += (iframeSrc.includes('?') ? '&' : '?') + 'autoplay=1&muted=1';
+        if (isVimeo) iframeSrc += '&api=1';
+      }
+
+      const iframe = document.createElement('iframe');
+      iframe.src = iframeSrc;
+      // 縦長動画（portrait）はより大きく表示するため、アスペクト比を自動調整
+      iframe.style.cssText = 'width:100%;height:100%;border:none;object-fit:contain;';
+      iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
+      iframe.allowFullscreen = true;
+      // 動画容器を柔軟に対応（縦長動画を大きく表示）
+      photoWrap.style.display = 'flex';
+      photoWrap.style.alignItems = 'center';
+      photoWrap.style.justifyContent = 'center';
+      photoWrap.appendChild(iframe);
+
+      // YouTube: postMessage で動画終了を検知
+      if (isYouTube && onVideoEnd) {
+        const ytHandler = (e) => {
+          if (!e.origin.includes('youtube.com')) return;
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data?.event === 'onStateChange' && data?.info === 0) {
+              console.log('YouTube動画終了を検知: 次へ進みます');
+              window.removeEventListener('message', ytHandler);
+              if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+              if (playbackVideoEndCallback) {
+                const cb = playbackVideoEndCallback;
+                playbackVideoEndCallback = null;
+                cb();
+              }
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', ytHandler);
+        iframe.onload = () => {
+          try {
+            iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*');
+          } catch (_) {}
+        };
+      }
+
+      // Vimeo: postMessage で終了検知
+      if (isVimeo && onVideoEnd) {
+        const vimeoHandler = (e) => {
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data && data.event === 'finish') {
+              console.log('Vimeo動画終了を検知: 次へ進みます');
+              window.removeEventListener('message', vimeoHandler);
+              if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+              if (playbackVideoEndCallback) {
+                const cb = playbackVideoEndCallback;
+                playbackVideoEndCallback = null;
+                cb();
+              }
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', vimeoHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*'); } catch (_) {}
+        };
+      }
+
+      // フォールバック: 動画終了イベントが取れない場合に備えて60秒後に次へ
+      if (onVideoEnd) {
+        playbackVideoTimer = setTimeout(() => {
+          console.log('動画フォールバックタイマー: 次へ進みます');
+          if (playbackVideoEndCallback) {
+            const cb = playbackVideoEndCallback;
+            playbackVideoEndCallback = null;
+            cb();
+          }
+        }, 60000);
       }
     }
   } else {
     playbackVideoEndCallback = null;
-    // 写真の場合は戻るボタンを非表示
-    const backBtn = card.querySelector('.playback-video-back-btn');
-    if (backBtn) {
-      backBtn.style.display = 'none';
-    }
     // 写真の場合は通常表示モードに
     overlay.classList.remove('playback-video-fullscreen');
+    overlay.classList.remove('playback-video-portrait');
     card.classList.remove('playback-video-card');
     // 写真を表示
     const img = document.createElement('img');
@@ -2506,7 +2977,36 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
 function hidePlaybackPhotoOverlay() {
   const overlay = document.getElementById('playbackPhotoOverlay');
   if (overlay) {
+    // 動画のiframeを明示的に削除して完全に停止
+    const videoWrap = overlay.querySelector('.playback-photo-wrap');
+    if (videoWrap) {
+      const iframe = videoWrap.querySelector('iframe');
+      if (iframe) {
+        // iframeのsrcを空にして動画を停止
+        iframe.src = '';
+        // iframeを削除
+        iframe.remove();
+      }
+    }
+
+    // video-fullscreenクラスも削除
+    overlay.classList.remove('playback-video-fullscreen');
+    overlay.classList.remove('playback-video-portrait');
+
+    // カードのvideo-cardクラスも削除
+    const card = document.getElementById('playbackPhotoCard');
+    if (card) {
+      card.classList.remove('playback-video-card');
+    }
+
+    // オーバーレイを非表示
     overlay.classList.add('hidden');
+  }
+
+  // パルスマーカーを削除
+  if (playbackPulseMarker && map) {
+    try { map.removeLayer(playbackPulseMarker); } catch (e) { /* ignore */ }
+    playbackPulseMarker = null;
   }
 }
 
@@ -2516,12 +3016,39 @@ function showPhotoViewMode(p, lat, lng) {
   const photoWrap = document.createElement('div');
   photoWrap.className = 'photo-popup-photo-wrap';
   const img = document.createElement('img');
-  img.src = p.url || '';
-  img.alt = p.name || '';
-  img.title = 'クリックでオリジナルを表示';
-  img.loading = 'eager';
-  img.decoding = 'async';
-  img.onclick = () => { if (p.url) window.open(p.url, '_blank', 'noopener'); };
+
+  // 写真がある場合は写真を表示、なければ動画サムネイルを表示
+  if (p.url) {
+    img.src = p.url;
+    img.alt = p.name || '';
+    img.title = 'クリックでオリジナルを表示';
+    img.loading = 'eager';
+    img.decoding = 'async';
+    img.onclick = () => window.open(p.url, '_blank', 'noopener');
+  } else if (p.videoUrl) {
+    const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
+    if (videoThumbnailUrl) {
+      img.src = videoThumbnailUrl;
+      img.alt = p.name || '動画';
+      img.title = 'クリックで動画を表示';
+      img.loading = 'eager';
+      img.decoding = 'async';
+      img.onclick = () => window.open(p.videoUrl, '_blank', 'noopener');
+      // 動画アイコンを追加
+      const videoIcon = document.createElement('div');
+      videoIcon.className = 'photo-popup-video-icon';
+      videoIcon.innerHTML = '▶️';
+      videoIcon.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:48px;opacity:0.9;pointer-events:none;';
+      photoWrap.appendChild(videoIcon);
+    } else {
+      img.src = '';
+      img.alt = '動画';
+    }
+  } else {
+    img.src = '';
+    img.alt = p.name || '';
+  }
+
   photoWrap.appendChild(img);
   if (p.landmarkNo || p.name) {
     const overlayTop = document.createElement('div');
@@ -2572,7 +3099,13 @@ function showPhotoViewMode(p, lat, lng) {
         map.removeLayer(photoPopup);
         photoPopup = null;
       }
-      showVideoOverlay(p.videoUrl);
+      // 現在のポイントから次の動画を収集して連続再生
+      const { urls, names } = collectVideoUrlsFromCurrentPoint();
+      if (urls.length > 0) {
+        playVideoSequenceWithNames(urls, names);
+      } else {
+        showVideoOverlay(p.videoUrl);
+      }
     };
     div.appendChild(videoBtn);
   }
@@ -2593,10 +3126,32 @@ function showPhotoViewMode(p, lat, lng) {
     };
     div.appendChild(editBtn);
   }
-  photoPopup = L.popup({ maxWidth: 840, className: 'photo-popup-container' })
+  photoPopup = L.popup({
+      maxWidth: 1000,
+      minWidth: 0,
+      className: 'photo-popup-container',
+      autoPan: true,
+      autoPanPaddingTopLeft: [20, 20],
+      autoPanPaddingBottomRight: [20, 20],
+      keepInView: true,
+      offset: [0, -30]
+    })
     .setLatLng([lat, lng])
     .setContent(div)
     .openOn(map);
+
+  // ポップアップが開いた後、写真全体が見えるように地図を調整
+  setTimeout(() => {
+    const popupElement = photoPopup.getElement();
+    if (popupElement) {
+      const popupHeight = popupElement.offsetHeight;
+      const point = map.latLngToContainerPoint([lat, lng]);
+      const targetX = point.x;
+      const targetY = point.y - (popupHeight / 2) + 20;
+      const targetLatLng = map.containerPointToLatLng([targetX, targetY]);
+      map.panTo(targetLatLng, { animate: true, duration: 0.3 });
+    }
+  }, 50);
 }
 
 function showPhotoPopupEditMode(lat, lng) {
@@ -2613,10 +3168,35 @@ function showPhotoPopupEditMode(lat, lng) {
   const photoWrap = document.createElement('div');
   photoWrap.className = 'photo-popup-photo-wrap';
   const img = document.createElement('img');
-  img.src = p.url || '';
-  img.alt = p.name || '';
-  img.title = 'クリックでオリジナルを表示';
-  if (p.url) img.onclick = () => window.open(p.url, '_blank', 'noopener');
+
+  // 写真がある場合は写真を表示、なければ動画サムネイルを表示
+  if (p.url) {
+    img.src = p.url;
+    img.alt = p.name || '';
+    img.title = 'クリックでオリジナルを表示';
+    img.onclick = () => window.open(p.url, '_blank', 'noopener');
+  } else if (p.videoUrl) {
+    const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
+    if (videoThumbnailUrl) {
+      img.src = videoThumbnailUrl;
+      img.alt = p.name || '動画';
+      img.title = 'クリックで動画を表示';
+      img.onclick = () => window.open(p.videoUrl, '_blank', 'noopener');
+      // 動画アイコンを追加
+      const videoIcon = document.createElement('div');
+      videoIcon.className = 'photo-popup-video-icon';
+      videoIcon.innerHTML = '▶️';
+      videoIcon.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:48px;opacity:0.9;pointer-events:none;';
+      photoWrap.appendChild(videoIcon);
+    } else {
+      img.src = '';
+      img.alt = '動画';
+    }
+  } else {
+    img.src = '';
+    img.alt = p.name || '';
+  }
+
   photoWrap.appendChild(img);
   if (p.landmarkNo || p.name) {
     const overlayTop = document.createElement('div');
@@ -2866,7 +3446,7 @@ function showPhotoPopupEditMode(lat, lng) {
       try {
         await saveTrip({ silent: true });
         renderThumbnails();
-        updateMapMarkers();
+        scheduleMapMarkersUpdate();
         if (closeAfter && photoPopup) {
           map.removeLayer(photoPopup);
           photoPopup = null;
@@ -2916,18 +3496,28 @@ function showPhotoPopupEditMode(lat, lng) {
       // 元のポイントをそのままディープコピー（フォームの内容は反映しない）
       const duplicatedPhoto = JSON.parse(JSON.stringify(photos[idx]));
 
-      // 複製したポイントをスタンプに設定
-      duplicatedPhoto.isStamp = true;
+      // ランドマークとスタンプのチェックを外す
+      duplicatedPhoto.isLandmark = false;
+      duplicatedPhoto.isStamp = false;
 
-      // ポイント名に「御朱印」を追加
+      // ポイント名に「2」を追加
       if (duplicatedPhoto.name) {
-        duplicatedPhoto.name = `${duplicatedPhoto.name} 御朱印`;
+        duplicatedPhoto.name = `${duplicatedPhoto.name}2`;
       } else {
-        duplicatedPhoto.name = '御朱印';
+        duplicatedPhoto.name = '2';
       }
 
-      // ポイント説明を「御朱印」に設定
-      duplicatedPhoto.description = '御朱印';
+      // ポイント説明に「2」を追加
+      if (duplicatedPhoto.description) {
+        duplicatedPhoto.description = `${duplicatedPhoto.description}2`;
+      } else {
+        duplicatedPhoto.description = '2';
+      }
+
+      // 写真関連の情報を削除（写真はコピーしない）
+      delete duplicatedPhoto.url;
+      delete duplicatedPhoto.storagePath;
+      delete duplicatedPhoto.file;
 
       // 次の位置に挿入
       photos.splice(idx + 1, 0, duplicatedPhoto);
@@ -3020,7 +3610,7 @@ function showPhotoPopupEditMode(lat, lng) {
     }
     if (saved) {
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       showPhotoAtIndex(currentPhotoIndex, true);
       setStatus('✓ 写真を削除しました（ポイントは残っています）');
     }
@@ -3080,7 +3670,7 @@ function showPhotoPopupEditMode(lat, lng) {
     }
     if (saved) {
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       if (photos.length > 0) {
         showPhotoAtIndex(currentPhotoIndex, true);
       } else {
@@ -3091,10 +3681,33 @@ function showPhotoPopupEditMode(lat, lng) {
     }
   };
 
-  photoPopup = L.popup({ maxWidth: 840, className: 'photo-popup-container photo-popup-edit-container', closeButton: false })
+  photoPopup = L.popup({
+      maxWidth: 1000,
+      minWidth: 0,
+      className: 'photo-popup-container photo-popup-edit-container',
+      closeButton: false,
+      autoPan: true,
+      autoPanPaddingTopLeft: [20, 20],
+      autoPanPaddingBottomRight: [20, 20],
+      keepInView: true,
+      offset: [0, -30]
+    })
     .setLatLng([lat, lng])
     .setContent(div)
     .openOn(map);
+
+  // ポップアップが開いた後、編集フォーム全体が見えるように地図を調整
+  setTimeout(() => {
+    const popupElement = photoPopup.getElement();
+    if (popupElement) {
+      const popupHeight = popupElement.offsetHeight;
+      const point = map.latLngToContainerPoint([lat, lng]);
+      const targetX = point.x;
+      const targetY = point.y - (popupHeight / 2) + 20;
+      const targetLatLng = map.containerPointToLatLng([targetX, targetY]);
+      map.panTo(targetLatLng, { animate: true, duration: 0.3 });
+    }
+  }, 50);
 }
 
 // GPSポイント追加モードの切り替え
@@ -3103,6 +3716,10 @@ function toggleAddGpsPointMode() {
   const btn = document.getElementById('addGpsPointBtn');
   if (btn) {
     btn.classList.toggle('active', addingGpsPointMode);
+  }
+  const tripMenuGpsBtn = document.getElementById('tripMenuGpsBtn');
+  if (tripMenuGpsBtn) {
+    tripMenuGpsBtn.classList.toggle('active', addingGpsPointMode);
   }
 
   if (addingGpsPointMode) {
@@ -3182,18 +3799,9 @@ function handlePlaybackStop() {
       clearTimeout(playbackVideoTimer);
       playbackVideoTimer = null;
     }
-    if (currentYouTubePlayer) {
-      try {
-        currentYouTubePlayer.destroy();
-      } catch (e) {
-        console.warn('YouTube Player破棄エラー:', e);
-      }
-      currentYouTubePlayer = null;
-    }
     cb();
   } else {
     stopPlay();
-    // スタンプ一覧を表示せず、トリップ全体を再表示
     showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
   }
 }
@@ -3229,7 +3837,7 @@ async function showTripOverview() {
   }
 }
 
-/** 再生完了時: スタンプ一覧を5秒表示後、全ポイントを含む地図に戻る */
+/** 再生完了時: 全ポイントを含む地図に戻る */
 async function onPlaybackComplete() {
   if (playTimer) {
     clearTimeout(playTimer);
@@ -3237,19 +3845,44 @@ async function onPlaybackComplete() {
     playTimer = null;
   }
   playbackVideoEndCallback = null;
+  currentAutoplayTick = null;
   if (playbackVideoTimer) {
     clearTimeout(playbackVideoTimer);
     playbackVideoTimer = null;
   }
   hidePlaybackPhotoOverlay();
-  if (currentTrip) {
-    showStampRallyModal(currentTrip);
+
+  // 再生完了時の停止処理（最初には戻らない）
+  playbackPhotos = [];
+  const playBtn = document.getElementById('playBtn');
+  if (playBtn) playBtn.textContent = '▶ 再生';
+  const mapPlayBtn = document.getElementById('mapPlayBtn');
+  if (mapPlayBtn) mapPlayBtn.textContent = '▶ 再生';
+  const mobilePlayBtn = document.getElementById('mobilePlayBtn');
+  if (mobilePlayBtn) mobilePlayBtn.textContent = '▶';
+  document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+  document.body.classList.remove('app-playing');
+  hidePlayOverlay();
+  lastPlaybackPhotoUrl = null;
+
+  // 3D地図のレイヤーをクリア
+  if (map3d) {
+    try {
+      if (map3d.getLayer('route')) map3d.removeLayer('route');
+      if (map3d.getSource('route')) map3d.removeSource('route');
+      if (map3d.getLayer('points')) map3d.removeLayer('points');
+      if (map3d.getSource('points')) map3d.removeSource('points');
+    } catch (e) {
+      console.warn('3D地図レイヤークリアエラー:', e);
+    }
   }
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  closeStampRallyModal();
-  stopPlay();
+
   await updateMapMarkers();
   await updateHeaderInfo();
+
+  // トリップ全体のマップに戻る
+  showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
+
   if (!thumbnailsVisible) {
     thumbnailsVisible = true;
     renderThumbnails();
@@ -3257,21 +3890,67 @@ async function onPlaybackComplete() {
 }
 
 function stopPlay() {
+  const isAutoPlaying = document.body.classList.contains('app-playing');
+
+  // 自動再生中で動画が表示されている場合は、動画を停止してウィンドウを閉じる
+  if (isAutoPlaying) {
+    const overlay = document.getElementById('playbackPhotoOverlay');
+    const isVideoDisplayed = overlay && !overlay.classList.contains('hidden') &&
+                             overlay.classList.contains('playback-video-fullscreen');
+
+    // または、現在のポイントが動画の場合
+    const currentP = playbackPhotos && playbackPhotos[currentPhotoIndex];
+    const isCurrentVideo = currentP && currentP.videoUrl && currentP.videoUrl.trim();
+
+    if (isVideoDisplayed || (isCurrentVideo && currentAutoplayTick)) {
+      console.log('動画再生中に停止ボタン押下: 動画を停止してウィンドウを閉じる');
+
+      // 動画を停止
+      playbackVideoEndCallback = null;
+      if (playbackVideoTimer) {
+        clearTimeout(playbackVideoTimer);
+        playbackVideoTimer = null;
+      }
+      if (playTimer) {
+        clearTimeout(playTimer);
+        playTimer = null;
+      }
+
+      // 自動再生を完全に停止
+      currentAutoplayTick = null;
+
+      // 再生ボタンのテキストを「再生」に戻す
+      const playBtn = document.getElementById('playBtn');
+      if (playBtn) playBtn.textContent = '▶ 再生';
+      const mapPlayBtn = document.getElementById('mapPlayBtn');
+      if (mapPlayBtn) mapPlayBtn.textContent = '▶ 再生';
+      const mobilePlayBtn = document.getElementById('mobilePlayBtn');
+      if (mobilePlayBtn) mobilePlayBtn.textContent = '▶';
+
+      // app-playingクラスを削除
+      document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+      document.body.classList.remove('app-playing');
+
+      // 動画ウィンドウを閉じる（iframe内の動画も停止される）
+      hidePlaybackPhotoOverlay();
+      hidePlayOverlay();
+
+      // ルート表示を通常モードに戻す
+      scheduleMapMarkersUpdate();
+
+      // 現在の位置を保持したまま停止（playbackPhotos・currentPhotoIndexはクリアしない）
+      // 次回再生ボタンを押すと、この位置から継続再生される
+      return;
+    }
+  }
+
+  // 通常の停止処理
   playbackVideoEndCallback = null;
+  currentAutoplayTick = null;
   if (playTimer) {
     clearTimeout(playTimer);
     clearInterval(playTimer); // 念のため両方
     playTimer = null;
-  }
-
-  // YouTubeプレイヤーを破棄
-  if (currentYouTubePlayer) {
-    try {
-      currentYouTubePlayer.destroy();
-    } catch (e) {
-      console.warn('YouTube Player破棄エラー:', e);
-    }
-    currentYouTubePlayer = null;
   }
 
   // 動画再生タイマーをクリア
@@ -3291,6 +3970,8 @@ function stopPlay() {
   document.body.classList.remove('app-playing');
   hidePlaybackPhotoOverlay();
   hidePlayOverlay();
+  // ルート表示を通常モードに戻す
+  scheduleMapMarkersUpdate();
   // キャッシュクリア
   lastPlaybackPhotoUrl = null;
   // 3D地図のレイヤーをクリア
@@ -3304,6 +3985,9 @@ function stopPlay() {
       console.warn('3D地図レイヤークリアエラー:', e);
     }
   }
+
+  // トリップ全体のマップに戻る
+  showTripOverview().catch(err => console.error('トリップ全体表示エラー:', err));
 }
 
 let cachedGpxPoints = null;
@@ -3405,11 +4089,17 @@ async function startPlay() {
   }
 
   const allPhotos = getDisplayPhotos();
-  // 写真があるポイントのみを再生対象にする
-  playbackPhotos = allPhotos.filter(p => p.url && p.url.trim());
-  if (!playbackPhotos.length) {
-    alert('再生できる写真がありません。写真を追加してください。');
-    return;
+
+  // playbackPhotosが既にある場合は継続再生、ない場合は新規再生
+  const isContinuingPlayback = playbackPhotos && playbackPhotos.length > 0;
+
+  if (!isContinuingPlayback) {
+    // 新規再生: 写真または動画URLがあるポイントを再生対象にする
+    playbackPhotos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
+    if (!playbackPhotos.length) {
+      showToast(currentTrip ? '📷 再生できる写真・動画がありません' : MSG_NO_PHOTOS);
+      return;
+    }
   }
 
   // モバイルでヘッダーを隠す
@@ -3421,8 +4111,10 @@ async function startPlay() {
   const startingPlay = true; // 開始中フラグ
 
   try {
-    // 必ず1枚目の写真から再生開始
-    currentPhotoIndex = 0;
+    // 継続再生の場合は現在のインデックスから、新規再生の場合は1枚目から
+    if (!isContinuingPlayback) {
+      currentPhotoIndex = 0;
+    }
 
     // 前回の再生状態をリセット
     lastPlaybackPhotoUrl = null;
@@ -3435,25 +4127,45 @@ async function startPlay() {
     if (mapPlayBtn) mapPlayBtn.textContent = '■ 停止';
     const mobilePlayBtn = document.getElementById('mobilePlayBtn');
     if (mobilePlayBtn) mobilePlayBtn.textContent = '■';
+
+    // 3D地図で自動再生
     document.querySelector('.map-container')?.classList.add('map-playback-cinematic');
     document.body.classList.add('app-playing');
+
+    // 3D地図を初期化
+    await initMap3d();
+
+    // 3D地図の読み込み結果に応じてモードを切り替え
+    if (!map3d) {
+      // 3D地図に失敗した場合は2Dマップをそのまま使用（cinematicクラスを外す）
+      document.querySelector('.map-container')?.classList.remove('map-playback-cinematic');
+    } else {
+      // 3D地図が有効な場合はルートとマーカーを追加
+      add3dMapRouteAndMarkers().catch(e => console.warn('3Dルート描画エラー:', e));
+    }
+
+    // ルート表示を目立つモードに切り替え（2D Leaflet マップ）
+    await updateMapMarkers();
 
     // 自動再生時はサムネイルを非表示
     thumbnailsVisible = false;
     renderThumbnails();
 
-    const p0 = playbackPhotos[0];
-    if (p0?.lat != null && p0?.lng != null) {
-      map.setView([p0.lat, p0.lng], 17);
+    // 継続再生の場合は現在のインデックス、新規再生の場合は最初から
+    const startP = playbackPhotos[currentPhotoIndex];
+    if (startP?.lat != null && startP?.lng != null) {
+      map.setView([startP.lat, startP.lng], 17);
+      // 3D地図の初期位置を設定
+      if (map3d) {
+        map3d.flyTo({
+          center: [startP.lng, startP.lat],
+          zoom: 17,
+          pitch: 60,
+          bearing: 0,
+          duration: 1500
+        });
+      }
     }
-
-    // 3D地図の初期化をバックグラウンドで開始（tickでflyMap3dToを使うため）
-    const map3dReady = initMap3d()
-      .then(() => add3dMapRouteAndMarkers())
-      .then(() => {
-        if (p0?.lat != null && p0?.lng != null) setMap3dView(p0.lat, p0.lng, 17);
-      })
-      .catch(err => { console.warn('3D地図初期化エラー:', err); });
 
     const tick = async () => {
       try {
@@ -3465,22 +4177,32 @@ async function startPlay() {
         currentPhotoIndex++;
         const nextP = playbackPhotos[currentPhotoIndex];
 
-        // 3D地図の準備ができていればカメラアニメーション（最大3秒待機、ブロック防止）
-        try {
-          await Promise.race([map3dReady, new Promise(r => setTimeout(r, 3000))]);
-          if (nextP?.lat != null && nextP?.lng != null) {
-            await flyMap3dTo(nextP.lat, nextP.lng, 17, 1500);
+        // 3D地図で次のポイントにスムーズに移動
+        if (nextP?.lat != null && nextP?.lng != null) {
+          map.panTo([nextP.lat, nextP.lng], { animate: true, duration: 1.0 });
+          // 3D地図も同時に移動
+          if (map3d) {
+            map3d.flyTo({
+              center: [nextP.lng, nextP.lat],
+              zoom: 17,
+              pitch: 60,
+              duration: 1500
+            });
           }
-        } catch (e) {
-          console.warn('3D地図アニメーションスキップ:', e);
         }
+
+        // パルスマーカーを現在ポイントに更新
+        updatePlaybackPulseMarker();
 
         // 動画がある場合は動画終了まで待つ
         if (nextP.videoUrl && nextP.videoUrl.trim()) {
+          console.log(`自動再生: 動画ポイントを再生 (${currentPhotoIndex + 1}/${playbackPhotos.length}) - ${nextP.name || 'ポイント名なし'}`);
           await showPlaybackPhotoOverlay(nextP, () => {
+            console.log('自動再生: 動画終了、次のポイントへ');
             playTimer = setTimeout(tick, 500);
           });
         } else {
+          console.log(`自動再生: 写真ポイントを表示 (${currentPhotoIndex + 1}/${playbackPhotos.length}) - ${nextP.name || 'ポイント名なし'}`);
           await showPlaybackPhotoOverlay(nextP);
           playTimer = setTimeout(tick, 2500);
         }
@@ -3493,14 +4215,18 @@ async function startPlay() {
         }
       }
     };
+    currentAutoplayTick = tick;
 
-    // 1枚目の写真を即座に表示して再生開始（3D地図の初期化を待たない）
-    if (p0.videoUrl && p0.videoUrl.trim()) {
-      await showPlaybackPhotoOverlay(p0, () => {
+    // 継続再生の場合は現在のポイントから、新規再生の場合は最初から表示
+    if (startP.videoUrl && startP.videoUrl.trim()) {
+      console.log(`自動再生開始: ${isContinuingPlayback ? '継続' : '最初の'}ポイントは動画です (${startP.name || 'ポイント名なし'})`);
+      await showPlaybackPhotoOverlay(startP, () => {
+        console.log('動画終了: 次のポイントへ移動します');
         playTimer = setTimeout(tick, 500);
       });
     } else {
-      await showPlaybackPhotoOverlay(p0);
+      console.log(`自動再生開始: ${isContinuingPlayback ? '継続' : '最初の'}ポイントは写真です (${startP.name || 'ポイント名なし'})`);
+      await showPlaybackPhotoOverlay(startP);
       playTimer = setTimeout(tick, 2500);
     }
   } catch (err) {
@@ -3510,9 +4236,45 @@ async function startPlay() {
   }
 }
 
+/** 自動再生中に前後の写真・動画へジャンプ */
+async function jumpPlayback(delta) {
+  if (!document.body.classList.contains('app-playing')) return;
+  if (!playbackPhotos || !playbackPhotos.length) return;
+
+  // 現在の動画・タイマーをキャンセル
+  playbackVideoEndCallback = null;
+  if (playbackVideoTimer) { clearTimeout(playbackVideoTimer); playbackVideoTimer = null; }
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
+
+  const newIdx = currentPhotoIndex + delta;
+  if (newIdx < 0 || newIdx >= playbackPhotos.length) return;
+  currentPhotoIndex = newIdx;
+  const p = playbackPhotos[currentPhotoIndex];
+
+  // 地図をジャンプ先に移動（2D地図を使用）
+  if (p?.lat != null && p?.lng != null) {
+    map.panTo([p.lat, p.lng], { animate: true, duration: 1.0 });
+  }
+
+  if (!currentAutoplayTick) return;
+  const tickFn = currentAutoplayTick;
+  if (p.videoUrl && p.videoUrl.trim()) {
+    await showPlaybackPhotoOverlay(p, () => {
+      playTimer = setTimeout(tickFn, 500);
+    });
+  } else {
+    await showPlaybackPhotoOverlay(p);
+    playTimer = setTimeout(tickFn, 2500);
+  }
+}
+
 function prevPhoto() {
+  if (document.body.classList.contains('app-playing')) {
+    jumpPlayback(-1);
+    return;
+  }
   const photos = getDisplayPhotos();
-  if (!photos.length) return;
+  if (!photos.length) { showToast(MSG_NO_PHOTOS); return; }
   currentPhotoIndex = (currentPhotoIndex - 1 + photos.length) % photos.length;
   if (!thumbnailsVisible) {
     thumbnailsVisible = true;
@@ -3522,10 +4284,16 @@ function prevPhoto() {
 }
 
 function nextPhoto() {
+  if (document.body.classList.contains('app-playing')) {
+    jumpPlayback(1);
+    return;
+  }
   const photos = getDisplayPhotos();
-  if (!photos.length) return;
-  currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;
-  if (!thumbnailsVisible) {
+  if (!photos.length) { showToast(MSG_NO_PHOTOS); return; }
+  if (thumbnailsVisible) {
+    currentPhotoIndex = (currentPhotoIndex + 1) % photos.length;
+  } else {
+    currentPhotoIndex = 0;
     thumbnailsVisible = true;
     renderThumbnails();
   }
@@ -3735,6 +4503,9 @@ async function saveTrip(opts = {}) {
       travelogueHistory: currentTrip.travelogueHistory,
       travelogueGeneratedAt: currentTrip.travelogueGeneratedAt
     };
+    // onSnapshot リスナーが Firestore 書き込みを即時検知して myTrips を自動更新するため、
+    // キャッシュ無効化・loadMyTrips() 再呼び出しは不要。
+    // ただし onSnapshot が未設定の環境（テスト等）のために呼び出しは残す（即返るだけ）。
     await loadMyTrips();
     const saved = myTrips.find(t => t.id === currentTrip.id);
     if (saved) {
@@ -3750,11 +4521,17 @@ async function saveTrip(opts = {}) {
     }
     renderThumbnails();
     await updateMapMarkers();
-    renderTripDetailPane();
-    await updateHeaderInfo();
-    renderTripList();
+    await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
+    // updateHeaderInfo / renderTripList は renderTripDetailPane() 内で呼ばれるため除去
     refreshTripSelect();
     refreshTripParentSelectOptions();
+
+    // URLにトリップ名パラメータを更新
+    if (currentTrip && currentTrip.name) {
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('trip', encodeURIComponent(currentTrip.name));
+      window.history.replaceState({}, '', newUrl.toString());
+    }
   } catch (err) {
     console.error('保存エラー:', err);
     if (silent) throw err;
@@ -3773,6 +4550,13 @@ async function saveTrip(opts = {}) {
   }
 }
 
+/**
+ * Firestore からトリップ一覧を読み込む。
+ *
+ * 初回呼び出し時に onSnapshot リスナーを設定し、
+ * 以降はリスナーが myTrips を自動更新するためこの関数は即返す。
+ * 認証ユーザーが変わった場合は _tripsUnsubscribe を null にしてから呼ぶこと。
+ */
 async function loadMyTrips() {
   if (!window.firebaseDb) {
     console.warn('Firebase DB が初期化されていません');
@@ -3780,65 +4564,73 @@ async function loadMyTrips() {
     return;
   }
 
-  const maxRetries = 2;
-  let lastError = null;
+  const currentUserId = window.firebaseAuth?.currentUser?.uid || 'public';
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        console.log(`トリップ一覧読み込みリトライ中... (${attempt}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      }
+  // リスナーが同じユーザーで既に稼働中: myTrips は最新なので即返す
+  if (_tripsUnsubscribe && tripsCache.userId === currentUserId) {
+    console.log('✓ onSnapshot リスナー稼働中 – myTrips は最新です');
+    return;
+  }
 
-      if (window.firebaseAuth?.currentUser) {
-        console.log('自分のトリップ一覧を取得中...');
-        const snapshot = await window.firebaseDb.collection('trips')
+  // ユーザー変更または初回: 既存リスナーを解除してから新規設定
+  if (_tripsUnsubscribe) {
+    _tripsUnsubscribe();
+    _tripsUnsubscribe = null;
+  }
+
+  // onSnapshot で初回データ到着を Promise で待つ
+  return new Promise((resolve, reject) => {
+    let firstFire = true;
+
+    const query = window.firebaseAuth?.currentUser
+      ? window.firebaseDb.collection('trips')
           .where('userId', '==', window.firebaseAuth.currentUser.uid)
-          .get();
-        myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        console.log(`✓ ${myTrips.length} 件のトリップを読み込みました（自分のトリップ）`);
-      } else {
-        console.log('公開トリップ一覧を取得中...');
-        const snapshot = await window.firebaseDb.collection('trips')
-          .where('public', '==', true)
-          .get();
-        myTrips = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        console.log(`✓ ${myTrips.length} 件の公開トリップを読み込みました`);
+      : window.firebaseDb.collection('trips')
+          .where('public', '==', true);
+
+    _tripsUnsubscribe = query.onSnapshot(
+      (snapshot) => {
+        myTrips = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+        invalidateOrderedTripsCache(); // myTrips 更新時にキャッシュ無効化
+        tripsCache.data     = myTrips;
+        tripsCache.timestamp = Date.now();
+        tripsCache.userId   = currentUserId;
+
+        if (firstFire) {
+          firstFire = false;
+          const label = window.firebaseAuth?.currentUser ? '自分のトリップ' : '公開トリップ';
+          console.log(`✓ ${myTrips.length} 件の${label}を読み込みました（onSnapshot 初回）`);
+          resolve();
+        } else {
+          // リアルタイム更新: 別タブ／デバイスでの変更が自動反映される
+          console.log(`↻ Firestore 変更を検知 – ${myTrips.length} 件のトリップを更新`);
+          renderTripList();
+          refreshTripSelect();
+          refreshTripParentSelectOptions();
+        }
+      },
+      (err) => {
+        console.error('Firestore onSnapshot エラー:', err);
+        if (err.code === 'unavailable') {
+          console.error('→ ネットワークエラー: インターネット接続を確認してください');
+        } else if (err.code === 'permission-denied') {
+          console.error('→ アクセス権限エラー: Firestore のセキュリティルールを確認してください');
+        }
+        if (firstFire) {
+          firstFire = false;
+          myTrips = [];
+          _tripsUnsubscribe = null;
+          reject(err);
+        }
       }
-
-      return; // 成功したら終了
-
-    } catch (err) {
-      lastError = err;
-      console.error(`トリップ一覧読み込みエラー (試行 ${attempt + 1}/${maxRetries + 1}):`, err);
-
-      const isNetworkError = err.message?.includes('Failed to fetch') ||
-                            err.message?.includes('NetworkError') ||
-                            err.message?.includes('network') ||
-                            err.code === 'unavailable';
-
-      if (!isNetworkError || attempt === maxRetries) {
-        break;
-      }
-    }
-  }
-
-  // すべてのリトライが失敗した場合
-  console.error('トリップ一覧読み込み最終エラー:', lastError);
-  myTrips = [];
-
-  if (lastError.message?.includes('Failed to fetch') || lastError.message?.includes('NetworkError') || lastError.code === 'unavailable') {
-    console.error('→ ネットワークエラー: インターネット接続を確認してください');
-  } else if (lastError.code === 'permission-denied') {
-    console.error('→ アクセス権限エラー: Firestore のセキュリティルールを確認してください');
-  }
-
-  throw lastError; // エラーを再スローして呼び出し元で処理
+    );
+  });
 }
 
 async function loadTripOrder() {
   if (!window.firebaseDb || !window.firebaseAuth?.currentUser) {
     tripOrder = [];
+    invalidateOrderedTripsCache();
     return;
   }
   try {
@@ -3848,6 +4640,7 @@ async function loadTripOrder() {
     console.warn('トリップ順序読み込みエラー:', err);
     tripOrder = [];
   }
+  invalidateOrderedTripsCache(); // tripOrder 更新時にキャッシュ無効化
 }
 
 async function saveTripOrder(ids) {
@@ -3858,13 +4651,14 @@ async function saveTripOrder(ids) {
       { merge: true }
     );
     tripOrder = [...ids];
+    invalidateOrderedTripsCache(); // tripOrder 保存時にキャッシュ無効化
+    // バッチ書き込みで一括更新（N回のAPI呼び出し→1回に削減）
+    const batch = window.firebaseDb.batch();
     for (let i = 0; i < ids.length; i++) {
-      try {
-        await window.firebaseDb.collection('trips').doc(ids[i]).set({ order: i }, { merge: true });
-      } catch (e) {
-        console.warn('トリップ order 更新エラー:', ids[i], e);
-      }
+      const docRef = window.firebaseDb.collection('trips').doc(ids[i]);
+      batch.set(docRef, { order: i }, { merge: true });
     }
+    await batch.commit();
     return { ok: true };
   } catch (err) {
     console.warn('トリップ順序保存エラー:', err);
@@ -3873,6 +4667,12 @@ async function saveTripOrder(ids) {
 }
 
 function getOrderedTrips() {
+  // メモ化: myTrips の長さ・先頭 ID・末尾 ID・tripOrder・フィルタが同じなら再計算不要
+  const cacheKey = `${myTrips.length}|${myTrips[0]?.id || ''}|${myTrips[myTrips.length - 1]?.id || ''}|${tripOrder.join(',')}|${tripFilterParentName || ''}`;
+  if (_orderedTripsCache && _orderedTripsCacheKey === cacheKey) {
+    return _orderedTripsCache;
+  }
+
   let trips = myTrips;
   if (tripFilterParentName) {
     const parent = myTrips.find(t => (t.name || '').trim() === tripFilterParentName && t.isParent);
@@ -3882,6 +4682,7 @@ function getOrderedTrips() {
     }
   }
   const byId = new Map(trips.map(t => [t.id, t]));
+  let result;
   if (tripOrder.length > 0) {
     const ordered = [];
     for (const id of tripOrder) {
@@ -3891,18 +4692,23 @@ function getOrderedTrips() {
       }
     }
     const rest = [...byId.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    return [...ordered, ...rest];
+    result = [...ordered, ...rest];
+  } else {
+    const list = [...byId.values()];
+    result = list.sort((a, b) => {
+      const uidA = a.userId || '';
+      const uidB = b.userId || '';
+      if (uidA !== uidB) return uidA.localeCompare(uidB);
+      const oa = a.order ?? Infinity;
+      const ob = b.order ?? Infinity;
+      if (oa !== ob) return oa - ob;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
   }
-  const list = [...byId.values()];
-  return list.sort((a, b) => {
-    const uidA = a.userId || '';
-    const uidB = b.userId || '';
-    if (uidA !== uidB) return uidA.localeCompare(uidB);
-    const oa = a.order ?? Infinity;
-    const ob = b.order ?? Infinity;
-    if (oa !== ob) return oa - ob;
-    return (b.updatedAt || 0) - (a.updatedAt || 0);
-  });
+
+  _orderedTripsCache = result;
+  _orderedTripsCacheKey = cacheKey;
+  return result;
 }
 
 /** 表示用: 親→子の順、子はインデント対象。regionフィルタ（japan/global）を適用 */
@@ -4128,86 +4934,65 @@ function renderTripList() {
         detail.className = 'trip-detail-inline trip-detail-parent';
         if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
 
+        // ボタン行（スタンプ・アニメ）
+        const buttonRow = document.createElement('div');
+        buttonRow.style.marginBottom = '0.75rem';
+        buttonRow.style.display = 'flex';
+        buttonRow.style.gap = '0.5rem';
+
         // スタンプボタン
         if (hasStamps) {
-          const stampRow = document.createElement('div');
-          stampRow.style.marginBottom = '0.75rem';
           const stampBtn = document.createElement('button');
           stampBtn.type = 'button';
           stampBtn.className = 'btn btn-stamp btn-sm trip-detail-btn';
           stampBtn.textContent = '🎫 スタンプ一覧';
           stampBtn.title = 'スタンプラリー';
           stampBtn.onclick = (e) => { e.stopPropagation(); showStampRallyModal(t); };
-          stampRow.appendChild(stampBtn);
-          detail.appendChild(stampRow);
+          buttonRow.appendChild(stampBtn);
+        }
+
+        // アニメ一覧ボタン
+        if (animeChildren.length > 0) {
+          const animeBtn = document.createElement('button');
+          animeBtn.type = 'button';
+          animeBtn.className = 'btn btn-secondary btn-sm trip-detail-btn';
+          animeBtn.textContent = '🖼️ アニメ一覧';
+          animeBtn.title = 'アニメ画像を表示';
+          const allAnimes = animeChildren.flatMap(c =>
+            (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name, _tripId: c.id }))
+          );
+          animeBtn.onclick = (e) => {
+            e.stopPropagation();
+            showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), t.name || '');
+          };
+          buttonRow.appendChild(animeBtn);
+        }
+
+        if (hasStamps || animeChildren.length > 0) {
+          detail.appendChild(buttonRow);
         }
 
         if (animeChildren.length > 0) {
-          animeChildren.forEach(c => {
-            const animes = c.generatedAnimes || c.animes || [];
-            const row = document.createElement('div');
-            row.className = 'trip-detail-parent-anime-row';
-
-            // トリップ名とボタンを含むヘッダー
-            const header = document.createElement('div');
-            header.style.display = 'flex';
-            header.style.alignItems = 'center';
-            header.style.gap = '0.5rem';
-            header.style.marginBottom = '0.5rem';
-
-            const label = document.createElement('span');
-            label.className = 'trip-detail-parent-anime-label';
-            label.textContent = c.name || '（無題）';
-            label.onclick = async (e) => { e.stopPropagation(); await loadTripById(c.id); };
-            header.appendChild(label);
-
-            // 旅行記ボタン
-            const hasTravelogue = (c.travelogueHtml && c.travelogueHtml.trim()) || c.travelogueUrl || (c.travelogueHistory?.length > 0);
-            if (hasTravelogue) {
-              const travelogueBtn = document.createElement('button');
-              travelogueBtn.type = 'button';
-              travelogueBtn.className = 'btn btn-travelogue btn-xs';
-              travelogueBtn.style.fontSize = '0.7rem';
-              travelogueBtn.style.padding = '0.2rem 0.4rem';
-              travelogueBtn.textContent = '📖';
-              travelogueBtn.title = '旅行記';
-              travelogueBtn.onclick = (e) => { e.stopPropagation(); showTravelogueModal(c); };
-              header.appendChild(travelogueBtn);
-            }
-
-            // 動画ボタン
-            const hasVideo = getTripVideoUrlsForTrip(c).length > 0;
-            if (hasVideo) {
-              const videoBtn = document.createElement('button');
-              videoBtn.type = 'button';
-              videoBtn.className = 'btn btn-primary btn-xs';
-              videoBtn.style.fontSize = '0.7rem';
-              videoBtn.style.padding = '0.2rem 0.4rem';
-              videoBtn.textContent = '🎬';
-              videoBtn.title = '動画';
-              videoBtn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(c)); };
-              header.appendChild(videoBtn);
-            }
-
-            row.appendChild(header);
-            const thumbs = document.createElement('div');
-            thumbs.className = 'trip-detail-parent-anime-thumbs';
-            animes.forEach((anime) => {
-              const img = document.createElement('img');
-              img.src = anime.url;
-              img.alt = anime.style || '';
-              img.title = (c.name ? c.name + ' - ' : '') + (anime.style || 'アニメ');
-              img.onclick = (e) => {
-                e.stopPropagation();
-                const list = c.generatedAnimes || c.animes || [];
-                const idx = list.findIndex(a => a.url === anime.url);
-                showAnimeImageViewer(list, c.name);
-              };
-              thumbs.appendChild(img);
-            });
-            row.appendChild(thumbs);
-            detail.appendChild(row);
+          const allAnimes = animeChildren
+            .map(c => {
+              const first = (c.generatedAnimes || c.animes || [])[0];
+              return first ? { ...first, _tripName: c.name, _tripId: c.id } : null;
+            })
+            .filter(Boolean);
+          const thumbsWrap = document.createElement('div');
+          thumbsWrap.className = 'trip-detail-parent-anime-thumbs';
+          allAnimes.forEach((anime) => {
+            const img = document.createElement('img');
+            img.src = anime.url;
+            img.alt = anime.style || '';
+            img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+            img.onclick = (e) => {
+              e.stopPropagation();
+              showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), t.name || '');
+            };
+            thumbsWrap.appendChild(img);
           });
+          detail.appendChild(thumbsWrap);
         }
         list.appendChild(detail);
       }
@@ -4318,8 +5103,14 @@ async function deleteTripFromList(id) {
       currentTrip = null;
       currentPhotoIndex = 0;
       thumbnailsVisible = false;
+
+      // URLパラメータを削除
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('trip');
+      window.history.replaceState({}, '', newUrl.toString());
+
       renderThumbnails();
-      updateMapMarkers();
+      scheduleMapMarkersUpdate();
       updateTripInputs();
       renderTripDetailPane();
     }
@@ -4462,33 +5253,26 @@ function renderParentTripChildren(parentId) {
   if (animesWrap && animesEl) {
     if (animeChildren.length > 0) {
       animesEl.innerHTML = '';
-      animeChildren.forEach(c => {
-        const animes = c.generatedAnimes || c.animes || [];
-        const item = document.createElement('div');
-        item.className = 'trip-parent-detail-anime-row';
-        const label = document.createElement('span');
-        label.className = 'trip-parent-detail-anime-label';
-        label.textContent = c.name || '（無題）';
-        label.onclick = async () => { await loadTripById(c.id); };
-        item.appendChild(label);
-        const thumbs = document.createElement('div');
-        thumbs.className = 'trip-parent-detail-anime-thumbs';
-        animes.forEach((anime) => {
-          const img = document.createElement('img');
-          img.src = anime.url;
-          img.alt = anime.style || '';
-          img.title = c.name ? `${c.name} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
-          img.onclick = (e) => {
-            e.stopPropagation();
-            const list = c.generatedAnimes || c.animes || [];
-            const idx = list.findIndex(a => a.url === anime.url);
-            showAnimeImageViewer(list, c.name);
-          };
-          thumbs.appendChild(img);
-        });
-        item.appendChild(thumbs);
-        animesEl.appendChild(item);
+      const allAnimes = animeChildren
+        .map(c => {
+          const first = (c.generatedAnimes || c.animes || [])[0];
+          return first ? { ...first, _tripName: c.name } : null;
+        })
+        .filter(Boolean);
+      const thumbs = document.createElement('div');
+      thumbs.className = 'trip-parent-detail-anime-thumbs';
+      allAnimes.forEach((anime) => {
+        const img = document.createElement('img');
+        img.src = anime.url;
+        img.alt = anime.style || '';
+        img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
+        img.onclick = (e) => {
+          e.stopPropagation();
+          showAnimeImageViewer(allAnimes.map(a => ({ url: a.url, style: a.style })), currentTrip?.name || '');
+        };
+        thumbs.appendChild(img);
       });
+      animesEl.appendChild(thumbs);
       animesWrap.style.display = '';
     } else {
       animesWrap.style.display = 'none';
@@ -4554,12 +5338,18 @@ async function loadTripById(id) {
     try {
       currentTrip = { ...cached, id: cached.id };
       currentPhotoIndex = 0;
+
+      // URLにトリップ名パラメータを追加
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('trip', encodeURIComponent(currentTrip.name));
+      window.history.replaceState({}, '', newUrl.toString());
+
       await updateTripInputs();
-      renderTripList();
+      // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
       refreshTripSelect();
       renderThumbnails();
       await updateMapMarkers();
-      await renderTripDetailPane();
+      await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
       // トリップの全ポイントが収まるように地図を調整
       const photos = getDisplayPhotos();
@@ -4575,8 +5365,6 @@ async function loadTripById(id) {
         }
       }
 
-      // トリップ選択時は写真ポップアップを表示しない（地図のマーカーのみ）
-
       // アニメ画像一覧を表示
       console.log('トリップロード（キャッシュ）:', {
         tripId: id,
@@ -4584,9 +5372,7 @@ async function loadTripById(id) {
         travelogueUrl: currentTrip.travelogueUrl || 'なし'
       });
       renderGeneratedAnimesList();
-
-      // ヘッダー情報を更新（トリップ名など）
-      await updateHeaderInfo();
+      // updateHeaderInfo は renderTripDetailPane() 内で呼ばれるため除去
 
       // モバイルタブを地図に戻す
       if (isMobileView()) {
@@ -4647,12 +5433,12 @@ async function loadTripById(id) {
       currentTrip = tripData;
       currentPhotoIndex = 0;
       await updateTripInputs();
-      renderTripList();
+      // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
       refreshTripSelect();
       renderThumbnails();
       await updateMapMarkers();
       if (map) map.invalidateSize();
-      await renderTripDetailPane();
+      await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
       // トリップの全ポイントが収まるように地図を調整
       const photos = getDisplayPhotos();
@@ -4668,8 +5454,6 @@ async function loadTripById(id) {
         }
       }
 
-      // トリップ選択時は写真ポップアップを表示しない（地図のマーカーのみ）
-
       // アニメ画像一覧を表示
       console.log('トリップロード（Firestore）:', {
         tripId: id,
@@ -4677,9 +5461,7 @@ async function loadTripById(id) {
         travelogueUrl: currentTrip.travelogueUrl || 'なし'
       });
       renderGeneratedAnimesList();
-
-      // ヘッダー情報を更新（トリップ名など）
-      await updateHeaderInfo();
+      // updateHeaderInfo は renderTripDetailPane() 内で呼ばれるため除去
 
       // モバイルタブを地図に戻す
       if (isMobileView()) {
@@ -4721,26 +5503,29 @@ async function loadTripById(id) {
 }
 
 async function deleteTrip() {
-  if (!isEditor() || !currentTrip || !window.firebaseDb || !window.firebaseAuth?.currentUser) return;
-  if (currentTrip.userId !== window.firebaseAuth.currentUser.uid) return;
+  if (!isEditor() || !window.firebaseDb || !window.firebaseAuth?.currentUser) return;
+  if (!currentTrip) { setStatus('削除するトリップが選択されていません'); return; }
+  if (currentTrip.userId !== window.firebaseAuth.currentUser.uid) { setStatus('このトリップを削除する権限がありません'); return; }
   if (!confirm(`本当に「${currentTrip.name}」を削除しますか？\nこの操作は取り消せません。`)) return;
   const idToDelete = currentTrip.id;
   const tripToDelete = { ...currentTrip };
   try {
-    // Storageから全ての関連ファイルを削除
     await deleteAllTripFiles(tripToDelete);
-
     await window.firebaseDb.collection('trips').doc(idToDelete).delete();
     currentTrip = null;
     currentPhotoIndex = 0;
     thumbnailsVisible = false;
+    const newOrder = tripOrder.filter(x => x !== idToDelete);
+    await saveTripOrder(newOrder);
     renderThumbnails();
     await updateMapMarkers();
     await updateTripInputs();
     await renderTripDetailPane();
-    await loadMyTrips();
-    const newOrder = tripOrder.filter(x => x !== idToDelete);
-    await saveTripOrder(newOrder);
+    try {
+      await loadMyTrips();
+    } catch (err) {
+      console.warn('削除後のトリップ一覧再読み込みに失敗（削除自体は成功）:', err);
+    }
     renderTripList();
     refreshTripSelect();
     setStatus('削除しました');
@@ -4765,15 +5550,20 @@ function escapeHtml(s) {
 function getTripVideoUrlsForTrip(trip) {
   if (!trip) return [];
   const urls = [];
-  if (trip.videoUrl && trip.videoUrl.trim()) {
-    urls.push(trip.videoUrl.trim());
-  }
-  const photos = trip.isParent
-    ? (getOrderedTrips().filter(t => t.parentId === trip.id) || []).flatMap(t => (t.photos || []))
-    : (trip.photos || []);
-  for (const p of photos) {
-    if (p.videoUrl && p.videoUrl.trim()) {
-      urls.push(p.videoUrl.trim());
+  if (trip.isParent) {
+    // 親トリップ: 親のvideoUrl → 子トリップのvideoUrl → 子トリップのポイントvideoUrl の順で連続収集
+    if (trip.videoUrl && trip.videoUrl.trim()) urls.push(trip.videoUrl.trim());
+    const children = getOrderedTrips().filter(t => t.parentId === trip.id);
+    for (const c of children) {
+      if (c.videoUrl && c.videoUrl.trim()) urls.push(c.videoUrl.trim());
+      for (const p of (c.photos || [])) {
+        if (p.videoUrl && p.videoUrl.trim()) urls.push(p.videoUrl.trim());
+      }
+    }
+  } else {
+    if (trip.videoUrl && trip.videoUrl.trim()) urls.push(trip.videoUrl.trim());
+    for (const p of (trip.photos || [])) {
+      if (p.videoUrl && p.videoUrl.trim()) urls.push(p.videoUrl.trim());
     }
   }
   return urls;
@@ -4787,7 +5577,7 @@ function getTripVideoUrls() {
 function getVideoEmbedUrl(url) {
   if (!url) return null;
   const u = url.trim();
-  const ytMatch = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  const ytMatch = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/);
   if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
   const vimeoMatch = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
@@ -4797,8 +5587,46 @@ function getVideoEmbedUrl(url) {
 function getYouTubeVideoId(url) {
   if (!url) return null;
   const u = url.trim();
-  const ytMatch = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/);
+  const ytMatch = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]+)/);
   return ytMatch ? ytMatch[1] : null;
+}
+
+function getVimeoVideoId(url) {
+  if (!url) return null;
+  const u = url.trim();
+  const vimeoMatch = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  return vimeoMatch ? vimeoMatch[1] : null;
+}
+
+// YouTubeサムネイルのアスペクト比から縦横を判定（portrait / landscape）
+async function detectVideoOrientation(videoUrl) {
+  const youtubeId = getYouTubeVideoId(videoUrl);
+  if (youtubeId) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve(img.naturalHeight > img.naturalWidth ? 'portrait' : 'landscape');
+      };
+      img.onerror = () => resolve('landscape');
+      img.src = `https://i.ytimg.com/vi/${youtubeId}/0.jpg`;
+    });
+  }
+
+  // Vimeoの場合、oEmbed APIでアスペクト比を取得
+  const vimeoId = getVimeoVideoId(videoUrl);
+  if (vimeoId) {
+    try {
+      const response = await fetch(`https://vimeo.com/api/oembed.json?url=https://vimeo.com/${vimeoId}`);
+      const data = await response.json();
+      if (data.width && data.height) {
+        return data.height > data.width ? 'portrait' : 'landscape';
+      }
+    } catch (e) {
+      console.warn('Vimeo動画情報の取得に失敗:', e);
+    }
+  }
+
+  return 'landscape';
 }
 
 function loadYouTubeIFrameAPI() {
@@ -4828,6 +5656,112 @@ function loadYouTubeIFrameAPI() {
   });
 }
 
+function getVideoThumbnailUrl(videoUrl) {
+  if (!videoUrl) return null;
+
+  // YouTube
+  const youtubeId = getYouTubeVideoId(videoUrl);
+  if (youtubeId) {
+    return `https://img.youtube.com/vi/${youtubeId}/mqdefault.jpg`;
+  }
+
+  // Vimeo
+  const vimeoId = getVimeoVideoId(videoUrl);
+  if (vimeoId) {
+    return `https://vumbnail.com/${vimeoId}.jpg`;
+  }
+
+  return null;
+}
+
+/** 動画コントロールバーを生成（前の動画、再生/停止、次の動画、終了） */
+function createVideoControlsBar(overlay, wrap, { currentUrl, onPrev, onNext, onClose }) {
+  let existing = overlay.querySelector('.video-controls-bar');
+  if (existing) existing.remove();
+
+  const bar = document.createElement('div');
+  bar.className = 'video-controls-bar';
+
+  if (onPrev) {
+    const prevBtn = document.createElement('button');
+    prevBtn.type = 'button';
+    prevBtn.className = 'video-ctrl-btn';
+    prevBtn.dataset.action = 'prev';
+    prevBtn.title = '前の動画';
+    prevBtn.textContent = '⏮';
+    prevBtn.onclick = onPrev;
+    bar.appendChild(prevBtn);
+  }
+
+  const pauseBtn = document.createElement('button');
+  pauseBtn.type = 'button';
+  pauseBtn.className = 'video-ctrl-btn';
+  pauseBtn.dataset.action = 'pause';
+  pauseBtn.title = '再生 / 停止';
+  pauseBtn.textContent = '⏸';
+  bar.appendChild(pauseBtn);
+
+  if (onNext) {
+    const nextBtn = document.createElement('button');
+    nextBtn.type = 'button';
+    nextBtn.className = 'video-ctrl-btn';
+    nextBtn.dataset.action = 'next';
+    nextBtn.title = '次の動画';
+    nextBtn.textContent = '⏭';
+    nextBtn.onclick = onNext;
+    bar.appendChild(nextBtn);
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'video-ctrl-btn';
+  closeBtn.dataset.action = 'close';
+  closeBtn.title = '動画を終了';
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = onClose;
+  bar.appendChild(closeBtn);
+
+  let videoPaused = false;
+  pauseBtn.onclick = () => {
+    const iframe = wrap.querySelector('iframe');
+    const videoEl = wrap.querySelector('video');
+    videoPaused = !videoPaused;
+    pauseBtn.textContent = videoPaused ? '▶' : '⏸';
+    if (iframe && currentUrl) {
+      const ytId = getYouTubeVideoId(currentUrl);
+      if (ytId) {
+        try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'command', func: videoPaused ? 'pauseVideo' : 'playVideo' }), '*'); } catch (_) {}
+      } else if (currentUrl.includes('vimeo')) {
+        try { iframe.contentWindow.postMessage(JSON.stringify({ method: videoPaused ? 'pause' : 'play' }), '*'); } catch (_) {}
+      }
+    } else if (videoEl) {
+      videoPaused ? videoEl.pause() : videoEl.play();
+    }
+  };
+
+  overlay.appendChild(bar);
+  return bar;
+}
+
+function collectVideoUrlsFromCurrentPoint() {
+  const photos = getDisplayPhotos();
+  if (!photos.length) return [];
+
+  const videoUrls = [];
+  const pointNames = [];
+
+  // 現在のポイントから順に動画URLを収集
+  for (let i = currentPhotoIndex; i < photos.length; i++) {
+    const p = photos[i];
+    if (p.videoUrl && p.videoUrl.trim()) {
+      videoUrls.push(p.videoUrl.trim());
+      pointNames.push(p.name || `ポイント ${i + 1}`);
+    }
+  }
+
+  return { urls: videoUrls, names: pointNames };
+}
+
 function showVideoOverlay(url) {
   const overlay = document.getElementById('videoOverlay');
   const wrap = document.getElementById('videoPlayerWrap');
@@ -4835,10 +5769,14 @@ function showVideoOverlay(url) {
   const embedUrl = getVideoEmbedUrl(url);
   wrap.innerHTML = '';
   if (embedUrl) {
+    const ytId = getYouTubeVideoId(url);
+    const src = ytId
+      ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+      : embedUrl + '?autoplay=1';
     const iframe = document.createElement('iframe');
-    iframe.src = embedUrl + '?autoplay=1';
+    iframe.src = src;
     iframe.title = '動画';
-    iframe.allow = 'autoplay; encrypted-media';
+    iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
     iframe.allowFullscreen = true;
     wrap.appendChild(iframe);
   } else {
@@ -4851,6 +5789,135 @@ function showVideoOverlay(url) {
   }
   overlay.classList.remove('hidden');
   document.querySelector('.map-container')?.classList.add('map-showing-video');
+  createVideoControlsBar(overlay, wrap, {
+    currentUrl: url,
+    onPrev: null,
+    onNext: null,
+    onClose: () => closeVideoOverlay()
+  });
+}
+
+/** 動画URLとポイント名の配列を連続再生 */
+function playVideoSequenceWithNames(urls, names = []) {
+  if (!urls || urls.length === 0) return;
+  console.log(`動画連続再生を開始: ${urls.length}本の動画`);
+  const overlay = document.getElementById('videoOverlay');
+  const wrap = document.getElementById('videoPlayerWrap');
+  if (!overlay || !wrap) return;
+
+  let index = 0;
+
+  const playAt = (idx) => {
+    if (videoSequenceTimer) {
+      clearTimeout(videoSequenceTimer);
+      videoSequenceTimer = null;
+    }
+    if (idx < 0 || idx >= urls.length) return;
+    index = idx;
+    const url = urls[index];
+    const pointName = names[index] || '';
+    console.log(`動画再生開始 (${index + 1}/${urls.length}): ${pointName || 'ポイント名なし'}`);
+    wrap.innerHTML = '';
+
+    // ポイント名を表示するオーバーレイを追加
+    if (pointName) {
+      let nameOverlay = overlay.querySelector('.video-overlay-point-name');
+      if (!nameOverlay) {
+        nameOverlay = document.createElement('div');
+        nameOverlay.className = 'video-overlay-point-name';
+        overlay.appendChild(nameOverlay);
+      }
+      nameOverlay.textContent = pointName;
+      nameOverlay.style.display = '';
+    }
+
+    const embedUrl = getVideoEmbedUrl(url);
+    if (embedUrl) {
+      const ytId = getYouTubeVideoId(url);
+      const isVimeo = embedUrl.includes('vimeo.com');
+      const src = ytId
+        ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+        : embedUrl + '?autoplay=1' + (isVimeo ? '&api=1' : '');
+      const iframe = document.createElement('iframe');
+      iframe.src = src;
+      iframe.title = '動画';
+      iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
+      iframe.allowFullscreen = true;
+      wrap.appendChild(iframe);
+
+      const advanceToNext = () => {
+        console.log(`動画終了: 次の動画に進みます (${index + 1}/${urls.length} → ${index + 2}/${urls.length})`);
+        if (videoSequenceTimer) { clearTimeout(videoSequenceTimer); videoSequenceTimer = null; }
+        if (index + 1 < urls.length) playAt(index + 1);
+      };
+
+      // YouTube: postMessage で動画終了を検知
+      if (ytId) {
+        const ytHandler = (e) => {
+          if (!e.origin.includes('youtube.com')) return;
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data?.event === 'onStateChange' && data?.info === 0) {
+              console.log(`YouTube動画終了イベント受信`);
+              window.removeEventListener('message', ytHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', ytHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*'); } catch (_) {}
+        };
+      }
+
+      // Vimeo: postMessage で終了検知
+      if (isVimeo) {
+        const vimeoHandler = (e) => {
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data && data.event === 'finish') {
+              console.log(`Vimeo動画終了イベント受信`);
+              window.removeEventListener('message', vimeoHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', vimeoHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*'); } catch (_) {}
+        };
+      }
+
+      // フォールバック: 終了イベントが発火しない場合に備えて60秒後に次へ
+      if (index + 1 < urls.length) {
+        videoSequenceTimer = setTimeout(() => {
+          console.log('動画シーケンスフォールバックタイマー: 次へ進みます');
+          advanceToNext();
+        }, 60000);
+      }
+    } else {
+      const video = document.createElement('video');
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      video.muted = false;
+      video.addEventListener('ended', () => {
+        if (index + 1 < urls.length) playAt(index + 1);
+      });
+      wrap.appendChild(video);
+    }
+    overlay.classList.remove('hidden');
+    document.querySelector('.map-container')?.classList.add('map-showing-video');
+
+    createVideoControlsBar(overlay, wrap, {
+      currentUrl: url,
+      onPrev: index > 0 ? () => playAt(index - 1) : null,
+      onNext: index + 1 < urls.length ? () => playAt(index + 1) : null,
+      onClose: () => closeVideoOverlay()
+    });
+  };
+
+  playAt(0);
 }
 
 /** 動画URLの配列を連続再生。1件の場合は showVideoOverlay、複数なら順番に再生 */
@@ -4866,29 +5933,80 @@ function playVideoSequence(urls) {
   }
 
   let index = 0;
-  const VIDEO_DURATION_MS = 30000; // iframe動画の最大表示時間（YouTube/Vimeoは終了検知不可のため）
+  const VIDEO_DURATION_MS = 30000;
 
-  const playNext = () => {
+  const playAt = (idx) => {
     if (videoSequenceTimer) {
       clearTimeout(videoSequenceTimer);
       videoSequenceTimer = null;
     }
-    if (index >= urls.length) {
-      return;
-    }
+    if (idx < 0 || idx >= urls.length) return;
+    index = idx;
     const url = urls[index];
-    index++;
     wrap.innerHTML = '';
     const embedUrl = getVideoEmbedUrl(url);
     if (embedUrl) {
+      const ytId = getYouTubeVideoId(url);
+      const isVimeo = embedUrl.includes('vimeo.com');
+      const src = ytId
+        ? `https://www.youtube.com/embed/${ytId}?autoplay=1&mute=0&controls=1&modestbranding=1&rel=0&playsinline=1&enablejsapi=1`
+        : embedUrl + '?autoplay=1' + (isVimeo ? '&api=1' : '');
       const iframe = document.createElement('iframe');
-      iframe.src = embedUrl + '?autoplay=1';
+      iframe.src = src;
       iframe.title = '動画';
-      iframe.allow = 'autoplay; encrypted-media';
+      iframe.allow = 'autoplay; encrypted-media; accelerometer; gyroscope; picture-in-picture';
       iframe.allowFullscreen = true;
       wrap.appendChild(iframe);
-      if (index < urls.length) {
-        videoSequenceTimer = setTimeout(playNext, VIDEO_DURATION_MS);
+
+      const advanceToNext = () => {
+        console.log(`動画終了: 次の動画に進みます (${index + 1}/${urls.length} → ${index + 2}/${urls.length})`);
+        if (videoSequenceTimer) { clearTimeout(videoSequenceTimer); videoSequenceTimer = null; }
+        if (index + 1 < urls.length) playAt(index + 1);
+      };
+
+      // YouTube: postMessage で動画終了を検知
+      if (ytId) {
+        const ytHandler = (e) => {
+          if (!e.origin.includes('youtube.com')) return;
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data?.event === 'onStateChange' && data?.info === 0) {
+              console.log(`YouTube動画終了イベント受信`);
+              window.removeEventListener('message', ytHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', ytHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*'); } catch (_) {}
+        };
+      }
+
+      // Vimeo: postMessage で終了検知
+      if (isVimeo) {
+        const vimeoHandler = (e) => {
+          try {
+            const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+            if (data && data.event === 'finish') {
+              console.log(`Vimeo動画終了イベント受信`);
+              window.removeEventListener('message', vimeoHandler);
+              advanceToNext();
+            }
+          } catch (_) {}
+        };
+        window.addEventListener('message', vimeoHandler);
+        iframe.onload = () => {
+          try { iframe.contentWindow.postMessage(JSON.stringify({ method: 'addEventListener', value: 'finish' }), '*'); } catch (_) {}
+        };
+      }
+
+      // フォールバック: 終了イベントが発火しない場合に備えて60秒後に次へ
+      if (index + 1 < urls.length) {
+        videoSequenceTimer = setTimeout(() => {
+          console.log('動画シーケンスフォールバックタイマー: 次へ進みます');
+          advanceToNext();
+        }, 60000);
       }
     } else {
       const video = document.createElement('video');
@@ -4897,15 +6015,22 @@ function playVideoSequence(urls) {
       video.autoplay = true;
       video.muted = false;
       video.addEventListener('ended', () => {
-        if (index < urls.length) playNext();
+        if (index + 1 < urls.length) playAt(index + 1);
       });
       wrap.appendChild(video);
     }
     overlay.classList.remove('hidden');
     document.querySelector('.map-container')?.classList.add('map-showing-video');
+
+    createVideoControlsBar(overlay, wrap, {
+      currentUrl: url,
+      onPrev: index > 0 ? () => playAt(index - 1) : null,
+      onNext: index + 1 < urls.length ? () => playAt(index + 1) : null,
+      onClose: () => closeVideoOverlay()
+    });
   };
 
-  playNext();
+  playAt(0);
 }
 
 let animePlayTimer = null;
@@ -4965,12 +6090,191 @@ function closeAiSettingsModal() {
   document.getElementById('aiSettingsModal').classList.remove('open');
 }
 
+/** トリップデータのハッシュを生成（旅行記の差分更新用） */
+function generateTripContentHash(trip) {
+  try {
+    const photos = trip?.photos || [];
+    const contentData = {
+      description: trip?.description || '',
+      url: trip?.url || '',
+      photos: photos.map(p => ({
+        placeName: p?.placeName || '',
+        name: p?.name || '',
+        description: p?.description || '',
+        landmarkNo: p?.landmarkNo || '',
+        isStamp: !!p?.isStamp,
+        lat: p?.lat,
+        lng: p?.lng,
+        videoUrl: p?.videoUrl || ''
+      }))
+    };
+
+    // シンプルなハッシュ関数（文字列化して簡易ハッシュ）
+    const str = JSON.stringify(contentData);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // 32bit整数に変換
+    }
+    return hash.toString(36);
+  } catch (error) {
+    console.error('ハッシュ生成エラー:', error);
+    // エラー時はランダムなハッシュを返す（常に再生成させる）
+    return Math.random().toString(36).substring(2);
+  }
+}
+
+// ─── 旅行記生成ストリーミングヘルパー ────────────────────────────────────────
+/**
+ * SSE / ストリーミングで AI からテキストを受け取り、チャンクごとに onChunk(partialText) を呼ぶ。
+ * 完成したテキスト全体を返す。
+ *
+ * @param {'gemini'|'openai'|'anthropic'} provider
+ * @param {object} cfg  { apiKey }
+ * @param {string} systemPrompt
+ * @param {string} userPrompt
+ * @param {(partial: string) => void} onChunk  チャンク受信コールバック
+ * @returns {Promise<string>}  完成テキスト
+ */
+async function streamTravelogueFromAI(provider, cfg, systemPrompt, userPrompt, onChunk) {
+  /** SSE レスポンスを行単位でパースして各チャンクを処理する共通ユーティリティ */
+  async function consumeSSE(res, extractText) {
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error?.message || `HTTP ${res.status} ${res.statusText}`);
+    }
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer  = '';
+    let content = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // 末尾の不完全行を次ループへ
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const json = line.slice(6).trim();
+        if (!json || json === '[DONE]') continue;
+        try {
+          const chunk = extractText(JSON.parse(json));
+          if (chunk) { content += chunk; onChunk(content); }
+        } catch { /* 不正 JSON は無視 */ }
+      }
+    }
+    return content;
+  }
+
+  if (provider === 'gemini') {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${encodeURIComponent(cfg.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+          generationConfig: { temperature: 0.7 }
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.candidates?.[0]?.content?.parts?.[0]?.text || '');
+  }
+
+  if (provider === 'openai') {
+    const res = await fetch(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfg.apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt   }
+          ],
+          temperature: 0.7,
+          stream: true
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.choices?.[0]?.delta?.content || '');
+  }
+
+  if (provider === 'anthropic') {
+    const res = await fetch(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cfg.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+          stream: true
+        })
+      }
+    );
+    return consumeSSE(res, (d) => d.delta?.text || d.content_block?.text || '');
+  }
+
+  throw new Error('未対応のプロバイダーです: ' + provider);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function generateTravelogueWithAI() {
+  const startTime = Date.now();
   const trip = currentTrip;
+
+  // トリップの詳細な検証とログ出力
+  console.log('🔍 旅行記生成開始 - トリップ情報:', {
+    hasTripObject: !!trip,
+    tripId: trip?.id,
+    tripName: trip?.name,
+    photosCount: trip?.photos?.length || 0
+  });
+
   if (!trip) {
     alert('トリップを選択してください');
     return;
   }
+  if (!trip.id) {
+    alert('トリップIDが不正です。トリップを再度選択してください。');
+    console.error('トリップIDが不正:', trip);
+    return;
+  }
+
+  // 旅行記の差分更新チェック
+  console.log('🔍 旅行記の差分チェック開始...');
+  const currentHash = generateTripContentHash(trip);
+  const hasExistingTravelogue = !!(trip.travelogueUrl || trip.travelogueHtml || (trip.travelogueHistory?.length > 0));
+
+  if (hasExistingTravelogue && trip.travelogueContentHash === currentHash) {
+    console.log('✓ トリップの内容に変更なし - 既存の旅行記を使用');
+    setStatus('トリップの内容に変更がないため、既存の旅行記を表示します');
+    showTravelogueModal();
+    return;
+  }
+
+  // 内容に変更がある場合は旅行記を再生成
+  if (hasExistingTravelogue) {
+    console.log('🔄 内容が変更されたため、旅行記を更新します');
+    setStatus('内容が変更されたため、旅行記を更新します...');
+  } else {
+    console.log('📝 新規旅行記を生成します');
+  }
+
   const cfg = cachedAiConfig ?? (await loadUserAiConfig());
   if (!cfg?.apiKey?.trim()) {
     alert('旅行記生成にはAPIキーが必要です。AI設定でプロバイダーを選択し、APIキーを入力してください。');
@@ -4979,6 +6283,8 @@ async function generateTravelogueWithAI() {
 
   const btn = document.getElementById('generateTravelogueBtn');
   const originalBtnText = btn?.textContent || '旅行記生成';
+
+  console.log(`⏱️ 準備完了: ${Date.now() - startTime}ms`);
 
   // 既存の旅行記がある場合は上書き（削除せずに更新）
   if (trip.travelogueUrl || trip.travelogueHtml) {
@@ -4992,7 +6298,8 @@ async function generateTravelogueWithAI() {
   // 親トリップの情報を取得
   let parentTripInfo = null;
   if (trip.parentId) {
-    const parentTrip = getOrderedTrips().find(t => t.id === trip.parentId);
+    const allTrips = getOrderedTrips() || [];
+    const parentTrip = allTrips.find(t => t && t.id === trip.parentId);
     if (parentTrip) {
       parentTripInfo = {
         name: parentTrip.name || '（無題）',
@@ -5026,55 +6333,44 @@ async function generateTravelogueWithAI() {
     }
   } catch (_) {}
   if (gpxSummary) parts.push(`GPS情報: ${gpxSummary}`);
+
+  // 🚀 高速化：Wikipedia取得を完全にスキップ
+  console.log(`⚡ 高速モード: Wikipedia取得をスキップ (${Date.now() - startTime}ms)`);
   const photoInfos = [];
-  const usedWikiExtracts = new Set(); // 既に使用したWikipedia情報を記録
 
   if (photos.length > 0) {
-    setStatus('Wikipediaから情報を取得中...');
-    if (btn) btn.textContent = 'Wikipedia取得中...';
-    for (let i = 0; i < photos.length; i++) {
-      const p = photos[i];
-      const loc = p.placeName || (p.lat != null && p.lng != null ? `緯度${p.lat.toFixed(4)} 経度${p.lng.toFixed(4)}` : '');
+    // photoInfosを構築（Wikipediaなし）
+    photos.forEach((p, i) => {
+      const loc = p.placeName || '';
       const desc = p.description || p.name || '';
-      let wikiData = null;
-      try {
-        const result = await fetchWikipediaForPlace(p.lat, p.lng, p.placeName || loc);
-        // 重複チェック：同じextractが既に使用されている場合はnullにする
-        if (result && result.extract) {
-          if (!usedWikiExtracts.has(result.extract)) {
-            wikiData = result;
-            usedWikiExtracts.add(result.extract);
-          }
-        }
-        if (i < photos.length - 1) await new Promise(r => setTimeout(r, 300));
-      } catch (_) {}
+      const piVideoUrl = p.videoUrl && p.videoUrl.trim() ? p.videoUrl.trim() : '';
       photoInfos.push({
         index: i + 1,
         url: p.url,
+        videoUrl: piVideoUrl,
+        videoThumbnailUrl: piVideoUrl ? (getVideoThumbnailUrl(piVideoUrl) || '') : '',
         placeName: loc,
         description: desc,
         landmarkNo: p.landmarkNo || '',
         pointName: p.name || p.description || '',
-        isStamp: !!p.isStamp,
-        wikiData // { title, extract } または null
+        isStamp: !!p.isStamp
       });
-    }
-    parts.push('写真情報（順番に、各写真ごとに左右レイアウトで旅行記を生成してください）:');
+    });
+    // 🚀 プロンプト簡略化：必要最小限の情報のみ
+    parts.push('\n写真情報:');
     photoInfos.forEach((pi) => {
-      parts.push(`\n  【写真${pi.index}】`);
-      parts.push(`  写真URL: ${pi.url}`);
-      parts.push(`  ポイント名: ${pi.pointName || pi.placeName || '名称未設定'}`);
-      parts.push(`  ポイント説明: ${pi.description || '説明なし'}`);
-      parts.push(`  場所: ${pi.placeName || '（不明）'}`);
-      if (pi.landmarkNo) parts.push(`  ランドマーク: 📍 ${pi.landmarkNo}`);
-      if (pi.isStamp) parts.push(`  スタンプ: ✅ この写真はスタンプです`);
-      if (pi.wikiData && pi.wikiData.extract) {
-        parts.push(`  Wikipedia情報（${pi.wikiData.title}について）: ${pi.wikiData.extract}`);
-      }
-      parts.push(`  → この写真について旅行記を書いてください（その場所の様子、体験、感想など）`);
+      const info = [];
+      info.push(`写真${pi.index}: ${pi.url}`);
+      if (pi.landmarkNo) info.push(`[ランドマーク${pi.landmarkNo}]`);
+      info.push(pi.pointName || pi.placeName || '名称未設定');
+      if (pi.description) info.push(`- ${pi.description}`);
+      parts.push(info.join(' '));
     });
   }
   const context = parts.join('\n');
+
+  // プロンプトの長さをログ出力
+  console.log(`📝 高速モード - プロンプト長: ${context.length} 文字 (写真${photos.length}枚)`);
   const tripColor = trip.color || '#e1306c';
 
   // アニメ画像: 表紙(cover)と詳細(detail)を分離
@@ -5088,164 +6384,199 @@ async function generateTravelogueWithAI() {
   }
   let detailAnimeHtml = '';
   if (detailAnimes.length > 0) {
-    const imgs = detailAnimes.map(a => `<img src="${a.url}" alt="旅行記詳細" style="width:calc(33.333% - 0.5rem);min-width:120px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`).join('\n');
-    detailAnimeHtml = `<div class="travelogue-detail-animes" style="display:flex;flex-wrap:wrap;gap:0.75rem;margin:2rem 0;justify-content:flex-start;">\n${imgs}\n</div>`;
+    // 詳細アニメを20%大きく: 33.333% → 40%
+    const imgs = detailAnimes.map(a => `<img src="${a.url}" alt="旅行記詳細" style="width:calc(40% - 0.5rem);min-width:150px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`).join('\n');
+    detailAnimeHtml = `<div class="travelogue-detail-animes" style="display:flex;flex-wrap:wrap;gap:0.75rem;margin:1rem 0 0 0;justify-content:flex-start;">\n${imgs}\n</div>`;
   }
 
   const hasAnimeCover = !!animeCoverHtml;
   const hasDetailAnimes = !!detailAnimeHtml;
 
-  const systemPrompt = `あなたは「地球の歩き方」のライターです。与えられた情報をもとに、構造化された日本語の旅行記を書いてください。
+  // サマリー構造を事前に構築（ネストされたテンプレートリテラルを回避）
+  let summaryStructure = '';
+  if (hasAnimeCover) {
+    const coverDiv = '<div style="flex:0 0 auto;min-width:200px;">' + animeCoverHtml + '</div>';
+    const textDiv = '<div style="flex:1;min-width:250px;"><p>220字のサマリー</p>' + (hasDetailAnimes ? detailAnimeHtml : '') + '</div>';
+    summaryStructure = '<div class="travelogue-summary" style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;margin:2rem 0;">' + coverDiv + textDiv + '</div>';
+  } else {
+    summaryStructure = '<div class="travelogue-summary"><p>220字のサマリー</p>' + (hasDetailAnimes ? detailAnimeHtml : '') + '</div>';
+  }
 
-${parentTripInfo ? `【重要】この旅行記は「${parentTripInfo.name}」${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部です。親トリップの説明を参照するのはマイルストーン（ランドマーク）の写真のみにしてください。ランドマークでない写真では親の説明を参照しないでください。` : ''}
+  // 🚀 プロンプト大幅短縮：最速生成のために必要最小限に
+  const systemPrompt = `HTMLのみを出力してください。説明文や\`\`\`htmlなどのマークダウンは不要です。
 
-出力形式（HTML）:
-
-1. 最初に旅の表題を魅力的に表記:
-<h2 class="travelogue-title">トリップ名とトリップ説明${parentTripInfo ? '、そして親トリップの情報' : ''}を元に、旅の魅力を表す表題を生成（例：「瀬戸内の風を感じる しまなみ海道サイクリング紀行」「古都を巡る 京都・奈良の寺社仏閣めぐり」など）${parentTripInfo ? '。親トリップの一部であることを表題に反映させてください。' : ''}</h2>
-
-2. 最初のセクション（上段: 左にアニメ表紙・右にサマリー、その下に詳細アニメ、さらにその下に地図）:
-${hasAnimeCover ? `【上段】左にアニメ表紙、右に旅のサマリー（220字）を横並びで配置:
-<div class="travelogue-summary" style="display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;margin:2rem 0;">
-  <div style="flex:0 0 auto;min-width:200px;">
-${animeCoverHtml}
-  </div>
-  <div style="flex:1;min-width:250px;">
-    <p>旅のサマリーを<strong>220字</strong>で記述（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
-  </div>
-</div>
-` : `【上段】旅のサマリーを<strong>220字</strong>で記述:
-<div class="travelogue-summary">
-  <p>旅行のサマリー220字（地球の歩き方風の文章で、この旅の見どころ、特徴、魅力を具体的に）${parentTripInfo ? `。${parentTripInfo.name}${parentTripInfo.description ? `（${parentTripInfo.description}）` : ''}の一部として、この区間の位置づけや繋がりを簡潔に説明してください。` : ''}</p>
-</div>
-`}
-${hasDetailAnimes ? `【詳細アニメ】その下に詳細アニメ画像を1/3サイズで横並び配置:
-${detailAnimeHtml}
-` : ''}
-【地図】その下にGPSルート地図用のコンテナ:
+構造:
+1. タイトル: <h2 class="travelogue-title">魅力的な表題</h2>
+2. サマリー: ${summaryStructure}
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
+3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
+<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
 
-3. その下にランドマーク毎にセクション分けして旅行記を記述（マイルストーンの写真のみ、親トリップの説明を参照して旅の流れを反映可）:
-
-**重要: スタンプフラグがついている写真の扱い**
-- スタンプフラグ（isStamp: true）がついている写真は、独立したセクションにしないでください
-- スタンプ写真は、その直前のランドマークセクションの一部として含めてください
-- スタンプ写真も通常の写真と同じレイアウトで表示してください
-
-<div class="travelogue-landmark-section">
-  <h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍 ランドマーク番号: ポイント名</h3>
-
-  そのランドマークに関連する写真を表示（ランドマーク写真の後にスタンプ写真がある場合は、それも含める）:
-  <div style="margin:1.5rem 0;">
-    <div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;">
-      <div style="position:relative;width:500px;max-width:100%;">
-        <img src="写真URL" alt="ポイント名" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;">
-        <div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;font-size:1rem;box-shadow:0 2px 6px rgba(0,0,0,0.4);">ポイント名</div>
-        <div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;line-height:1.4;">[ポイント説明をここに記載]</div>
-      </div>
-      <div style="flex:1;min-width:250px;">
-        <p>100字程度の旅の情景（その場所での体験、見た景色、感じた雰囲気を、旅行記全体の流れを踏まえて描写。同じ表現の繰り返しを避け、各写真ごとに固有の描写を）</p>
-      </div>
-    </div>
-  </div>
-
-  追加の写真がある場合も同様に配置
-
-  Wikipedia情報がある場合（ランドマークの最後に1回だけ）:
-  <p style="background:#f8f9fa;padding:1rem;border-radius:6px;border-left:3px solid ${tripColor};margin:1.5rem 0;">
-    <strong>📚 （Wikipediaのtitleフィールドの値）について：</strong>Wikipedia情報の内容
-  </p>
-  ※「（Wikipediaのtitleフィールドの値）について」の部分には、実際に取得したWikipedia記事のタイトルを使用してください（例：「観音寺について」「しまなみ海道について」など）
-</div>
-
-4. ランドマークでない写真も同様に表示（h3なし、セクション分けなし）。※ランドマークでない写真では親トリップの説明は参照しないでください
-
-5. スタンプ一覧はアプリ側で自動表示するため、旅行記のHTMLには含めないでください。
-
-重要事項:
-- トリップカラーは${tripColor}です
-- ランドマーク見出しにトリップカラーを使用してください
-- 旅の表題はトリップ名とトリップ説明を元に魅力的な表題を生成してください
-- サマリーは220字で、旅の見どころ、特徴、魅力を具体的に
-- 写真は500px幅で表示してください
-- 写真の左上にポイント名をオーバーレイで配置
-- 写真の下部に[ポイント説明]をオーバーレイで配置（ブラケット付きで表示）
-- 写真の右側には100字程度の旅の情景を記述（その場所での体験、見た景色、感じた雰囲気など）
-- ⚠️旅行記全体を通して「ロードバイク」「お遍路」などの同じ言葉を繰り返さないでください。各写真ごとにその場面に特化した固有の説明を書き、同じフレーズの重複を避けてください
-- 親トリップの説明を参照するのはマイルストーン（ランドマーク）の写真のみ。ランドマークでない写真では参照しないでください
-- 写真毎のセクション分けは不要です（ランドマーク毎のみ）
-- **スタンプフラグ（isStamp: true）がついている写真は、独立したセクションにせず、直前のランドマークセクションの一部として含めてください**
-- Wikipedia情報は同じ内容を重複して書かないでください（ランドマークごとに1回のみ）
-- Wikipedia情報のタイトルは、実際に参照した地域名や観光名所の名前を使用してください（例：「観音寺について」「しまなみ海道について」など）
-- Wikipedia情報は、その場所の歴史、特徴、見どころなど、旅行者に役立つ情報を含めてください
-- GPSルート地図は自動表示されるのでHTMLに含めない
-- スタンプ一覧はアプリ側で自動表示するため旅行記HTMLに含めない
-- ナビゲーションリンクはアプリ側で自動追加するため旅行記HTMLに含めない`;
+重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
+注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
+
   try {
-    setStatus('旅行記を生成中...');
+    setStatus('旅行記を生成中... (数分かかる場合があります)');
     if (btn) btn.textContent = '旅行記生成中...';
+
+    // 不要なsetIntervalを削除（パフォーマンス最適化）
+    // progressInterval = setInterval(...) は削除
+
     let content = '';
     const provider = cfg.provider || 'gemini';
-    if (provider === 'gemini') {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
-          generationConfig: { temperature: 0.7 }
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else if (provider === 'openai') {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${cfg.apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.7
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      content = data.choices?.[0]?.message?.content || '';
-    } else if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': cfg.apiKey,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
-          max_tokens: 4096,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }]
-        })
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      content = data.content?.[0]?.text || '';
-    } else {
-      throw new Error('未対応のプロバイダーです');
-    }
-    if (!content.trim()) throw new Error('応答が空です');
 
+    // 写真が非常に多い場合のみ警告（閾値を50枚に引き上げ）
+    const photoCount = photos.length;
+    if (photoCount > 50) {
+      const proceed = confirm(
+        `写真が${photoCount}枚あります。\n\n` +
+        '高速モードでも生成に時間がかかる可能性があります。\n\n' +
+        'このまま生成を続けますか？'
+      );
+      if (!proceed) {
+        setStatus('旅行記生成をキャンセルしました');
+        return;
+      }
+    }
+
+    // 🚀 高速モード: タイムアウトを短縮（基本90秒 + 写真20枚ごとに20秒）
+    const baseTimeout = 90000;
+    const additionalTimeout = Math.floor(photoCount / 20) * 20000;
+    const timeout = baseTimeout + additionalTimeout;
+    console.log(`⚡ 高速モード - タイムアウト設定: ${timeout / 1000}秒 (写真${photoCount}枚)`);
+
+    const fetchWithTimeout = async (url, options, timeoutMs = timeout) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timeoutId);
+        return response;
+      } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new Error(`API呼び出しがタイムアウトしました（${timeoutMs / 1000}秒）。写真が多い場合は数を減らしてみてください。`);
+        }
+        throw error;
+      }
+    };
+
+    if (provider === 'gemini') {
+      const res = await fetchWithTimeout(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+            generationConfig: { temperature: 0.7 }
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`Gemini API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (!data.candidates || !data.candidates[0]) {
+        throw new Error('Gemini APIからの応答が不正です。candidatesが空です。');
+      }
+      content = data.candidates[0]?.content?.parts?.[0]?.text || '';
+    } else if (provider === 'openai') {
+      const res = await fetchWithTimeout(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${cfg.apiKey}`
+          },
+          body: JSON.stringify({
+            model: 'gpt-3.5-turbo',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            temperature: 0.7
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`OpenAI API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (!data.choices || !data.choices[0]) {
+        throw new Error('OpenAI APIからの応答が不正です。choicesが空です。');
+      }
+      content = data.choices[0]?.message?.content || '';
+    } else if (provider === 'anthropic') {
+      const res = await fetchWithTimeout(
+        'https://api.anthropic.com/v1/messages',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': cfg.apiKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-3-haiku-20240307',
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }]
+          })
+        }
+      );
+      const data = await res.json();
+      if (data.error) {
+        throw new Error(`Anthropic API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+      if (!data.content || !data.content[0]) {
+        throw new Error('Anthropic APIからの応答が不正です。contentが空です。');
+      }
+      content = data.content[0]?.text || '';
+    } else {
+      throw new Error('未対応のプロバイダーです: ' + provider);
+    }
+    if (!content.trim()) {
+      throw new Error('AIからの応答が空です。APIキーが正しいか、プロバイダーの設定を確認してください。');
+    }
+
+    console.log(`✓ AI生成完了: ${content.length} 文字 (${Date.now() - startTime}ms)`);
+
+    // AIの出力から不要な前置き文とマークダウンを削除
     let finalHtml = content.trim();
 
+    // ```html と ``` を削除
+    finalHtml = finalHtml.replace(/```html\s*/gi, '').replace(/```\s*$/g, '');
+
+    // HTMLタグ（<h2, <div など）より前にある前置き文を削除
+    const htmlTagMatch = finalHtml.match(/(<h2\s|<div\s)/i);
+    if (htmlTagMatch && htmlTagMatch.index > 0) {
+      finalHtml = finalHtml.substring(htmlTagMatch.index);
+    }
+
+    finalHtml = finalHtml.trim();
+
+    // 動画URLがあるポイントの写真をサムネイルに差し替え（AIが従わなかった場合のフォールバック）
+    photos.filter(p => p.url && p.videoUrl && p.videoUrl.trim()).forEach(p => {
+      const vUrl = p.videoUrl.trim();
+      const thumbUrl = getVideoThumbnailUrl(vUrl);
+      if (!thumbUrl || !finalHtml.includes(`src="${p.url}"`)) return;
+      const playOverlay = `<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:56px;height:56px;background:rgba(0,0,0,0.72);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff;pointer-events:none;">▶</div>`;
+      // <img src="写真URL" ...> を <a href="動画URL"><img src="サムネイルURL" ...></a> + 再生ボタンに差し替え
+      finalHtml = finalHtml.replace(
+        new RegExp(`<img src="${p.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"([^>]*)>`, 'g'),
+        `<a href="${escapeHtml(vUrl)}" target="_blank" rel="noopener" style="display:block;"><img src="${escapeHtml(thumbUrl)}"$1>${playOverlay}</a>`
+      );
+    });
+
     // 旅行記の最後にナビゲーターを追加
-    const allTrips = getOrderedTrips();
-    const currentIndex = allTrips.findIndex(t => t.id === trip.id);
+    if (!trip || !trip.id) {
+      throw new Error('ナビゲーター生成時にトリップ情報が不正です');
+    }
+    const allTrips = getOrderedTrips() || [];
+    const currentIndex = allTrips.findIndex(t => t && t.id === trip.id);
     const prevTrip = currentIndex > 0 ? allTrips[currentIndex - 1] : null;
     const nextTrip = currentIndex >= 0 && currentIndex < allTrips.length - 1 ? allTrips[currentIndex + 1] : null;
 
@@ -5270,18 +6601,77 @@ ${detailAnimeHtml}
 
     navHtml += '</div>';
 
+    // 旅行記に目次を追加
+    // ランドマークセクション（h3タグ）を抽出して目次を生成（スタンプは除外）
+    const landmarks = [];
+    const landmarkRegex = /<div class="travelogue-landmark-section"[^>]*>\s*<h3[^>]*>([^<]*)<\/h3>/gi;
+    let match;
+    while ((match = landmarkRegex.exec(finalHtml)) !== null) {
+      const landmarkTitle = match[1].replace(/<[^>]+>/g, ''); // HTMLタグを除去
+      // スタンプ項目は目次から除外（「スタンプ」「✅」を含むタイトルを除外）
+      if (!landmarkTitle.includes('スタンプ') && !landmarkTitle.includes('✅')) {
+        const landmarkId = `landmark-${landmarks.length + 1}`;
+        landmarks.push({ id: landmarkId, title: landmarkTitle });
+      }
+    }
+
+    // ランドマークセクションのdivにidを追加
+    if (landmarks.length > 0) {
+      let landmarkCount = 0;
+      finalHtml = finalHtml.replace(/<div class="travelogue-landmark-section"/g, () => {
+        const landmark = landmarks[landmarkCount];
+        landmarkCount++;
+        return `<div class="travelogue-landmark-section" id="${landmark.id}"`;
+      });
+
+      // サマリーの直後（地図コンテナの直前）に目次を挿入
+      const tocHtml = `
+<details class="travelogue-toc-details">
+  <summary class="travelogue-toc-summary">📋 目次</summary>
+  <nav class="travelogue-toc-nav">
+    <ul>
+      ${landmarks.map(landmark => `
+      <li><a href="#${landmark.id}" style="color:${tripColor};">› ${escapeHtml(landmark.title)}</a></li>
+      `).join('')}
+    </ul>
+  </nav>
+</details>`;
+
+      // 地図コンテナの直前に目次を挿入
+      const mapIdIdx = finalHtml.indexOf('id="travelogue-map-container"');
+      if (mapIdIdx !== -1) {
+        const divStart = finalHtml.lastIndexOf('<div', mapIdIdx);
+        if (divStart !== -1) {
+          finalHtml = finalHtml.slice(0, divStart) + tocHtml + '\n' + finalHtml.slice(divStart);
+        }
+      }
+    }
+
     finalHtml += navHtml;
 
     setStatus('旅行記を生成しました');
 
     // 旅行記をStorageに保存（Firestoreの1MB制限を回避）
     try {
-      console.log('旅行記をStorageに保存開始...');
+      // tripとcurrentTripの整合性を確認
+      if (!trip || !trip.id) {
+        throw new Error('トリップ情報が不正です（trip.idがありません）');
+      }
+      if (!currentTrip || !currentTrip.id) {
+        throw new Error('現在のトリップ情報が不正です（currentTrip.idがありません）');
+      }
+      if (trip.id !== currentTrip.id) {
+        throw new Error('トリップIDが一致しません。旅行記生成中に別のトリップが選択された可能性があります。');
+      }
+
+      console.log('旅行記をStorageに保存開始...', { tripId: trip.id });
       const travelogueUrl = await uploadTravelogueToStorage(trip.id, finalHtml);
       currentTrip.travelogueUrl = travelogueUrl;
       // HTMLはStorageに保存したのでFirestoreには保存しない（1MB制限回避）
       currentTrip.travelogueHtml = null;
       currentTrip.travelogueGeneratedAt = Date.now();
+      // 旅行記の内容ハッシュを保存（差分更新用）
+      currentTrip.travelogueContentHash = currentHash;
 
       // 履歴に追加
       if (!currentTrip.travelogueHistory) {
@@ -5295,7 +6685,8 @@ ${detailAnimeHtml}
       console.log('旅行記をStorageに保存しました:', {
         url: travelogueUrl,
         htmlSize: finalHtml.length,
-        historyCount: currentTrip.travelogueHistory.length
+        historyCount: currentTrip.travelogueHistory.length,
+        contentHash: currentHash
       });
     } catch (err) {
       console.error('旅行記のStorage保存エラー:', err);
@@ -5305,6 +6696,8 @@ ${detailAnimeHtml}
         currentTrip.travelogueHtml = finalHtml;
         currentTrip.travelogueUrl = null;
         currentTrip.travelogueGeneratedAt = Date.now();
+        // 旅行記の内容ハッシュを保存（差分更新用）
+        currentTrip.travelogueContentHash = currentHash;
 
         // 履歴に追加（HTMLの場合はURLとして特殊値を使用）
         if (!currentTrip.travelogueHistory) {
@@ -5321,9 +6714,10 @@ ${detailAnimeHtml}
       }
     }
 
-    console.log('トリップを保存します...');
+    console.log('💾 トリップを保存します...');
     await saveTrip();
-    console.log('トリップ保存完了');
+    const totalTime = Date.now() - startTime;
+    console.log(`✅ 旅行記生成完了: 合計 ${totalTime}ms (${(totalTime / 1000).toFixed(1)}秒)`);
     updateCoverPreview();
     updateTravelogueActionButtons();
     updateTravelogueHistoryLinks();
@@ -5331,7 +6725,32 @@ ${detailAnimeHtml}
     showTravelogueModal();
   } catch (err) {
     console.error('旅行記生成エラー:', err);
-    alert('旅行記の生成に失敗しました: ' + (err.message || String(err)));
+    console.error('エラースタック:', err.stack);
+    console.error('トリップ情報:', { trip, currentTrip });
+    let errorMessage = '旅行記の生成に失敗しました。\n\n';
+
+    if (err.message) {
+      errorMessage += `エラー: ${err.message}\n\n`;
+    }
+
+    if (err.message && err.message.includes('トリップ')) {
+      errorMessage += 'トリップ情報が不正です。\n';
+      errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
+    } else if (err.message && err.message.includes('API')) {
+      errorMessage += 'APIキーが正しいか確認してください。\n';
+      errorMessage += 'AI設定でプロバイダーとAPIキーを確認してください。';
+    } else if (err.message && err.message.includes('timeout')) {
+      errorMessage += 'APIの応答に時間がかかりすぎています。\n';
+      errorMessage += '写真の数を減らすか、しばらく待ってから再試行してください。';
+    } else if (err.message && err.message.includes('undefined')) {
+      errorMessage += 'データが不完全です。\n';
+      errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
+    } else {
+      errorMessage += 'コンソールログを確認してください。';
+    }
+
+    alert(errorMessage);
+    setStatus('旅行記生成に失敗しました');
   } finally {
     if (btn) btn.textContent = originalBtnText;
   }
@@ -5360,21 +6779,35 @@ async function initTravelogueMap(trip) {
   wrap.style.display = '';
   travelogueMap = L.map('travelogueMap').setView([pts[0][0], pts[0][1]], 10);
 
-  // メインマップと同じレイヤーを使用
+  // メインマップと同じレイヤーを使用（高解像度対応）
   if (currentMapLayer === 'satellite') {
+    // 衛星画像 + ラベルレイヤー
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       attribution: '© Esri, Maxar, Earthstar Geographics',
-      maxZoom: 18
+      maxZoom: 19,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
+    }).addTo(travelogueMap);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap, © CartoDB',
+      maxZoom: 19,
+      detectRetina: true,
+      subdomains: 'abcd',
+      pane: 'overlayPane'
     }).addTo(travelogueMap);
   } else if (currentMapLayer === 'terrain') {
     L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap, © OpenTopoMap',
-      maxZoom: 17
+      maxZoom: 17,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }).addTo(travelogueMap);
   } else {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap',
-      maxZoom: 19
+      maxZoom: 19,
+      detectRetina: true,
+      className: 'map-tiles-crisp'
     }).addTo(travelogueMap);
   }
 
@@ -5487,7 +6920,10 @@ async function showTravelogueModal(trip) {
     childrenWithTravelogue.forEach(c => {
       const childName = escapeHtml(c.name || '（無題）');
       const childColor = c.color || t.color || '#e1306c';
+      const hasVideo = getTripVideoUrlsForTrip(c).length > 0;
+      listHtml += `<div style="display:flex;align-items:stretch;gap:0.5rem;">`;
       listHtml += `<button type="button" class="child-travelogue-btn" data-trip-id="${c.id}" style="
+        flex:1;
         display:flex;
         align-items:center;
         gap:0.6rem;
@@ -5502,11 +6938,29 @@ async function showTravelogueModal(trip) {
         box-shadow:0 2px 8px rgba(0,0,0,0.1);
         transition:all 0.2s;
         text-align:left;
-        width:100%;
       ">
         <span style="font-size:1.3rem;">📖</span>
         <span style="flex:1;">${childName}</span>
       </button>`;
+      if (hasVideo) {
+        listHtml += `<button type="button" class="child-video-btn" data-trip-id="${c.id}" style="
+          min-width:52px;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          padding:0.75rem;
+          background:rgba(255,255,255,0.95);
+          color:#405de6;
+          border:2px solid #405de6;
+          border-radius:8px;
+          font-size:1.3rem;
+          cursor:pointer;
+          box-shadow:0 2px 8px rgba(0,0,0,0.1);
+          transition:all 0.2s;
+          flex-shrink:0;
+        " title="動画を再生">🎬</button>`;
+      }
+      listHtml += '</div>';
     });
 
     listHtml += '</div></div>';
@@ -5520,6 +6974,21 @@ async function showTravelogueModal(trip) {
         if (childTrip) {
           await showTravelogueModal(childTrip);
         }
+      });
+      btn.addEventListener('mouseenter', (e) => {
+        e.target.style.transform = 'translateY(-2px)';
+        e.target.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+      });
+      btn.addEventListener('mouseleave', (e) => {
+        e.target.style.transform = 'translateY(0)';
+        e.target.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+      });
+    });
+    content.querySelectorAll('.child-video-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const childId = btn.dataset.tripId;
+        const childTrip = children.find(c => c.id === childId);
+        if (childTrip) playVideoSequence(getTripVideoUrlsForTrip(childTrip));
       });
       btn.addEventListener('mouseenter', (e) => {
         e.target.style.transform = 'translateY(-2px)';
@@ -5594,6 +7063,125 @@ async function showTravelogueModal(trip) {
 
     content.innerHTML = processedHtml;
 
+    // 地図・TOC のレイアウト制御（デスクトップ: 横並び / モバイル: アコーディオン）
+    const tocDetails = content.querySelector('.travelogue-toc-details');
+    const mapCont = content.querySelector('#travelogue-map-container');
+
+    if (!isMobileView()) {
+      // ── デスクトップ: 地図(左) と TOC(右) を横並び ──
+      if (mapCont && tocDetails) {
+        const row = document.createElement('div');
+        row.className = 'travelogue-map-toc-row';
+
+        const mapCol = document.createElement('div');
+        mapCol.className = 'travelogue-map-col';
+
+        const tocCol = document.createElement('div');
+        tocCol.className = 'travelogue-toc-col';
+
+        // <details> を外して TOC コンテンツだけ tocCol に移す
+        const tocTitle = document.createElement('div');
+        tocTitle.className = 'travelogue-toc-title';
+        tocTitle.textContent = '📋 目次';
+        const tocNav = tocDetails.querySelector('.travelogue-toc-nav');
+        tocCol.appendChild(tocTitle);
+        if (tocNav) tocCol.appendChild(tocNav);
+        tocDetails.remove();
+
+        mapCont.parentNode.insertBefore(row, mapCont);
+        mapCol.appendChild(mapCont);
+        row.appendChild(mapCol);
+        row.appendChild(tocCol);
+      } else if (tocDetails) {
+        // 地図なし: TOC を常時展開
+        tocDetails.open = true;
+      }
+    } else {
+      // ── モバイル: 地図を <details> でラップ（デフォルト閉じ） ──
+      // TOC は生成時に既に <details> でラップ済み（閉じた状態がデフォルト）
+      if (mapCont) {
+        const mapDetailsEl = document.createElement('details');
+        mapDetailsEl.className = 'travelogue-map-details';
+        mapDetailsEl.id = 'travelogue-map-details';
+        const mapSummaryEl = document.createElement('summary');
+        mapSummaryEl.className = 'travelogue-map-summary';
+        mapSummaryEl.textContent = '🗺️ ルート地図';
+        mapDetailsEl.appendChild(mapSummaryEl);
+        mapCont.parentNode.insertBefore(mapDetailsEl, mapCont);
+        mapDetailsEl.appendChild(mapCont);
+        // open なし → 閉じた状態
+      }
+    }
+
+    // サマリー下に非表紙アニメ（detail系）を表示順に小さく並べる
+    // AI生成HTML内の既存アニメ行を除去（重複防止）
+    content.querySelectorAll('.travelogue-detail-animes').forEach(el => el.remove());
+    const allAnimes = t.generatedAnimes || [];
+    const detailAnimesToShow = allAnimes.filter(a => String(a.style || '').startsWith('detail'));
+    if (detailAnimesToShow.length > 0) {
+      const summaryEl = content.querySelector('.travelogue-summary');
+      if (summaryEl) {
+        const animesRow = document.createElement('div');
+        animesRow.className = 'travelogue-detail-animes-strip';
+        detailAnimesToShow.forEach(anime => {
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = '';
+          img.loading = 'lazy';
+          img.title = 'クリックで全アニメを表示';
+          img.dataset.isAnime = 'true';
+          img.onclick = () => showAnimeImageViewer(allAnimes, t.name);
+          animesRow.appendChild(img);
+        });
+        summaryEl.insertAdjacentElement('afterend', animesRow);
+      }
+    }
+
+    // 詳細アニメの後に出来事アニメ（event-story）を「出来事、出会い」セクションとして表示
+    content.querySelectorAll('.travelogue-event-stories').forEach(el => el.remove());
+    const eventAnimes = allAnimes.filter(a => a.style === 'event-story');
+    if (eventAnimes.length > 0) {
+      // 詳細アニメの後、または詳細アニメがなければサマリーの後に挿入
+      const detailAnimesStrip = content.querySelector('.travelogue-detail-animes-strip');
+      const insertAfter = detailAnimesStrip || content.querySelector('.travelogue-summary');
+      if (insertAfter) {
+        const eventSection = document.createElement('div');
+        eventSection.className = 'travelogue-event-stories';
+        eventSection.style.cssText = 'margin:2rem 0;padding:1.5rem;background:rgba(255,250,240,0.5);border-radius:12px;border-left:4px solid #ff9a9e;';
+
+        const eventTitle = document.createElement('h3');
+        eventTitle.textContent = '✨ 出来事、出会い';
+        eventTitle.style.cssText = 'font-size:1.3rem;color:#ff6b81;margin-bottom:1rem;font-weight:600;';
+        eventSection.appendChild(eventTitle);
+
+        eventAnimes.forEach(anime => {
+          const eventItem = document.createElement('div');
+          eventItem.className = 'travelogue-event-item';
+
+          const img = document.createElement('img');
+          img.src = anime.url;
+          img.alt = '出来事のアニメ';
+          img.loading = 'lazy';
+          img.title = 'クリックで拡大表示';
+          img.dataset.isAnime = 'true';
+          img.className = 'travelogue-event-anime';
+          img.onclick = () => showAnimeImageViewer(allAnimes, t.name);
+          eventItem.appendChild(img);
+
+          if (anime.eventText) {
+            const eventText = document.createElement('p');
+            eventText.textContent = anime.eventText;
+            eventText.className = 'travelogue-event-text';
+            eventItem.appendChild(eventText);
+          }
+
+          eventSection.appendChild(eventItem);
+        });
+
+        insertAfter.insertAdjacentElement('afterend', eventSection);
+      }
+    }
+
     // 旅行記内のナビゲーションリンクにイベントを追加
     content.querySelectorAll('.travelogue-nav-prev, .travelogue-nav-next').forEach((link) => {
       link.addEventListener('click', async (e) => {
@@ -5610,10 +7198,12 @@ async function showTravelogueModal(trip) {
     // 旅行記内の写真・アニメ画像をクリックで拡大表示
     content.querySelectorAll('img').forEach((img) => {
       img.style.cursor = 'pointer';
-      img.title = 'クリックで拡大表示';
+      if (!img.dataset.isAnime) img.title = 'クリックで拡大表示';
       img.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        // アニメ画像は onclick で処理済み（全アニメビューアーを開く）
+        if (img.dataset.isAnime) return;
         if (img.src) showImagePopup(img.src);
       });
     });
@@ -5681,7 +7271,18 @@ async function showTravelogueModal(trip) {
           mapWrap.style.display = 'block';
           mapContainer.appendChild(mapWrap);
         }
-        setTimeout(() => initTravelogueMap(t), 100);
+        const mapDetailsEl = document.getElementById('travelogue-map-details');
+        if (isMobileView() && mapDetailsEl && !mapDetailsEl.open) {
+          // モバイル: details が開かれた時に初期化（遅延）
+          mapDetailsEl.addEventListener('toggle', function onMapToggle() {
+            if (mapDetailsEl.open) {
+              mapDetailsEl.removeEventListener('toggle', onMapToggle);
+              setTimeout(() => initTravelogueMap(t), 100);
+            }
+          });
+        } else {
+          setTimeout(() => initTravelogueMap(t), 100);
+        }
       } else {
         // 古い形式：プレースホルダーを使用
         if (mapWrap) {
@@ -5740,7 +7341,86 @@ async function showTravelogueModal(trip) {
     }
   }
 
+  // 共有ボタンを生成
+  renderTravelogueShareButtons(t);
+
   modal.classList.add('open');
+}
+
+/** 旅行記の共有ボタンを生成 */
+function renderTravelogueShareButtons(trip) {
+  const shareButtonsWrap = document.getElementById('travelogueShareButtons');
+  if (!shareButtonsWrap || !trip) return;
+
+  // 親トリップの場合は共有ボタンを非表示
+  if (trip.isParent) {
+    shareButtonsWrap.style.display = 'none';
+    return;
+  }
+
+  // 共有用のURL（現在のページURL + トリップ名 + 旅行記フラグ）
+  const baseUrl = window.location.origin + window.location.pathname;
+  const tripName = trip.name || '';
+  const shareUrl = `${baseUrl}?trip=${encodeURIComponent(tripName)}&travelogue=true`;
+  const shareText = `${tripName}の旅行記`;
+
+  shareButtonsWrap.innerHTML = '';
+  shareButtonsWrap.style.display = 'flex';
+
+  // X (Twitter) ボタン
+  const twitterBtn = document.createElement('a');
+  twitterBtn.href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
+  twitterBtn.target = '_blank';
+  twitterBtn.rel = 'noopener noreferrer';
+  twitterBtn.className = 'travelogue-share-btn twitter';
+  twitterBtn.innerHTML = '𝕏';
+  twitterBtn.title = 'Xでシェア';
+  shareButtonsWrap.appendChild(twitterBtn);
+
+  // Instagram ボタン（Instagramは直接共有URLがないため、モバイル版のみ対応）
+  const instagramBtn = document.createElement('button');
+  instagramBtn.type = 'button';
+  instagramBtn.className = 'travelogue-share-btn instagram';
+  instagramBtn.innerHTML = '📷';
+  instagramBtn.title = 'Instagram（URLをコピーしてアプリで共有）';
+  instagramBtn.onclick = () => {
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      alert('URLをコピーしました。Instagramアプリで共有してください。');
+    });
+  };
+  shareButtonsWrap.appendChild(instagramBtn);
+
+  // Facebook ボタン
+  const facebookBtn = document.createElement('a');
+  facebookBtn.href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
+  facebookBtn.target = '_blank';
+  facebookBtn.rel = 'noopener noreferrer';
+  facebookBtn.className = 'travelogue-share-btn facebook';
+  facebookBtn.innerHTML = 'f';
+  facebookBtn.title = 'Facebookでシェア';
+  shareButtonsWrap.appendChild(facebookBtn);
+
+  // URLコピー ボタン
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'travelogue-share-btn copy-url';
+  copyBtn.innerHTML = '🔗';
+  copyBtn.title = 'URLをコピー';
+  copyBtn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      copyBtn.classList.add('copied');
+      copyBtn.innerHTML = '✓';
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        copyBtn.innerHTML = '🔗';
+      }, 2000);
+    } catch (err) {
+      console.error('URLコピー失敗:', err);
+      alert('URLのコピーに失敗しました');
+    }
+  };
+  shareButtonsWrap.appendChild(copyBtn);
 }
 
 /** 画像を大きなポップアップで表示（旅行記内の写真・アニメクリック用） */
@@ -6049,13 +7729,7 @@ const ANIME_STYLES = {
   'chikyu-cover': {
     label: '地球の歩き方表紙風',
     brand: '地球の歩き方',
-    prompt: ANIME_COVER_PREFIX + 'Chikyu no Arukikata (Earth\'s Walk) travel guide book cover style. Red and white design, Japanese travel publication aesthetic, professional cover layout with bold typography. Travelogue content: ',
-    brandClass: 'anime-brand-chikyu'
-  },
-  'chikyu-spot': {
-    label: '地球の歩き方おすすめスポット風',
-    brand: '地球の歩き方 おすすめスポット',
-    prompt: ANIME_COVER_PREFIX + 'Chikyu no Arukikata recommended spots style. Travel guide recommended destination aesthetic, inviting and informative layout. Travelogue content: ',
+    prompt: ANIME_COVER_PREFIX + 'Japanese travel guidebook cover style. Professional cover layout with bold trip title typography, scenic travel imagery, warm and inviting colors. IMPORTANT: Include a hand-drawn illustrated mini-map in the cover design showing the travel route with key waypoints marked — styled like a vintage travel guidebook map (soft watercolor or ink sketch style). No specific brand name or logo. Travelogue content: ',
     brandClass: 'anime-brand-chikyu'
   },
   'jump': {
@@ -6075,6 +7749,12 @@ const ANIME_STYLES = {
     brand: '地球の歩き方',
     prompt: '',
     brandClass: 'anime-brand-chikyu'
+  },
+  'event-story': {
+    label: '出来事生成',
+    brand: '旅の思い出',
+    prompt: '',
+    brandClass: 'anime-brand-event'
   }
 };
 
@@ -6401,12 +8081,71 @@ async function showAnimeModal() {
   const styleId = getSelectedAnimeStyle();
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
   const isDetail4Pages = styleId === 'detail4pages';
+  const isEventStory = styleId === 'event-story';
 
   try {
     if (btn) btn.textContent = '画像生成中...';
     setStatus('アニメ画像を生成中...');
 
     const charImg = await getCharacterImageForGeneration();
+
+    // 出来事生成: ユーザーが入力した出来事を元に5コマアニメを生成（キャラ画像必須）
+    if (isEventStory) {
+      if (!charImg) {
+        alert('出来事生成ではキャラ画像が必須です。キャラ画像をアップロードしてください。');
+        return;
+      }
+      const eventStoryInput = document.getElementById('eventStoryInput');
+      const eventText = eventStoryInput?.value?.trim();
+      if (!eventText) {
+        alert('出来事の説明を入力してください。\n例：山道で老夫婦が運転する車に遭遇して、それに乗せてもらい難を逃れた');
+        return;
+      }
+
+      setStatus('出来事から5コマアニメを生成中...');
+      if (btn) btn.textContent = '出来事アニメ生成中...';
+
+      const tripName = trip.name || '旅行';
+      const eventPrompt = [
+        `旅行「${tripName}」での以下の出来事を、5コマのマンガ形式で優しいタッチのアニメとして表現してください。`,
+        '',
+        '【重要】画像内のすべての言葉・説明・吹き出しのセリフ・ラベル・タイトルは必ず日本語のみで記述してください。英語は一切使用しないでください。',
+        '',
+        '【スタイル】優しく温かみのあるタッチ。柔らかい色調、アニメ調。ソフトで親しみやすいイラスト。',
+        '',
+        '【必須】',
+        '- 1枚の画像内に5コマを縦に並べた旅行記ページのレイアウト。',
+        '- アップロードされたキャラクターを主人公として、全5コマに登場させる。',
+        '- 各コマでキャラクターが吹き出しで出来事を説明・表現する。吹き出しの言葉は全て日本語。',
+        '- 出来事の流れを5コマで順に展開して表現する。',
+        '- 実写感は残さず、優しいアニメ調で統一。',
+        '',
+        '【出来事の内容 - 5コマで展開して表現】',
+        eventText,
+        ''
+      ].join('\n');
+
+      const generatedDataUrl = await generateImageWithAI(eventPrompt, charImg, animeCfg);
+      if (generatedDataUrl) {
+        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'event');
+        const animeData = {
+          url: storageUrl,
+          timestamp: Date.now(),
+          style: 'event-story',
+          eventText: eventText
+        };
+        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
+        currentTrip.generatedAnimes.push(animeData);
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+        setStatus('出来事の5コマアニメを生成しました');
+        // 入力欄をクリア
+        if (eventStoryInput) eventStoryInput.value = '';
+      } else {
+        alert('出来事アニメの生成に失敗しました。APIキーと入力内容を確認してください。');
+      }
+      return;
+    }
 
     // 詳細4ページ: キャラ主人公で4枚の5コマアニメ画像を生成（キャラ画像必須）
     if (isDetail4Pages) {
@@ -6434,7 +8173,7 @@ async function showAnimeModal() {
           '',
           '【重要】画像内のすべての言葉・説明・吹き出しのセリフ・ラベル・タイトルは必ず日本語のみで記述してください。英語は一切使用しないでください。',
           '',
-          '【スタイル】地球の歩き方風の旅行ガイド。ソフトで温かみのあるイラスト、柔らかい色調、アニメ調。',
+          '【スタイル】日本の旅行ガイドブック風のイラスト。ソフトで温かみのあるタッチ、柔らかい色調、アニメ調。特定のブランド名は使用しない。',
           '',
           '【必須】',
           '- 1枚の画像内に5コマを縦に並べた旅行記ページのレイアウト。',
@@ -6473,28 +8212,35 @@ async function showAnimeModal() {
 
     // 表紙系スタイル: 単一画像を生成
     const tripName = trip.name || '旅行';
-    let coverTitle = tripName;
 
-    const regionPatterns = [
-      /([ぁ-ん一-龥]{2,})(海道|街道|地方|エリア|地区)/,
-      /([ぁ-ん一-龥]{2,})(旅行|観光|めぐり|巡り)/,
-      /^([ぁ-ん一-龥]{2,})/
-    ];
-
-    for (const pattern of regionPatterns) {
-      const match = tripName.match(pattern);
-      if (match) {
-        coverTitle = `${match[1]}の歩き方`;
-        break;
-      }
-    }
-
+    // トリップ名から表紙タイトルを生成
     const photos = trip.photos || [];
     const places = [...new Set(photos.filter(p => p.placeName).map(p => p.placeName))];
-    if (coverTitle === tripName && places.length > 0) {
-      const mainPlace = places[0].replace(/(市|町|村|区|県|府|道).*/, '');
-      coverTitle = `${mainPlace}の歩き方`;
+
+    function buildCoverTitle(name) {
+      // Step1: Day7・第7日・7日目 などの日付プレフィックスを除去
+      let s = name.replace(/^(Day\s*\d+|第?\d+日目?)[:\s　]+/i, '').trim();
+
+      // Step2: 活動系サフィックスを除去して地名だけ残す
+      s = s.replace(/[のの]?(走り方|歩き方|旅行記?|観光|めぐり|巡り|サイクリング|ツーリング|ハイキング|トレッキング|探訪|散策|見学|紀行|一周|縦断|横断|制覇|の旅|ライド|ウォーク|ドライブ).*$/, '').trim();
+
+      // Step3: 漢字・ひらがな・カタカナ・長音符・中点で構成される地名部分を抽出
+      const locMatch = s.match(/[一-龥ぁ-んァ-ンー々・〜]{2,}/);
+      if (locMatch) return `${locMatch[0]}の歩き方`;
+
+      // Step4: 元の cleaned 文字列が使えるならそのまま使う
+      if (s.length >= 2) return `${s}の歩き方`;
+
+      // Step5: 写真の地名から補完
+      if (places.length > 0) {
+        const mainPlace = places[0].replace(/(市|町|村|区|県|府|道).*/u, '');
+        if (mainPlace.length >= 2) return `${mainPlace}の歩き方`;
+      }
+
+      return `${name}の歩き方`;
     }
+
+    let coverTitle = buildCoverTitle(tripName);
 
     const promptParts = [
       style.prompt,
@@ -6530,6 +8276,30 @@ async function showAnimeModal() {
       const descriptions = photos.filter(p => p.description).map(p => p.description).slice(0, 3);
       if (descriptions.length > 0) {
         promptParts.push(`【ハイライト】${descriptions.join('、')}`);
+      }
+
+      // 地球の歩き方表紙風: マップ情報を追加
+      if (styleId === 'chikyu-cover') {
+        // ルート順の地名リスト（重複除去）
+        const routeNames = photos
+          .filter(p => p.name || p.placeName)
+          .map(p => p.name || p.placeName)
+          .filter((v, i, arr) => arr.indexOf(v) === i)
+          .slice(0, 10);
+        if (routeNames.length > 0) {
+          promptParts.push(`【ルート順のスポット（ミニマップに使用）】${routeNames.join(' → ')}`);
+        }
+        const hasGps = photos.some(p => p.lat != null && p.lng != null);
+        if (hasGps) {
+          const startPhoto = photos.find(p => p.lat != null);
+          const endPhoto = [...photos].reverse().find(p => p.lat != null);
+          if (startPhoto && endPhoto) {
+            const startName = startPhoto.name || startPhoto.placeName || 'スタート';
+            const endName = endPhoto.name || endPhoto.placeName || 'ゴール';
+            promptParts.push(`【スタート〜ゴール】${startName} → ${endName}`);
+          }
+        }
+        promptParts.push('【ミニマップの指示】表紙の一角（右下や左下など）に手描き風の小さなルートマップを配置してください。訪問スポットをドット（●）でマークし、矢印の線でつないだシンプルな地図スタイル。旅行ガイドブックらしい味のある手書きイラスト調で。');
       }
     }
 
@@ -6607,25 +8377,23 @@ function renderGeneratedAnimesList() {
     return;
   }
 
-  // コンテナをクリア
   container.innerHTML = '';
 
   if (!currentTrip || !currentTrip.generatedAnimes || currentTrip.generatedAnimes.length === 0) {
-    console.log('表示するアニメ画像がありません');
     return;
   }
 
-  console.log(`${currentTrip.generatedAnimes.length}個のアニメ画像を表示します`);
+  const total = currentTrip.generatedAnimes.length;
 
-  // 各画像を表示
   currentTrip.generatedAnimes.forEach((anime, index) => {
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position:relative;display:inline-block;';
+    wrapper.style.cssText = 'position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:2px;';
 
+    // サムネイル画像
     const img = document.createElement('img');
     img.src = anime.url;
     img.alt = `${currentTrip.name}のアニメ画像`;
-    img.style.cssText = 'height:100px;width:auto;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.2);cursor:pointer;';
+    img.style.cssText = 'height:90px;width:auto;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.2);cursor:pointer;display:block;';
     img.title = 'クリックで拡大表示';
     img.onclick = () => {
       const modal = document.createElement('div');
@@ -6639,25 +8407,18 @@ function renderGeneratedAnimesList() {
     };
     wrapper.appendChild(img);
 
+    // 削除ボタン（画像右上に絶対配置）
     const deleteBtn = document.createElement('button');
     deleteBtn.textContent = '×';
     deleteBtn.title = '画像を削除';
-    deleteBtn.style.cssText = 'position:absolute;top:2px;right:2px;background:#dc3545;color:white;border:none;border-radius:50%;width:20px;height:20px;font-size:14px;line-height:1;cursor:pointer;padding:0;';
+    deleteBtn.style.cssText = 'position:absolute;top:2px;right:2px;background:#dc3545;color:white;border:none;border-radius:50%;width:18px;height:18px;font-size:12px;line-height:1;cursor:pointer;padding:0;z-index:1;';
     deleteBtn.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm('この画像を削除しますか？')) return;
-
       try {
-        // Storageから削除
         await deleteAnimeImageFromStorage(anime.url);
-
-        // トリップデータから削除
         currentTrip.generatedAnimes.splice(index, 1);
-
-        // トリップを保存
         await saveTrip({ silent: true });
-
-        // UIを更新
         renderGeneratedAnimesList();
         setStatus('画像を削除しました');
       } catch (err) {
@@ -6666,6 +8427,32 @@ function renderGeneratedAnimesList() {
       }
     };
     wrapper.appendChild(deleteBtn);
+
+    // 並び替えボタン（画像の下に横並び）
+    const orderRow = document.createElement('div');
+    orderRow.style.cssText = 'display:flex;gap:2px;';
+
+    const moveBtn = (label, delta, title) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.title = title;
+      btn.style.cssText = 'background:#555;color:#fff;border:none;border-radius:3px;width:22px;height:18px;font-size:11px;cursor:pointer;padding:0;line-height:1;';
+      btn.disabled = delta < 0 ? index === 0 : index === total - 1;
+      if (btn.disabled) btn.style.opacity = '0.3';
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const arr = currentTrip.generatedAnimes;
+        const target = index + delta;
+        [arr[index], arr[target]] = [arr[target], arr[index]];
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+      };
+      return btn;
+    };
+
+    orderRow.appendChild(moveBtn('←', -1, '左へ移動'));
+    orderRow.appendChild(moveBtn('→', 1, '右へ移動'));
+    wrapper.appendChild(orderRow);
 
     container.appendChild(wrapper);
   });
@@ -6789,7 +8576,12 @@ function closeVideoOverlay() {
   }
   const overlay = document.getElementById('videoOverlay');
   const wrap = document.getElementById('videoPlayerWrap');
-  if (overlay) overlay.classList.add('hidden');
+  if (overlay) {
+    overlay.classList.add('hidden');
+    // ポイント名のオーバーレイを削除
+    const nameOverlay = overlay.querySelector('.video-overlay-point-name');
+    if (nameOverlay) nameOverlay.remove();
+  }
   document.querySelector('.map-container')?.classList.remove('map-showing-video');
   if (wrap) {
     wrap.innerHTML = '';
@@ -6817,6 +8609,26 @@ function closeBlogPopup() {
 
 function setStatus(msg, isError = false) {
   console.log(msg);
+}
+
+function showMarkerSaveBar(pending) {
+  pendingMarkerDrag = pending;
+  const bar = document.getElementById('mapMarkerSaveBar');
+  const label = document.getElementById('mapMarkerSaveLabel');
+  if (!bar) return;
+  const name = pending.tripRef?.photos?.[pending.photoIdx]?.name;
+  if (label) label.textContent = name ? `📍 「${name}」の位置を移動中` : '📍 GPS位置を移動中';
+  bar.style.display = '';
+}
+
+function hideMarkerSaveBar() {
+  pendingMarkerDrag = null;
+  const bar = document.getElementById('mapMarkerSaveBar');
+  if (bar) bar.style.display = 'none';
+  const saveBtn = document.getElementById('mapMarkerSaveBtn');
+  const cancelBtn = document.getElementById('mapMarkerCancelBtn');
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存'; }
+  if (cancelBtn) cancelBtn.disabled = false;
 }
 
 async function getGpsInfo() {
@@ -6923,10 +8735,14 @@ async function updateHeaderInfo() {
   let hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
     (currentTrip.travelogueHistory?.length > 0);
 
+  // 親トリップ用の子トリップリストを 1 回だけ取得（以下で複数回利用）
+  const _childTrips = currentTrip.isParent
+    ? getOrderedTrips().filter(t => t.parentId === currentTrip.id)
+    : [];
+
   // 親トリップの場合は、子トリップに旅行記があるかどうかで判定
   if (currentTrip.isParent) {
-    const children = getOrderedTrips().filter(c => c.parentId === currentTrip.id);
-    hasTravelogue = children.some(c =>
+    hasTravelogue = _childTrips.some(c =>
       (c.travelogueHtml && c.travelogueHtml.trim()) ||
       c.travelogueUrl ||
       (c.travelogueHistory?.length > 0)
@@ -6939,8 +8755,7 @@ async function updateHeaderInfo() {
   let animes = [];
   if (currentTrip.isParent) {
     // 親トリップの場合、全ての子トリップのアニメとスタンプを集める
-    const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
-    childTrips.forEach(child => {
+    _childTrips.forEach(child => {
       const childAnimes = child.generatedAnimes || child.animes || [];
       animes = animes.concat(childAnimes);
     });
@@ -6949,8 +8764,7 @@ async function updateHeaderInfo() {
   }
   let hasStamps = false;
   if (currentTrip.isParent) {
-    const childTrips = getOrderedTrips().filter(t => t.parentId === currentTrip.id);
-    hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
+    hasStamps = _childTrips.some(child => (child.photos || []).some(p => p.isStamp));
   } else {
     hasStamps = (currentTrip.photos || []).some(p => p.isStamp);
   }
@@ -7019,6 +8833,13 @@ async function updateHeaderInfo() {
       const tripColor = currentTrip.color || '#e1306c';
       headerMobileTripName.style.color = tripColor;
       headerMobileTripName.style.display = 'block';
+
+      // クリックイベント：旅行記を開く
+      headerMobileTripName.style.cursor = 'pointer';
+      headerMobileTripName.onclick = (e) => {
+        e.stopPropagation();
+        showTravelogueModal();
+      };
     }
   } else {
     // デスクトップ表示
@@ -7064,14 +8885,12 @@ async function updateHeaderInfo() {
       });
     }
 
-    // デスクトップのトリップ名リンクにクリックイベントを追加（地図表示に遷移）
+    // デスクトップのトリップ名リンクにクリックイベントを追加（旅行記を開く）
     const tripMapLink = line1.querySelector('.header-trip-map-link');
     if (tripMapLink) {
       tripMapLink.addEventListener('click', (e) => {
         e.preventDefault();
-        if (currentTrip) {
-          loadTripById(currentTrip.id);
-        }
+        showTravelogueModal();
       });
     }
 
@@ -7109,7 +8928,7 @@ function updateTripSheetTriggerLabel() {
       tripSheetTriggerLabel.style.fontWeight = '600';
     }
 
-    // 前後のボタンの有効/無効を設定
+    // 前後のボタンの有効/無効を設定（getOrderedTrips はメモ化済みなので再取得は低コスト）
     const trips = getOrderedTrips();
     const currentIndex = trips.findIndex(t => t.id === currentTrip.id);
     if (prevBtn) {
@@ -7140,23 +8959,31 @@ function updateMapTripNameOverlay() {
     const tripColor = currentTrip.color || '#e1306c';
     const hasTravelogue = currentTrip.travelogueHtml || currentTrip.travelogueUrl ||
       (currentTrip.travelogueHistory?.length > 0);
-    const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
-    const hasAnime = animes.length > 0;
+    // getOrderedTrips() はメモ化済みのため再取得は O(1) に近い
+    const childTripsForOverlay = currentTrip.isParent
+      ? getOrderedTrips().filter(t => t.parentId === currentTrip.id)
+      : [];
+    const hasStamps = currentTrip.isParent
+      ? childTripsForOverlay.some(child => (child.photos || []).some(p => p.isStamp))
+      : (currentTrip.photos || []).some(p => p.isStamp);
+
+    // トリップ名に旅行記ラベルを追加
+    const tripNameDisplay = hasTravelogue
+      ? `${escapeHtml(currentTrip.name)} <span class="map-trip-travelogue-label">旅行記</span>`
+      : escapeHtml(currentTrip.name);
 
     if (isMobileView()) {
-      // モバイル：左に旅行記ボタン、中央にトリップ名、右にアニメボタン
+      // モバイル：トリップ名のみ表示（ボタンなし）
       overlay.innerHTML = `
-        <div class="map-trip-name-card map-trip-name-card-mobile" style="--trip-color: ${tripColor}" id="mapTripNameCard">
-          ${hasTravelogue ? '<button type="button" class="map-trip-name-btn map-trip-name-btn-travelogue" title="旅行記">📖</button>' : '<div class="map-trip-name-spacer"></div>'}
-          <div class="map-trip-name-text" id="mapTripNameText">${escapeHtml(currentTrip.name)}</div>
-          ${hasAnime ? '<button type="button" class="map-trip-name-btn map-trip-name-btn-anime" title="アニメ">🎨</button>' : '<div class="map-trip-name-spacer"></div>'}
+        <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
+          <div class="map-trip-name-text" id="mapTripNameText">${tripNameDisplay}</div>
         </div>
       `;
     } else {
       // デスクトップ：従来通り
       overlay.innerHTML = `
         <div class="map-trip-name-card" style="--trip-color: ${tripColor}" id="mapTripNameCard">
-          <div class="map-trip-name-text">${escapeHtml(currentTrip.name)}</div>
+          <div class="map-trip-name-text">${tripNameDisplay}</div>
         </div>
       `;
     }
@@ -7172,34 +8999,14 @@ function updateMapTripNameOverlay() {
 
     // クリックイベントを追加
     if (isMobileView()) {
-      // モバイル：各ボタンとトリップ名に個別のイベント
-      const travelogueBtn = overlay.querySelector('.map-trip-name-btn-travelogue');
-      if (travelogueBtn) {
-        travelogueBtn.onclick = (e) => {
-          e.stopPropagation();
-          showTravelogueModal();
-        };
-      }
-
-      const animeBtn = overlay.querySelector('.map-trip-name-btn-anime');
-      if (animeBtn) {
-        animeBtn.onclick = (e) => {
-          e.stopPropagation();
-          const animes = currentTrip.generatedAnimes || currentTrip.animes || [];
-          if (animes.length > 0) {
-            showAnimeImageViewer(animes, currentTrip.name);
-          }
-        };
-      }
-
+      // モバイル：トリップ名をクリックで旅行記を開く
       const tripNameText = document.getElementById('mapTripNameText');
       if (tripNameText) {
         tripNameText.style.cursor = 'pointer';
-        tripNameText.title = '地図を再読み込み';
-        tripNameText.onclick = () => {
-          if (currentTrip) {
-            loadTripById(currentTrip.id);
-          }
+        tripNameText.title = '旅行記を表示';
+        tripNameText.onclick = (e) => {
+          e.stopPropagation();
+          showTravelogueModal();
         };
       }
     } else {
@@ -7297,13 +9104,34 @@ function updateTravelogueHistoryLinks() {
     const date = new Date(entry.timestamp);
     const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
+    const wrap = document.createElement('span');
+    wrap.style.cssText = 'display:inline-flex;align-items:stretch;border-radius:4px;overflow:hidden;border:1px solid #d0d0d0;';
+
     const link = document.createElement('button');
     link.type = 'button';
     link.className = 'btn btn-secondary btn-xs';
+    link.style.borderRadius = '0';
+    link.style.border = 'none';
     link.textContent = `📝 ${dateStr}`;
     link.title = `旅行記履歴 ${actualIndex + 1} を表示`;
     link.onclick = () => showTravelogueFromHistory(entry);
-    container.appendChild(link);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.style.cssText = 'border:none;border-left:1px solid #d0d0d0;background:#fff;color:#c0392b;padding:0 6px;cursor:pointer;font-size:0.8rem;line-height:1;';
+    deleteBtn.title = 'この旅行記履歴を削除';
+    deleteBtn.textContent = '✕';
+    deleteBtn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`${dateStr} の旅行記履歴を削除しますか？`)) return;
+      currentTrip.travelogueHistory.splice(actualIndex, 1);
+      await saveTrip({ silent: true });
+      updateTravelogueHistoryLinks();
+    };
+
+    wrap.appendChild(link);
+    wrap.appendChild(deleteBtn);
+    container.appendChild(wrap);
   });
 }
 
@@ -7394,9 +9222,16 @@ function initEventListeners() {
       console.log('認証状態変化: ログアウト状態');
       cachedAiConfig = null;
     }
+    // 認証ユーザーが変わったので onSnapshot リスナーをリセット（loadMyTrips が再設定する）
+    if (_tripsUnsubscribe) {
+      _tripsUnsubscribe();
+      _tripsUnsubscribe = null;
+      tripsCache.data = null;
+      tripsCache.userId = null;
+    }
     updateEditorUI();
-    await loadMyTrips();
-    await loadTripOrder();
+    // Firestore読み込みを並列化（パフォーマンス最適化）
+    await Promise.all([loadMyTrips(), loadTripOrder()]);
     renderTripList();
     refreshTripSelect();
     await updateMapMarkers();
@@ -7496,6 +9331,51 @@ function initEventListeners() {
   }
 
   document.getElementById('saveTripBtn').onclick = saveTrip;
+
+  // マーカードラッグ後の保存バー
+  const mapMarkerSaveBtn = document.getElementById('mapMarkerSaveBtn');
+  const mapMarkerCancelBtn = document.getElementById('mapMarkerCancelBtn');
+  if (mapMarkerSaveBtn) {
+    mapMarkerSaveBtn.onclick = async () => {
+      if (!pendingMarkerDrag) return;
+      mapMarkerSaveBtn.disabled = true;
+      mapMarkerSaveBtn.textContent = '保存中...';
+      if (mapMarkerCancelBtn) mapMarkerCancelBtn.disabled = true;
+      const { tripRef, photoIdx } = pendingMarkerDrag;
+      try {
+        if (tripRef.photos?.[photoIdx]) {
+          const lat = tripRef.photos[photoIdx].lat;
+          const lng = tripRef.photos[photoIdx].lng;
+          tripRef.photos[photoIdx].placeName = await reverseGeocode(lat, lng);
+        }
+        await saveTrip({ silent: true });
+        await updateMapMarkers();
+        setStatus('✓ GPS位置を保存しました');
+        hideMarkerSaveBar();
+      } catch (err) {
+        console.error('GPS位置の保存に失敗:', err);
+        alert('保存に失敗しました: ' + (err.message || err));
+        mapMarkerSaveBtn.disabled = false;
+        mapMarkerSaveBtn.textContent = '保存';
+        if (mapMarkerCancelBtn) mapMarkerCancelBtn.disabled = false;
+      }
+    };
+  }
+  if (mapMarkerCancelBtn) {
+    mapMarkerCancelBtn.onclick = () => {
+      if (!pendingMarkerDrag) return;
+      const { tripRef, photoIdx, originalLat, originalLng, originalPlaceName } = pendingMarkerDrag;
+      if (tripRef.photos?.[photoIdx]) {
+        tripRef.photos[photoIdx].lat = originalLat;
+        tripRef.photos[photoIdx].lng = originalLng;
+        tripRef.photos[photoIdx].placeName = originalPlaceName;
+      }
+      hideMarkerSaveBar();
+      scheduleMapMarkersUpdate();
+      setStatus('位置の変更を元に戻しました');
+    };
+  }
+
   document.getElementById('newTripBtn').onclick = async () => {
     if (!isEditor()) return;
 
@@ -7618,7 +9498,11 @@ function initEventListeners() {
   if (playStopBtnMobile) {
     playStopBtnMobile.onclick = () => {
       if (playTimer) {
-        handlePlaybackStop();
+        // 自動再生停止時は完全停止して地図をリロード
+        stopPlay();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
       } else {
         startPlay();
       }
@@ -7638,7 +9522,11 @@ function initEventListeners() {
   if (mapPlayBtn) {
     mapPlayBtn.onclick = () => {
       if (playTimer) {
-        handlePlaybackStop();
+        // 自動再生停止時は完全停止して地図をリロード
+        stopPlay();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
       } else {
         startPlay();
       }
@@ -7689,7 +9577,11 @@ function initEventListeners() {
   if (mobilePlayBtn) {
     mobilePlayBtn.onclick = () => {
       if (playTimer) {
-        handlePlaybackStop();
+        // 自動再生停止時は完全停止して地図をリロード
+        stopPlay();
+        if (currentTrip) {
+          loadTripById(currentTrip.id);
+        }
         mobilePlayBtn.textContent = '▶';
       } else {
         startPlay();
@@ -7748,8 +9640,6 @@ function initEventListeners() {
 
   const generateTravelogueBtn = document.getElementById('generateTravelogueBtn');
   if (generateTravelogueBtn) generateTravelogueBtn.onclick = () => generateTravelogueWithAI();
-  const videoBackBtn = document.getElementById('videoBackBtn');
-  if (videoBackBtn) videoBackBtn.onclick = closeVideoOverlay;
 
 
   document.getElementById('helpModalClose').onclick = () => document.getElementById('helpModal').classList.remove('open');
@@ -7769,6 +9659,16 @@ function initEventListeners() {
   if (animeModalClose) animeModalClose.onclick = () => closeAnimeModal();
   if (animePlayBtn) animePlayBtn.onclick = () => toggleAnimePlay();
   if (animeModal) animeModal.onclick = (e) => { if (e.target === animeModal) closeAnimeModal(); };
+
+  // アニメスタイル選択時に出来事入力欄の表示を切り替え
+  const animeStyleSelect = document.getElementById('animeStyleSelect');
+  const eventStoryInputWrap = document.getElementById('eventStoryInputWrap');
+  if (animeStyleSelect && eventStoryInputWrap) {
+    animeStyleSelect.onchange = () => {
+      const isEventStory = animeStyleSelect.value === 'event-story';
+      eventStoryInputWrap.style.display = isEventStory ? '' : 'none';
+    };
+  }
 
   const animeImageViewerModal = document.getElementById('animeImageViewerModal');
   const animeImageViewerClose = document.getElementById('animeImageViewerClose');
@@ -7897,6 +9797,7 @@ function initEventListeners() {
 }
 
 function init() {
+  purgeExpiredGpxIDB(); // 期限切れGPXキャッシュをバックグラウンドで削除
   initRegionFilterFromUrl();
   applyAppTitle();
   initMap();
@@ -7913,18 +9814,84 @@ function init() {
 
   const loadTripsAndRender = async () => {
     try {
-      await loadMyTrips();
-      await loadTripOrder();
+      // Firestore読み込みを並列化（パフォーマンス最適化）
+      await Promise.all([loadMyTrips(), loadTripOrder()]);
       renderTripList();
       refreshTripSelect();
       refreshTripParentSelectOptions();
-      const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
-      if (lastTripId) {
+
+      // URLパラメータからトリップ名を取得
+      const urlParams = new URLSearchParams(window.location.search);
+      const tripNameParam = urlParams.get('trip');
+      const openTravelogue = urlParams.get('travelogue') === 'true';
+      const isHomeUrl = !tripNameParam; // ?trip= 指定なし = ホームURL
+
+      let tripToLoad = null;
+
+      if (tripNameParam) {
+        // URLパラメータでトリップ名が指定されている場合、そのトリップを検索
+        const decodedTripName = decodeURIComponent(tripNameParam);
+        const foundTrip = myTrips.find(t => t.name === decodedTripName);
+        if (foundTrip) {
+          console.log(`URLパラメータからトリップを開きます: ${decodedTripName}`);
+          tripToLoad = foundTrip.id;
+        } else {
+          console.warn(`トリップ名 "${decodedTripName}" が見つかりませんでした`);
+        }
+      }
+
+      // ホームURL（?trip= なし）の場合はドメインに応じたデフォルト親トリップを自動選択
+      if (!tripToLoad && isHomeUrl) {
+        const host = window.location.hostname || '';
+        const orderedTrips = getOrderedTrips();
+
+        if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
+          // ohenro.ktrips.net: 「しまなみ街道と四国お遍路旅」を確実に自動選択
+          const defaultParentName = 'しまなみ街道と四国お遍路旅';
+          const defaultTrip = myTrips.find(t => t.name === defaultParentName && t.isParent);
+          if (defaultTrip) {
+            console.log(`[${host}] デフォルト親トリップを自動選択: ${defaultParentName}`);
+            tripToLoad = defaultTrip.id;
+            // URLパラメータに親トリップを追加して、確実に表示されるようにする
+            window.history.replaceState({}, '', `?trip=${encodeURIComponent(defaultParentName)}`);
+          } else {
+            console.warn(`[${host}] デフォルト親トリップ "${defaultParentName}" が見つかりませんでした`);
+          }
+        } else if (/^air\.ktrips\.net$|^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$|^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) {
+          // air.ktrips.net: 最初の親トリップを確実に自動選択
+          const firstParent = orderedTrips.find(t => t.isParent);
+          if (firstParent) {
+            console.log(`[${host}] 先頭の親トリップを自動選択: ${firstParent.name}`);
+            tripToLoad = firstParent.id;
+            // URLパラメータに親トリップを追加して、確実に表示されるようにする
+            window.history.replaceState({}, '', `?trip=${encodeURIComponent(firstParent.name)}`);
+          } else {
+            console.warn(`[${host}] 親トリップが見つかりませんでした`);
+          }
+        }
+      }
+
+      // ドメインデフォルトも見つからなかった場合は、前回のトリップを開く
+      if (!tripToLoad) {
+        const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
+        if (lastTripId) {
+          tripToLoad = lastTripId;
+        }
+      }
+
+      if (tripToLoad) {
         try {
-          await loadTripById(lastTripId);
+          await loadTripById(tripToLoad);
+
+          // 旅行記パラメータがある場合、旅行記モーダルを開く
+          if (openTravelogue && currentTrip) {
+            setTimeout(() => {
+              showTravelogueModal(currentTrip);
+            }, 500); // トリップの読み込みが完全に完了するまで少し待つ
+          }
         } catch (err) {
-          console.error('前回のトリップ読み込みエラー:', err);
-          // 前回のトリップ読み込みに失敗した場合は、デフォルトビューを表示
+          console.error('トリップ読み込みエラー:', err);
+          // トリップ読み込みに失敗した場合は、デフォルトビューを表示
           await updateHeaderInfo();
           await updateMapMarkers();
         }
