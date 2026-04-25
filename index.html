@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" crossorigin="">
+  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css" crossorigin="">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="map-trip-name.css">
 </head>
@@ -69,11 +69,15 @@
           <input type="text" id="mapSearchInput" placeholder="地名を検索" class="map-search-input">
         </div>
         <div class="video-overlay hidden" id="videoOverlay">
-          <button type="button" class="video-back-btn" id="videoBackBtn" aria-label="戻る">← 戻る</button>
           <div class="video-player-wrap" id="videoPlayerWrap"></div>
         </div>
         <div class="playback-photo-overlay hidden" id="playbackPhotoOverlay">
           <div class="playback-photo-card" id="playbackPhotoCard"></div>
+        </div>
+        <div class="map-marker-save-bar" id="mapMarkerSaveBar" style="display:none;">
+          <span class="map-marker-save-label" id="mapMarkerSaveLabel">📍 GPS位置を移動中</span>
+          <button type="button" class="btn btn-sm btn-secondary" id="mapMarkerCancelBtn">元に戻す</button>
+          <button type="button" class="btn btn-sm btn-primary" id="mapMarkerSaveBtn">保存</button>
         </div>
       </div>
 
@@ -173,6 +177,12 @@
         </div>
       </section>
       <section class="menu-section editor-only" id="tripSection">
+        <div class="menu-field" id="tripThumbnailWrap" style="display:none;">
+          <div class="trip-menu-thumbnails-container">
+            <div class="trip-menu-thumbnails" id="tripMenuThumbnails"></div>
+            <button type="button" class="trip-menu-gps-add-btn" id="tripMenuGpsBtn" title="GPS地点を追加">📍 GPS</button>
+          </div>
+        </div>
         <div class="menu-field">
           <input type="text" id="tripNameInput" class="menu-input" placeholder="トリップ名">
         </div>
@@ -264,12 +274,17 @@
         <div class="menu-row menu-row-select-btn">
           <select id="animeStyleSelect" class="menu-select menu-select-inline">
             <option value="chikyu-cover">地球の歩き方表紙風</option>
-            <option value="chikyu-spot">地球の歩き方おすすめスポット風</option>
             <option value="jump">少年ジャンプの表紙風</option>
             <option value="travel-magazine">旅行雑誌の表紙風</option>
             <option value="detail4pages">詳細4ページ</option>
+            <option value="event-story">出来事生成</option>
           </select>
           <button type="button" class="btn btn-primary" id="generateAnimeBtnViewer" title="選択したスタイルでアニメを生成">アニメ生成</button>
+        </div>
+        <div id="eventStoryInputWrap" class="menu-row" style="display:none;padding-left:1rem;">
+          <textarea id="eventStoryInput"
+            placeholder="例：山道で老夫婦が運転する車に遭遇して、それに乗せてもらい難を逃れた"
+            style="width:100%;min-height:80px;padding:8px;border:1px solid var(--border);border-radius:4px;font-size:13px;resize:vertical;"></textarea>
         </div>
         <div id="generatedAnimesList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;padding-left:1rem;"></div>
       </section>
@@ -363,6 +378,7 @@
           <button type="button" class="modal-close" id="travelogueModalClose">&times;</button>
         </div>
       </div>
+      <div id="travelogueShareButtons" class="travelogue-share-buttons" style="display:none;"></div>
       <div class="modal-blog-body modal-travelogue-body">
         <div id="travelogueMap" class="travelogue-map-wrap"></div>
         <div id="travelogueContent" class="travelogue-content"></div>
@@ -415,20 +431,30 @@
   <div class="modal-overlay" id="helpModal">
     <div class="modal">
       <div class="modal-header">
-        <h2>Air ヘルプ</h2>
+        <h2>Air ヘルプ <span style="font-size:0.7rem; color:#888;">(v1.6.5)</span></h2>
         <button type="button" class="modal-close" id="helpModalClose">&times;</button>
       </div>
       <div class="modal-body">
         <h3>Air - 地図と写真でエア旅行</h3>
-        <p>GPS付き写真を地図上に表示し、スライドショーで楽しむWebアプリです。</p>
+        <p>GPS付き写真を地図上に表示し、スライドショーや旅行記でトリップを楽しむWebアプリです。</p>
+
+        <h4>📋 バージョン v1.6.5 の新機能</h4>
+        <ul>
+          <li><strong>🌐 Mapbox 3D地図:</strong> 自動再生中に 3D 地図に切り替え。ルート線・ポイントがグロー効果で強調表示（<code>config.js</code> で <code>MAPBOX_TOKEN</code> を設定）</li>
+          <li><strong>📱 PWA対応:</strong> Service Worker でオフラインキャッシュ。初回以降の表示を高速化</li>
+          <li><strong>💾 IndexedDB GPXキャッシュ:</strong> GPX ファイルを 24 時間キャッシュ</li>
+          <li><strong>✨ 出来事生成:</strong> AI アニメに新スタイル。旅の印象的な出来事を 5 コマで生成（キャラ画像必須）</li>
+          <li><strong>📤 旅行記シェア:</strong> Twitter / Instagram / Facebook で旅行記を共有</li>
+          <li><strong>⚡ パフォーマンス最適化:</strong> マップマーカー更新の debounce、トリップリストのリアルタイム同期</li>
+        </ul>
 
         <h4>🌍 閲覧モード（ログインなし）</h4>
         <p><strong>公開トリップを見る:</strong></p>
         <ol>
           <li>右側パネルのトリップ一覧から選択</li>
           <li>写真サムネイルをクリックして地図上に表示</li>
-          <li>「▶ 再生」でスライドショー（1/3/5秒間隔を選択可能）</li>
-          <li>「前」「次」ボタンで写真を手動で切り替え</li>
+          <li>「▶ 再生」でスライドショー自動再生</li>
+          <li>「前」「次」ボタンで写真を手動で切り替え（非表示状態で「次」を押すと最初の写真を表示）</li>
         </ol>
         <p><strong>トリップ所在で絞り込み:</strong></p>
         <ul>
@@ -441,10 +467,28 @@
           <li>マウスホイールでズーム、ドラッグで移動</li>
           <li>写真マーカーをクリックして詳細表示</li>
         </ul>
-        <p><strong>その他の機能:</strong></p>
+        <p><strong>自動再生:</strong></p>
+        <ul>
+          <li>「▶ 再生」でスライドショー開始。再生終了後は地図全体表示に自動復帰</li>
+          <li>Mapboxトークンが設定されている場合、再生中は Mapbox 3D 地図に切り替わりルート線・ポイントがグロー効果で強調表示</li>
+          <li>画面下部の ■ 停止ボタンでいつでも停止可能</li>
+        </ul>
+        <p><strong>動画・旅行記:</strong></p>
         <ul>
           <li>右上メニュー（☰）から動画・旅行記・スタンプラリーを表示</li>
+          <li>動画表示中は画面上中央のコントロールバー（⏮ ⏸/▶ ⏭ ✕）で操作。動画終了後は自動で次の動画へ</li>
+          <li>YouTube・Vimeo・YouTube Shortsの動画URLに対応</li>
           <li>旅行記がある場合、トリップ名をクリックで旅行記を表示</li>
+        </ul>
+
+        <h4>📖 旅行記の表示</h4>
+        <ul>
+          <li><strong>PC（デスクトップ）:</strong> ルート地図と目次（ランドマーク一覧）が横並び表示。常時展開</li>
+          <li><strong>モバイル:</strong> ルート地図・目次はアコーディオン折り畳み（タップで展開）</li>
+          <li><strong>アニメストリップ:</strong> サマリー直下に詳細アニメを横並びでプレビュー表示</li>
+          <li><strong>動画ポイント:</strong> 動画URLがあるポイントは動画サムネイルをメイン表示。クリックで動画を再生</li>
+          <li><strong>旅行記履歴:</strong> 右側メニューの旅行記履歴から過去の旅行記を参照。横の ✕ ボタンで削除可能</li>
+          <li><strong>シェア:</strong> 旅行記下部の Twitter / Instagram / Facebook ボタンで共有（Instagram はURLをコピー）</li>
         </ul>
 
         <h4>✏️ 編集モード（ログイン必要）</h4>
@@ -463,7 +507,7 @@
         <p><strong>2. 写真をアップロード:</strong></p>
         <ul>
           <li>画面に写真をドラッグ＆ドロップ（複数枚可）</li>
-          <li>GPS情報付き写真は自動的に地図上に配置</li>
+          <li>GPS情報付き写真は自動的に地図上に配置、地名も自動取得</li>
           <li>GPS情報がない写真は地図をクリックして位置を指定</li>
         </ul>
 
@@ -471,8 +515,15 @@
         <ol>
           <li>地図上の写真マーカーをクリック</li>
           <li>✏️編集ボタンをクリック</li>
-          <li>ポイント名・説明・ランドマーク番号を入力</li>
+          <li>ポイント名・説明・ランドマーク番号・動画URLを入力</li>
           <li>「保存」ボタンで保存</li>
+        </ol>
+
+        <p><strong>3b. GPS位置を変更（マーカードラッグ）:</strong></p>
+        <ol>
+          <li>ログイン済みの状態で地図上のマーカーをドラッグ</li>
+          <li>移動先でドロップすると地図下部に保存バーが表示</li>
+          <li>「保存」で新しい位置を確定、「元に戻す」でキャンセル</li>
         </ol>
 
         <p><strong>4. 写真の削除:</strong></p>
@@ -493,7 +544,7 @@
           <li>右上メニューでトリップ名・説明を入力</li>
           <li>ブログURLを追加（説明欄にリンク表示）</li>
           <li>動画URLを追加（YouTube/Vimeo対応）</li>
-          <li>カラーピッカーでルート色を選択（12色）</li>
+          <li>カラーピッカーでルート色を選択（15色）</li>
         </ul>
 
         <p><strong>7. 保存と公開:</strong></p>
@@ -511,11 +562,13 @@
           <li>子トリップで「親を選択」→親トリップを選択</li>
           <li>「＋ 子トリップを追加」で新しい子を作成</li>
         </ol>
-        <p><strong>親トリップ選択時の表示（デスクトップ）:</strong></p>
+        <p><strong>親トリップ選択時の表示:</strong></p>
         <ul>
-          <li>子トリップのAIアニメサムネイルをインライン表示</li>
-          <li>各子トリップ名の横に📖（旅行記）・🎬（動画）の小ボタンを表示</li>
+          <li>全子トリップのAIアニメサムネイルをまとめてインライン表示（クリックでスライドショー）</li>
+          <li>旅行記ボタン（📖）をクリックすると子トリップ一覧が表示され、各トリップの旅行記を確認できる</li>
+          <li>旅行記一覧では各子トリップ名の横に🎬動画ボタンも表示（動画がある場合）</li>
           <li>スタンプラリーがある場合は🎫スタンプ一覧ボタンを表示</li>
+          <li>動画ボタン（🎬）で親トリップの動画 → 各子トリップの動画 → 各ポイントの動画を連続再生</li>
         </ul>
 
         <h4>🤖 AI機能（オプション）</h4>
@@ -529,19 +582,29 @@
 
         <p><strong>2. AI旅行記生成:</strong></p>
         <ol>
-          <li>写真・ポイント説明・GPSを用意</li>
-          <li>右上メニュー→「AI旅行記生成」</li>
-          <li>自動的に旅行記が生成されます</li>
+          <li>写真・ポイント説明・GPSを用意（動画URLがあるポイントは自動的に動画サムネイルを使用）</li>
+          <li>右側メニュー→「AI旅行記生成」</li>
+          <li>旅行記が生成されます（サマリー・目次・ルート地図・ランドマーク別詳細の構成）</li>
           <li>ヘッダーの「旅行記」ボタンで表示</li>
-          <li>御朱印帳風のデザインで表示</li>
+          <li>過去の旅行記は旅行記履歴ボタンから参照・削除可能</li>
         </ol>
 
         <p><strong>3. AIアニメ生成:</strong></p>
         <ol>
           <li>先に旅行記を生成</li>
-          <li>右上メニュー→「AIアニメ生成」</li>
-          <li>8種類のスタイルから選択</li>
-          <li>スライドショー形式で画像が生成されます</li>
+          <li>右側メニューでスタイルを選択→「アニメ生成」</li>
+          <li>スタイル: 地球の歩き方表紙風 / 少年ジャンプ表紙風 / 旅行雑誌表紙風 / 詳細4ページ</li>
+          <li>地球の歩き方表紙風はタイトルをトリップ名から自動生成し、ルートミニマップを表紙に追加</li>
+          <li>生成後は ← → ボタンで並び替え、✕ で削除可能</li>
+          <li>詳細アニメは旅行記のサマリー下にプレビュー表示</li>
+        </ol>
+        <p><strong>4. 出来事生成:</strong></p>
+        <ol>
+          <li>キャラ画像をアップロード（必須）</li>
+          <li>スタイルで「出来事生成」を選択</li>
+          <li>テキストボックスに旅の印象的な出来事を入力（例: 山道で老夫婦の車に乗せてもらった）</li>
+          <li>「アニメ生成」で 5 コマキャラアニメを生成</li>
+          <li>生成済みアニメは旅行記の「出来事、出会い」セクションに表示</li>
         </ol>
 
         <h4>📱 モバイル機能</h4>
@@ -551,15 +614,23 @@
           <li><strong>スワイプ:</strong> 写真を左右に切り替え</li>
           <li><strong>メニュー:</strong> 右上の☰から各機能にアクセス</li>
           <li><strong>ヘッダー表示:</strong> 隠れたヘッダーはプルダウンバーを下スワイプ、または地図上部を下スワイプで表示</li>
+          <li><strong>自動再生中:</strong> 3Dマップでルート・ポイントがグロー表示。画面下部の ■ 停止ボタンで停止。再生終了後は自動で地図に復帰</li>
+          <li><strong>動画再生中:</strong> 画面上中央のコントロールバー（⏮ ⏸/▶ ⏭ ✕）で前の動画・再生停止・次の動画・終了の操作が可能</li>
+          <li><strong>旅行記:</strong> 地図・目次はアコーディオン（タップで展開）</li>
         </ul>
 
         <h4>💡 Tips</h4>
         <ul>
+          <li><strong>PWAインストール:</strong> ブラウザの「ホーム画面に追加」でアプリとしてインストール可能。オフラインでも基本機能が使えます</li>
+          <li><strong>3D地図:</strong> Mapboxトークンを設定すると自動再生中に 3D 地図でルートをグロー表示。未設定でも 2D 地図で動作します</li>
+          <li><strong>写真ナビゲーション:</strong> 写真が非表示のとき「次へ」を押すと最初の写真を表示</li>
           <li><strong>トリップ所在フィルタ:</strong> ログイン時は All / Japan / Global で絞り込み。URLの <code>?region=japan</code> やドメイン（airj/airg.ktrips.net）でも指定可能</li>
           <li><strong>GPS付き写真:</strong> スマホで位置情報ONで撮影した写真を使用</li>
           <li><strong>ルート表示:</strong> GPXファイルで移動軌跡を記録</li>
-          <li><strong>ランドマーク:</strong> ポイントにランドマーク番号を付けてスタンプラリー</li>
-          <li><strong>カラー:</strong> トリップごとに色を変えて地図上で区別</li>
+          <li><strong>ランドマーク:</strong> ポイントにランドマーク番号を付けてスタンプラリー＆旅行記の目次に自動掲載</li>
+          <li><strong>動画連携:</strong> ポイントに動画URLを設定すると旅行記でサムネイルをメイン表示</li>
+          <li><strong>カラー:</strong> トリップごとに15色から選択して地図上で区別</li>
+          <li><strong>YouTube Shorts:</strong> 通常のYouTube URLに加え、Shorts形式のURLも動画として登録可能</li>
           <li><strong>公開設定:</strong> 公開/非公開はいつでも変更可能</li>
         </ul>
 
@@ -573,22 +644,48 @@
         <p><strong>Q: 動画が再生されません</strong></p>
         <p>A: YouTube/VimeoのURLを使用してください。埋め込み制限がある動画は再生できません。</p>
 
+        <p><strong>Q: 旅行記で動画サムネイルが表示されません</strong></p>
+        <p>A: ポイントの編集画面で動画URLを設定してから旅行記を再生成してください。</p>
+
+        <p><strong>Q: AIアニメのタイトルがトリップ名と違います</strong></p>
+        <p>A: 地球の歩き方表紙風スタイルは「〇〇の歩き方」形式で自動生成します（日付・活動名を除いて地名を抽出）。</p>
+
         <p style="margin-top:2rem; text-align:center; color:#888; font-size:0.9rem;">
           詳細は <a href="https://github.com/ktrips/air" target="_blank" rel="noopener">GitHub</a> をご覧ください
+        </p>
+        <p style="margin-top:0.75rem; text-align:center; color:#888; font-size:0.9rem;">
+          🗺️ <a href="https://console.mapbox.com/account/statistics/?from=04-10-2026" target="_blank" rel="noopener">Mapbox 利用統計</a>
+        </p>
+        <p style="margin-top:0.75rem; text-align:center; color:#888; font-size:0.9rem;">
+          🤖 AI 使用量チェック:
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Gemini API</a> /
+          <a href="https://console.anthropic.com/" target="_blank" rel="noopener">Claude API</a>
         </p>
       </div>
     </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js" crossorigin=""></script>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js" crossorigin=""></script>
   <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-storage-compat.js"></script>
+  <script src="config.js" onerror="console.log('config.js not found, using default settings')"></script>
   <script src="firebase-config.js" onerror="window.FIREBASE_CONFIG_LOAD_FAILED=true"></script>
   <script src="firebase-init.js"></script>
   <script src="app.js"></script>
+
+  <!-- Service Worker 登録 -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((reg) => console.log('[SW] 登録成功:', reg.scope))
+          .catch((err) => console.warn('[SW] 登録失敗:', err));
+      });
+    }
+  </script>
 </body>
 </html>

@@ -442,6 +442,9 @@ body {
 .map-container {
   flex: 1;
   position: relative;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  will-change: transform;
 }
 
 .mobile-travelogue-view {
@@ -543,7 +546,12 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 .map-container .maplibregl-ctrl-attrib-button,
 .map-container .maplibregl-ctrl-bottom-right,
 .map-container .maplibregl-ctrl-bottom-left,
-.map-container .maplibregl-ctrl-logo {
+.map-container .maplibregl-ctrl-logo,
+.map-container .mapboxgl-ctrl-attrib,
+.map-container .mapboxgl-ctrl-attrib-button,
+.map-container .mapboxgl-ctrl-bottom-right,
+.map-container .mapboxgl-ctrl-bottom-left,
+.map-container .mapboxgl-ctrl-logo {
   display: none !important;
 }
 .map-container.map-playback-cinematic {
@@ -555,6 +563,70 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   width: 100%;
   height: 100%;
   min-height: 300px;
+}
+
+/* 地図タイルを高解像度でクリスプに表示 */
+.map-tiles-crisp,
+.leaflet-tile-container img,
+.leaflet-tile {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-font-smoothing: subpixel-antialiased;
+}
+
+/* ラベルレイヤーを鮮明に表示 */
+.leaflet-overlay-pane .leaflet-tile {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Mapbox/MapLibre（3D地図）のキャンバスも高品質レンダリング */
+.maplibregl-canvas,
+.mapboxgl-canvas {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: high-quality;
+}
+
+/* 3D地図のテキストラベルを鮮明に */
+.maplibregl-ctrl,
+.maplibregl-ctrl-group button,
+.mapboxgl-ctrl,
+.mapboxgl-ctrl-group button {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 3D地図のテキストレンダリング最適化 */
+.maplibregl-canvas-container,
+.mapboxgl-canvas-container {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+}
+
+/* 3D地図のラベル位置精度向上 */
+.maplibregl-map,
+.mapboxgl-map {
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+}
+
+/* ラベルテキストの鮮明化 */
+.maplibregl-canvas-container canvas,
+.mapboxgl-canvas-container canvas {
+  font-smooth: always;
+  -webkit-font-smoothing: subpixel-antialiased;
+  -moz-osx-font-smoothing: auto;
+}
+
+/* 3D地図のズーム時の滑らかさ向上 */
+.map-3d-layer,
+#map3d {
+  transition: opacity 0.3s ease-in-out;
 }
 
 /* 3D地図（自動再生時のみ表示） */
@@ -585,12 +657,48 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   pointer-events: none;
 }
 /* 3D地図コントロール */
-.maplibregl-ctrl-group {
+.maplibregl-ctrl-group,
+.mapboxgl-ctrl-group {
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(10px);
 }
-.maplibregl-canvas {
+.maplibregl-canvas,
+.mapboxgl-canvas {
   outline: none;
+}
+
+/* 自動再生中の現在ポイント: パルスマーカー */
+@keyframes playback-pulse-ring {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  70% { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+@keyframes playback-pulse-core {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+.playback-pulse-marker {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+.playback-pulse-marker::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--pulse-color, #e1306c);
+  animation: playback-pulse-ring 1.6s ease-out infinite;
+}
+.playback-pulse-marker::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: var(--pulse-color, #e1306c);
+  border: 3px solid #fff;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  animation: playback-pulse-core 1.6s ease-in-out infinite;
 }
 
 /* 自動再生時の写真オーバーレイ */
@@ -598,79 +706,148 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   position: absolute;
   bottom: 100px;
   right: 20px;
-  z-index: 100;
+  z-index: 1100;
   pointer-events: none;
 }
 .playback-photo-overlay.hidden {
   display: none;
 }
-/* 動画下半分表示モード */
+/* 動画表示モード（デスクトップ：横長動画は16:9比率で中央下部に配置） */
 .playback-photo-overlay.playback-video-fullscreen {
-  top: 50%;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  height: 50%;
+  position: absolute;
+  left: 50%;
+  bottom: 100px;
+  transform: translateX(-50%);
+  width: 70vw;
+  max-width: 900px;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  max-height: calc(100vh - 200px);
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.95);
   pointer-events: auto;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+/* デスクトップ縦長動画：9:16比率で中央に配置（より大きく表示） */
+.playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
+  width: auto;
+  height: 85vh;
+  max-height: calc(100vh - 100px);
+  max-width: 720px;
+  aspect-ratio: 9 / 16;
+  bottom: 50px;
 }
 .playback-photo-card {
   background: rgba(255, 255, 255, 0.98);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   overflow: hidden;
-  width: 540px;
-  max-width: 540px;
+  width: 594px;
+  max-width: 594px;
   animation: fadeInSlide 0.4s ease-out;
 }
-/* 動画カード（下半分） */
+/* 動画カード（アスペクト比に合わせて自動調整） */
 .playback-photo-card.playback-video-card {
-  width: 95%;
-  max-width: 95%;
-  height: 90%;
-  max-height: 90%;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
   background: #000;
   border-radius: 8px;
   position: relative;
   pointer-events: auto;
+  overflow: hidden;
 }
-/* 動画再生中の戻るボタン */
-.playback-video-back-btn {
+/* 自動再生中の動画コントロールバー（下部中央） */
+.playback-video-bottombar {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1000;
-  padding: 0.6rem 1.2rem;
-  background: rgba(255, 255, 255, 0.98);
-  border: 2px solid rgba(0, 0, 0, 0.2);
-  border-radius: var(--radius-sm);
-  font-size: 1.05rem;
-  font-weight: 600;
-  cursor: pointer;
-  color: #333;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  transition: all 0.2s;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  z-index: 20;
   pointer-events: auto;
 }
-.playback-video-back-btn:hover {
-  background: #fff;
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-  transform: translateY(-1px);
+.playback-video-bar-btn {
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 20px;
+  padding: 8px 18px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  transition: background 0.2s;
 }
+.playback-video-bar-btn:hover {
+  background: rgba(0, 0, 0, 0.85);
+}
+.playback-video-bar-btn--back {
+  background: rgba(40, 40, 40, 0.7);
+}
+.playback-video-bar-btn--back:hover {
+  background: rgba(70, 70, 70, 0.9);
+}
+/* 動画コントロールバー（中央下） */
+.video-controls-bar {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.video-controls-bar .video-ctrl-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: background 0.2s, transform 0.15s;
+  pointer-events: auto;
+}
+.video-controls-bar .video-ctrl-btn:hover {
+  background: rgba(0, 0, 0, 0.8);
+  transform: scale(1.1);
+}
+.video-controls-bar .video-ctrl-btn:active {
+  transform: scale(0.95);
+}
+.video-ctrl-btn[data-action="close"] {
+  background: rgba(180, 40, 40, 0.7);
+}
+.video-ctrl-btn[data-action="close"]:hover {
+  background: rgba(200, 30, 30, 0.9);
+}
+
+/* 自動再生停止ボタン */
+
 .playback-photo-wrap {
   position: relative;
   width: 100%;
   height: 100%;
 }
 .playback-photo-card img {
-  width: 540px;
+  width: 594px;
   height: auto;
   display: block;
-  max-height: 360px;
+  max-height: 396px;
   object-fit: cover;
 }
 /* 動画カード内の動画ラッパー */
@@ -717,17 +894,32 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   }
   /* モバイルの自動再生時は写真を10%大きく表示 */
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card {
-    width: 66vw;
-    max-width: 66vw;
+    width: 73vw;
+    max-width: 73vw;
   }
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card img {
-    max-height: 38.5vh;
+    max-height: 42.5vh;
   }
+  /* モバイル動画：横長動画は16:9で中央下部に */
   .playback-photo-overlay.playback-video-fullscreen {
-    top: 50%;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    left: 50%;
+    bottom: 60px;
+    top: auto;
+    right: auto;
+    transform: translateX(-50%);
+    width: 92vw;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  }
+  /* モバイル縦長動画：9:16で画面いっぱいに */
+  .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
+    width: auto;
+    height: 96vh;
+    aspect-ratio: 9 / 16;
+    top: auto;
+    bottom: 20px;
   }
   .playback-photo-card {
     width: 60vw;
@@ -736,16 +928,42 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
   }
   .playback-photo-card.playback-video-card {
-    width: 95%;
-    max-width: 95%;
-    height: 90%;
-    max-height: 90%;
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 8px;
   }
-  .playback-video-back-btn {
-    top: 8px;
-    right: 8px;
-    padding: 0.5rem 1rem;
-    font-size: 0.95rem;
+}
+
+/* モバイル縦向き：縦長動画をさらに大きく表示（画面の3/5の幅） */
+@media (max-width: 768px) and (orientation: portrait) {
+  .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
+    width: 60vw;
+    height: auto;
+    max-height: 98vh;
+    aspect-ratio: 9 / 16;
+    bottom: 10px;
+  }
+  .video-overlay {
+    top: 30%;
+    height: 70%;
+  }
+  .video-controls-bar {
+    bottom: 10px;
+    gap: 6px;
+  }
+  .video-controls-bar .video-ctrl-btn {
+    width: 34px;
+    height: 34px;
+    font-size: 0.9rem;
+  }
+  .video-overlay-point-name {
+    top: 12px;
+    left: 12px;
+    padding: 6px 12px;
+    font-size: 14px;
+    max-width: 70%;
   }
   .playback-photo-card img {
     width: 100%;
@@ -775,6 +993,34 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   top: 12px;
   left: 55px;
   z-index: 1000;
+}
+
+/* マーカードラッグ後の保存バー */
+.map-marker-save-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  background: rgba(20, 20, 30, 0.92);
+  color: #fff;
+  padding: 0.55rem 1rem;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  white-space: nowrap;
+  backdrop-filter: blur(6px);
+  animation: slideUpFadeIn 0.2s ease;
+}
+.map-marker-save-label {
+  font-size: 0.88rem;
+  opacity: 0.9;
+}
+@keyframes slideUpFadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 .map-search-input {
@@ -876,7 +1122,7 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 
 .video-overlay {
   position: absolute;
-  top: 50%;
+  top: 30%;
   left: 0;
   right: 0;
   bottom: 0;
@@ -887,6 +1133,22 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
 }
 .video-overlay.hidden {
   display: none;
+}
+
+.video-overlay-point-name {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  z-index: 10;
+  max-width: 80%;
+  word-wrap: break-word;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .map-container.map-showing-video .map-search,
@@ -922,10 +1184,16 @@ body.app-playing .maplibregl-ctrl-attrib,
 body.app-playing .maplibregl-ctrl-attrib-button,
 body.app-playing .maplibregl-ctrl-bottom-right,
 body.app-playing .maplibregl-ctrl-bottom-left,
-body.app-playing .maplibregl-ctrl-logo {
+body.app-playing .maplibregl-ctrl-logo,
+body.app-playing .mapboxgl-ctrl-attrib,
+body.app-playing .mapboxgl-ctrl-attrib-button,
+body.app-playing .mapboxgl-ctrl-bottom-right,
+body.app-playing .mapboxgl-ctrl-bottom-left,
+body.app-playing .mapboxgl-ctrl-logo {
   display: none !important;
 }
 .video-back-btn {
+  display: none !important;
   position: absolute;
   top: 12px;
   right: 12px;
@@ -1406,6 +1674,36 @@ body.app-playing .thumbnail-close-btn {
   transform: scale(1.02);
 }
 
+.thumbnail-video-placeholder {
+  width: 68px;
+  height: 68px;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  transition: opacity 0.2s, transform 0.2s;
+  flex-shrink: 0;
+}
+
+.thumbnail-video-placeholder:hover {
+  opacity: 0.85;
+  transform: scale(1.02);
+}
+
+.thumbnail-video-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 24px;
+  opacity: 0.9;
+  pointer-events: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
 .thumbnail-strip img {
   width: 68px;
   height: 68px;
@@ -1528,27 +1826,42 @@ body.app-playing .thumbnail-close-btn {
   border: none !important;
 }
 .map-trip-action-card {
-  background: #fff;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.92) 100%);
   border-radius: 8px;
-  padding: 6px 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  padding: 5px 7px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.6),
+              0 1px 4px rgba(0, 0, 0, 0.4),
+              0 0 0 1px rgba(255, 255, 255, 0.12) inset;
   border: 2px solid var(--trip-color, #e1306c);
-  min-width: 80px;
+  min-width: 75px;
+  max-width: 140px;
   text-align: center;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  backdrop-filter: blur(10px) saturate(180%);
+  -webkit-backdrop-filter: blur(10px) saturate(180%);
 }
 .map-trip-action-name {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 4px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
+  max-width: 100px;
+  width: 100%;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  display: block;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9),
+               0 1px 3px rgba(0, 0, 0, 0.8),
+               0 0 1px rgba(0, 0, 0, 1);
 }
 .map-trip-action-name-clickable:hover {
   color: var(--trip-color, #e1306c);
   text-decoration: underline;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.9),
+               0 2px 6px rgba(0, 0, 0, 0.9),
+               0 1px 3px rgba(0, 0, 0, 0.8);
 }
 .map-trip-action-btns {
   display: flex;
@@ -1560,19 +1873,68 @@ body.app-playing .thumbnail-close-btn {
   display: none;
 }
 
+/* 通常のトリップ名カード */
+.map-trip-name-card {
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.90) 0%, rgba(0, 0, 0, 0.94) 100%);
+  border-radius: 10px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7),
+              0 2px 8px rgba(0, 0, 0, 0.5),
+              0 0 0 1px rgba(255, 255, 255, 0.18) inset;
+  border: 2.5px solid var(--trip-color, #e1306c);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  max-width: 280px;
+}
+
+.map-trip-name-text {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: #fff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 1),
+               0 1px 4px rgba(0, 0, 0, 0.9),
+               0 0 2px rgba(0, 0, 0, 1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  display: block;
+  max-width: 100%;
+}
+
 @media (max-width: 768px) {
   .map-trip-action-card {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    font-size: 0.75rem;
+    gap: 5px;
+    padding: 5px 8px;
+    font-size: 0.7rem;
+    background: rgba(0, 0, 0, 0.88);
+    backdrop-filter: blur(10px) saturate(180%);
+    -webkit-backdrop-filter: blur(10px) saturate(180%);
+    max-width: 120px;
   }
   .map-trip-action-name {
     margin-bottom: 0;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     max-width: 80px;
+    line-height: 1.1;
+  }
+
+  .map-trip-name-card {
+    padding: 7px 10px;
+    max-width: calc(100vw - 120px);
+  }
+
+  .map-trip-name-text {
+    font-size: 0.83rem;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.1;
   }
   .map-trip-action-btns {
     gap: 4px;
@@ -1648,6 +2010,8 @@ body.app-playing .thumbnail-close-btn {
   box-shadow: var(--shadow-md);
   overflow: hidden;
   position: relative;
+  width: fit-content;
+  max-width: min(95vw, 792px);
 }
 .photo-popup-edit-container .leaflet-popup-close-button {
   display: none !important;
@@ -1655,19 +2019,21 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-container .leaflet-popup-content {
   margin: 0;
-  min-width: 240px;
+  min-width: 0;
+  width: fit-content;
 }
 
 .photo-popup {
-  max-width: min(95vw, 550px);
+  max-width: min(95vw, 660px);
   position: relative;
+  display: inline-block;
 }
 .photo-popup img {
   width: 100%;
   height: auto;
-  max-width: 550px;
-  max-height: 400px;
-  object-fit: cover;
+  max-width: 660px;
+  max-height: 480px;
+  object-fit: contain;
   display: block;
 }
 
@@ -1732,12 +2098,15 @@ body.app-playing .thumbnail-close-btn {
 .photo-popup-photo-wrap {
   position: relative;
   line-height: 0;
+  display: inline-block;
+  max-width: 100%;
 }
 
 .photo-popup img {
-  width: 100%;
+  width: auto;
   height: auto;
-  max-height: min(85vh, 1200px);
+  max-width: 660px;
+  max-height: min(70vh, 480px);
   object-fit: contain;
   display: block;
   cursor: pointer;
@@ -1748,14 +2117,14 @@ body.app-playing .thumbnail-close-btn {
   top: 8px;
   left: 8px;
   padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.7);
+  background: rgba(0, 0, 0, 0.56);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
   border-radius: 6px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24), 0 1px 3px rgba(0, 0, 0, 0.16);
   z-index: 2;
   pointer-events: none;
 }
@@ -1774,9 +2143,9 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-overlay-top .photo-popup-name {
   color: white;
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 700;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 8px rgba(0, 0, 0, 0.2);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.24), 0 0 8px rgba(0, 0, 0, 0.16);
   letter-spacing: 0.4px;
 }
 
@@ -1842,11 +2211,11 @@ body.app-playing .thumbnail-close-btn {
 }
 
 .photo-popup-edit-container .leaflet-popup-content {
-  min-width: 320px;
+  min-width: 461px;
 }
 
 .photo-popup-edit-mode {
-  max-width: 384px;
+  max-width: 553px;
 }
 
 .photo-popup-edit-form {
@@ -2311,10 +2680,110 @@ body.editor .menu-section-bottom {
 .btn-sm { padding: 0.4rem 0.85rem; font-size: 0.85rem; }
 .btn-xs { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 
+/* サムネイル表示（右側メニュー） */
+.trip-menu-thumbnails-container {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.trip-menu-thumbnails {
+  flex: 1;
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+  min-height: 60px;
+}
+
+.trip-menu-thumbnail-item {
+  flex-shrink: 0;
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: move;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.trip-menu-thumbnail-item.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.trip-menu-thumbnail-item.drag-over {
+  transform: scale(1.05);
+}
+
+.trip-menu-thumbnails img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 2px solid transparent;
+  transition: border-color 0.2s;
+  display: block;
+}
+
+.trip-menu-thumbnail-item:hover img {
+  border-color: var(--accent);
+}
+
+.trip-menu-thumbnail-delete {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.trip-menu-thumbnail-item:hover .trip-menu-thumbnail-delete {
+  display: flex;
+}
+
+.trip-menu-thumbnail-delete:hover {
+  background: #d32f2f;
+}
+
+.trip-menu-gps-add-btn {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid var(--accent);
+  border-radius: 20px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.trip-menu-gps-add-btn:hover {
+  background: rgba(225, 48, 108, 0.1);
+}
+
+.trip-menu-gps-add-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .upload-zone {
   border: 2px dashed var(--border);
   border-radius: var(--radius);
-  padding: 1.5rem;
+  padding: 0.75rem;
   text-align: center;
   cursor: pointer;
   margin-bottom: 0.5rem;
@@ -2331,6 +2800,11 @@ body.editor .menu-section-bottom {
   display: block;
   margin-bottom: 0.5rem;
   opacity: 0.7;
+}
+
+#uploadSection .upload-icon {
+  font-size: 1.4rem;
+  margin-bottom: 0.25rem;
 }
 
 .editor-only { display: none; }
@@ -2554,20 +3028,20 @@ body:not(.editor) .viewer-only { display: block; }
 .trip-detail-parent-travelogue-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.35rem 0.6rem;
+  gap: 0.2rem;
+  padding: 0.25rem 0.45rem;
   background: rgba(255, 255, 255, 0.95);
   color: var(--accent);
-  border: 2px solid currentColor;
+  border: 1.5px solid currentColor;
   border-radius: var(--radius);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
   transition: all 0.2s;
   white-space: nowrap;
-  margin-right: 0.35rem;
-  margin-bottom: 0.25rem;
+  margin-right: 0.3rem;
+  margin-bottom: 0.2rem;
 }
 
 .trip-detail-parent-travelogue-btn:hover {
@@ -2582,16 +3056,16 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 .trip-detail-parent-travelogue-btn .trip-detail-name {
-  max-width: 60px;
+  max-width: 55px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: inherit;
 }
 
 .trip-detail-parent-travelogue-btn .trip-detail-icon {
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   line-height: 1;
 }
 
@@ -2807,8 +3281,12 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 /* アニメ画像ビューア（サムネイルクリック時の前へ/次へ付き表示） */
+#animeImageViewerModal {
+  z-index: 3100;
+}
+
 .modal-anime-viewer {
-  max-width: 75vw;
+  max-width: 60vw;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
@@ -2934,6 +3412,11 @@ body:not(.editor) .viewer-only { display: block; }
 .anime-brand-magazine {
   color: #2c5282;
   letter-spacing: 0.1em;
+}
+
+.anime-brand-event {
+  color: #ff9a9e;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 
 .anime-cover-title {
@@ -3085,9 +3568,226 @@ body:not(.editor) .viewer-only { display: block; }
   margin: 2.5rem 0;
 }
 
+/* 動画リンクブロック（旅行記内） */
+.travelogue-video-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.8rem 0.4rem 0.4rem;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 6px;
+  text-decoration: none;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.travelogue-video-link:hover {
+  background: rgba(0, 0, 0, 1);
+}
+.travelogue-video-link img {
+  width: 80px;
+  height: 45px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  box-shadow: none !important;
+  cursor: default !important;
+}
+
 .travelogue-landmark-section h3 {
   font-size: 1.3rem;
   margin-bottom: 1.5rem;
+}
+
+/* ──────────────────────────────────────────
+   旅行記: 地図 ＋ 目次の横並びレイアウト（デスクトップ）
+   ────────────────────────────────────────── */
+.travelogue-map-toc-row {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin: 1rem 0 1.5rem;
+}
+.travelogue-map-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* 地図コンテナ自体の余白を上書き */
+.travelogue-map-col #travelogue-map-container {
+  margin: 0 !important;
+  min-height: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.travelogue-toc-col {
+  flex: 0 0 180px;
+  width: 180px;
+  padding: 0.5rem 0.6rem;
+  background: #f8f9fb;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  position: sticky;
+  top: 1rem;
+}
+.travelogue-toc-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #aaa;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+  padding: 0 0.2rem;
+}
+.travelogue-toc-col .travelogue-toc-nav {
+  padding: 0;
+}
+.travelogue-toc-col .travelogue-toc-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.travelogue-toc-col .travelogue-toc-nav li a {
+  text-decoration: none;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  padding: 0.18rem 0.3rem;
+  border-radius: 4px;
+  display: block;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+.travelogue-toc-col .travelogue-toc-nav li a:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* ──────────────────────────────────────────
+   旅行記: サマリー下のアニメストリップ
+   ────────────────────────────────────────── */
+.travelogue-detail-animes-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.5rem 0 0.6rem;
+  margin: 0.25rem 0 0.5rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.travelogue-detail-animes-strip img {
+  height: 143px;
+  width: auto;
+  flex-shrink: 0;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  object-fit: cover;
+}
+.travelogue-detail-animes-strip img:hover {
+  transform: scale(1.04);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+@media (max-width: 768px) {
+  .travelogue-detail-animes-strip img {
+    height: 107px;
+  }
+}
+
+/* ──────────────────────────────────────────
+   旅行記: モバイル用アコーディオン（目次）
+   ────────────────────────────────────────── */
+.travelogue-toc-details {
+  margin: 0.5rem 0 0.75rem;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  background: #f8f9fb;
+  overflow: hidden;
+}
+.travelogue-toc-summary {
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #999;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  user-select: none;
+}
+.travelogue-toc-summary::-webkit-details-marker { display: none; }
+.travelogue-toc-summary::before {
+  content: '▶';
+  font-size: 0.6rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.travelogue-toc-details[open] .travelogue-toc-summary::before {
+  transform: rotate(90deg);
+}
+.travelogue-toc-nav {
+  padding: 0.2rem 0.5rem 0.5rem;
+}
+.travelogue-toc-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.travelogue-toc-nav li a {
+  text-decoration: none;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  display: block;
+  opacity: 0.75;
+  transition: opacity 0.15s, background 0.15s;
+}
+.travelogue-toc-nav li a:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* ──────────────────────────────────────────
+   旅行記: モバイル用アコーディオン（地図）
+   ────────────────────────────────────────── */
+.travelogue-map-details {
+  margin: 0.5rem 0 0.75rem;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.travelogue-map-summary {
+  cursor: pointer;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #555;
+  background: #f5f7fa;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  user-select: none;
+}
+.travelogue-map-summary::-webkit-details-marker { display: none; }
+.travelogue-map-summary::before {
+  content: '▶';
+  font-size: 0.65rem;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.travelogue-map-details[open] .travelogue-map-summary::before {
+  transform: rotate(90deg);
+}
+.travelogue-map-details #travelogue-map-container {
+  margin: 0 !important;
 }
 
 @media (max-width: 768px) {
@@ -3511,12 +4211,12 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 body.app-playing .map-playback-controls {
-  bottom: 10%;
+  bottom: 4%;
 }
 
 body.app-playing .play-stop-btn-mobile {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.3);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -3524,14 +4224,15 @@ body.app-playing .play-stop-btn-mobile {
 
 body.app-playing .play-stop-btn-mobile::before {
   content: '■';
-  font-size: 0.9rem;
+  font-size: 1.1rem;
   margin-left: 0;
   color: white;
   filter: none;
 }
 
 body.app-playing .map-photo-nav-btn {
-  display: none;
+  display: flex;
+  font-size: 1.8rem;
 }
 
 
@@ -3718,21 +4419,21 @@ body.app-playing .map-photo-nav-btn {
     font-size: 2rem;
   }
 
-  /* モバイルの自動再生時は停止ボタンをシンプルに、下から1/10上の位置に */
+  /* モバイルの自動再生時は停止ボタンをシンプルに、下寄りに配置 */
   body.app-playing .map-playback-controls {
-    bottom: 10%;
+    bottom: 4%;
   }
 
   body.app-playing .play-stop-btn-mobile {
-    width: 32px;
-    height: 32px;
+    width: 39px;
+    height: 39px;
     background: rgba(0, 0, 0, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
   }
 
   body.app-playing .play-stop-btn-mobile::before {
-    font-size: 0.8rem;
+    font-size: 1rem;
   }
   /* 自動再生時は地図を画面下まで拡大 */
   body.app-playing .map-container {
@@ -3880,4 +4581,143 @@ body.app-playing .map-photo-nav-btn {
     height: 60vh;
     min-height: 300px;
   }
+}
+
+/* 旅行記共有ボタン */
+.travelogue-share-buttons {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid var(--border);
+}
+
+.travelogue-share-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  text-decoration: none;
+  color: white;
+}
+
+.travelogue-share-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.travelogue-share-btn.twitter {
+  background: #1DA1F2;
+}
+
+.travelogue-share-btn.instagram {
+  background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+}
+
+.travelogue-share-btn.facebook {
+  background: #1877F2;
+}
+
+.travelogue-share-btn.copy-url {
+  background: #6c757d;
+}
+
+.travelogue-share-btn.copy-url.copied {
+  background: #28a745;
+}
+
+/* 地図上のトリップ名の「旅行記」ラベル */
+.map-trip-travelogue-label {
+  font-size: 0.8em;
+  font-weight: 600;
+  margin-left: 0.45rem;
+  color: #fff;
+  opacity: 1;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9),
+               0 1px 3px rgba(0, 0, 0, 0.8),
+               0 0 1px rgba(0, 0, 0, 1);
+  white-space: nowrap;
+  display: inline;
+  line-height: 1.2;
+}
+
+/* 旅行記の出来事セクション */
+.travelogue-event-item {
+  margin-bottom: 1.5rem;
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.travelogue-event-anime {
+  width: 48%;
+  max-width: 240px;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.travelogue-event-text {
+  font-size: 0.95rem;
+  color: #555;
+  line-height: 1.7;
+  padding: 0.75rem;
+  background: #fff;
+  border-radius: 6px;
+  flex: 1;
+  margin: 0;
+}
+
+/* モバイル対応 */
+@media (max-width: 768px) {
+  .travelogue-event-item {
+    flex-direction: column;
+  }
+
+  .travelogue-event-anime {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+/* ─── アプリ共通トースト通知 ─────────────────────────────────────────────── */
+.app-toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(30, 30, 30, 0.92);
+  color: #fff;
+  padding: 14px 28px;
+  border-radius: 14px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  white-space: pre-wrap;
+  max-width: min(88vw, 380px);
+  z-index: 99999;
+  pointer-events: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  animation: appToastIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+             appToastOut 0.3s ease 2.5s both;
+}
+
+@keyframes appToastIn {
+  from { opacity: 0; transform: translate(-50%, -42%); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
+@keyframes appToastOut {
+  from { opacity: 1; }
+  to   { opacity: 0; transform: translate(-50%, -56%); }
 }
