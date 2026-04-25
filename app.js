@@ -9846,19 +9846,27 @@ function init() {
         const orderedTrips = getOrderedTrips();
 
         if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-          // ohenro.ktrips.net: 「しまなみ街道と四国お遍路旅」を自動選択
+          // ohenro.ktrips.net: 「しまなみ街道と四国お遍路旅」を確実に自動選択
           const defaultParentName = 'しまなみ街道と四国お遍路旅';
-          const defaultTrip = orderedTrips.find(t => t.name === defaultParentName);
+          const defaultTrip = myTrips.find(t => t.name === defaultParentName && t.isParent);
           if (defaultTrip) {
             console.log(`[${host}] デフォルト親トリップを自動選択: ${defaultParentName}`);
             tripToLoad = defaultTrip.id;
+            // URLパラメータに親トリップを追加して、確実に表示されるようにする
+            window.history.replaceState({}, '', `?trip=${encodeURIComponent(defaultParentName)}`);
+          } else {
+            console.warn(`[${host}] デフォルト親トリップ "${defaultParentName}" が見つかりませんでした`);
           }
-        } else if (/^air\.ktrips\.net$/.test(host)) {
-          // air.ktrips.net: 一番上の親トリップを自動選択
+        } else if (/^air\.ktrips\.net$|^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$|^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) {
+          // air.ktrips.net: 最初の親トリップを確実に自動選択
           const firstParent = orderedTrips.find(t => t.isParent);
           if (firstParent) {
             console.log(`[${host}] 先頭の親トリップを自動選択: ${firstParent.name}`);
             tripToLoad = firstParent.id;
+            // URLパラメータに親トリップを追加して、確実に表示されるようにする
+            window.history.replaceState({}, '', `?trip=${encodeURIComponent(firstParent.name)}`);
+          } else {
+            console.warn(`[${host}] 親トリップが見つかりませんでした`);
           }
         }
       }
