@@ -278,13 +278,23 @@
             <option value="travel-magazine">旅行雑誌の表紙風</option>
             <option value="detail4pages">詳細4ページ</option>
             <option value="event-story">出来事生成</option>
+            <option value="meisho-ukiyoe">名所浮世絵風</option>
           </select>
           <button type="button" class="btn btn-primary" id="generateAnimeBtnViewer" title="選択したスタイルでアニメを生成">アニメ生成</button>
         </div>
         <div id="eventStoryInputWrap" class="menu-row" style="display:none;padding-left:1rem;">
           <textarea id="eventStoryInput"
-            placeholder="例：山道で老夫婦が運転する車に遭遇して、それに乗せてもらい難を逃れた"
+            placeholder="例：山道で老夫婦が運転する車に遭遇して、それに逃れた"
             style="width:100%;min-height:80px;padding:8px;border:1px solid var(--border);border-radius:4px;font-size:13px;resize:vertical;"></textarea>
+        </div>
+        <div id="meishoUkiyoeInputWrap" class="menu-row" style="display:none;padding-left:1rem;flex-direction:column;gap:8px;">
+          <textarea id="meishoUkiyoeInput"
+            placeholder="例：お遍路第六番札所安楽寺の巡礼記"
+            style="width:100%;min-height:60px;padding:8px;border:1px solid var(--border);border-radius:4px;font-size:13px;resize:vertical;"></textarea>
+          <select id="meishoUkiyoeStyleSelect" style="padding:6px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
+            <option value="hiroshige">歌川広重風</option>
+            <option value="hokusai">葛飾北斎風</option>
+          </select>
         </div>
         <div id="generatedAnimesList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;padding-left:1rem;"></div>
       </section>

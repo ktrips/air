@@ -6356,28 +6356,17 @@ async function generateTravelogueWithAI() {
         isStamp: !!p.isStamp
       });
     });
-    // 🚀 プロンプト簡略化：必要最小限の情報のみ
-    parts.push('\n写真情報:');
-    photoInfos.forEach((pi) => {
-      const info = [];
-      info.push(`写真${pi.index}: ${pi.url}`);
-      if (pi.landmarkNo) info.push(`[ランドマーク${pi.landmarkNo}]`);
-      info.push(pi.pointName || pi.placeName || '名称未設定');
-      if (pi.description) info.push(`- ${pi.description}`);
-      parts.push(info.join(' '));
-    });
   }
-  const context = parts.join('\n');
 
-  // プロンプトの長さをログ出力
-  console.log(`📝 高速モード - プロンプト長: ${context.length} 文字 (写真${photos.length}枚)`);
   const tripColor = trip.color || '#e1306c';
 
-  // アニメ画像: 表紙(cover)と詳細(detail)を分離
+  // アニメ画像: 表紙(cover)、詳細(detail)、名所浮世絵(ukiyoe)を分離
   const animeImages = trip.generatedAnimes && trip.generatedAnimes.length > 0 ? trip.generatedAnimes : [];
-  const coverAnimes = animeImages.filter(a => a.style && !String(a.style).startsWith('detail'));
+  const coverAnimes = animeImages.filter(a => a.style && !String(a.style).startsWith('detail') && a.style !== 'meisho-ukiyoe');
   const detailAnimes = animeImages.filter(a => a.style && String(a.style).startsWith('detail'));
-  const animeCoverUrl = coverAnimes.length > 0 ? coverAnimes[0].url : (animeImages.length > 0 ? animeImages[0].url : null);
+  const ukiyoeAnimes = animeImages.filter(a => a.style === 'meisho-ukiyoe');
+
+  const animeCoverUrl = coverAnimes.length > 0 ? coverAnimes[0].url : (animeImages.length > 0 && animeImages[0].style !== 'meisho-ukiyoe' ? animeImages[0].url : null);
   let animeCoverHtml = '';
   if (animeCoverUrl) {
     animeCoverHtml = `<img src="${animeCoverUrl}" alt="旅行記の表紙" style="width:100%;max-width:400px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:block;"/>`;
@@ -6388,6 +6377,61 @@ async function generateTravelogueWithAI() {
     const imgs = detailAnimes.map(a => `<img src="${a.url}" alt="旅行記詳細" style="width:calc(40% - 0.5rem);min-width:150px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`).join('\n');
     detailAnimeHtml = `<div class="travelogue-detail-animes" style="display:flex;flex-wrap:wrap;gap:0.75rem;margin:1rem 0 0 0;justify-content:flex-start;">\n${imgs}\n</div>`;
   }
+
+  // 名所浮世絵を写真情報と関連付け
+  const ukiyoeMap = new Map();
+  ukiyoeAnimes.forEach(ukiyoe => {
+    if (ukiyoe.meishoText) {
+      const keywords = ukiyoe.meishoText.split(/[、。・\s]+/).filter(w => w.length >= 2);
+      // 各写真と照合して関連度を計算
+      photoInfos.forEach((photo, idx) => {
+        const photoText = [photo.pointName, photo.placeName, photo.description].filter(Boolean).join(' ');
+        const matchCount = keywords.filter(keyword => photoText.includes(keyword)).length;
+        if (matchCount > 0) {
+          if (!ukiyoeMap.has(idx)) {
+            ukiyoeMap.set(idx, []);
+          }
+          ukiyoeMap.get(idx).push({ ukiyoe, matchCount });
+        }
+      });
+    }
+  });
+
+  // 各写真インデックスごとに最もマッチする浮世絵を選択
+  const photoUkiyoeMap = new Map();
+  ukiyoeMap.forEach((matches, photoIdx) => {
+    matches.sort((a, b) => b.matchCount - a.matchCount);
+    photoUkiyoeMap.set(photoIdx, matches[0].ukiyoe);
+  });
+
+  // photoInfosに浮世絵情報を追加
+  photoInfos.forEach((photo, idx) => {
+    if (photoUkiyoeMap.has(idx)) {
+      photo.ukiyoeImage = photoUkiyoeMap.get(idx);
+    }
+  });
+
+  // 写真情報をプロンプトに追加（浮世絵情報を含む）
+  if (photos.length > 0) {
+    parts.push('\n写真情報:');
+    photoInfos.forEach((pi) => {
+      const info = [];
+      info.push(`写真${pi.index}: ${pi.url}`);
+      if (pi.landmarkNo) info.push(`[ランドマーク${pi.landmarkNo}]`);
+      info.push(pi.pointName || pi.placeName || '名称未設定');
+      if (pi.description) info.push(`- ${pi.description}`);
+      if (pi.ukiyoeImage) {
+        info.push(`[浮世絵:${pi.ukiyoeImage.url}]`);
+      }
+      parts.push(info.join(' '));
+    });
+  }
+
+  const context = parts.join('\n');
+
+  // プロンプトの長さをログ出力
+  console.log(`📝 高速モード - プロンプト長: ${context.length} 文字 (写真${photos.length}枚, 浮世絵${ukiyoeAnimes.length}枚)`);
+
 
   const hasAnimeCover = !!animeCoverHtml;
   const hasDetailAnimes = !!detailAnimeHtml;
@@ -6411,6 +6455,9 @@ async function generateTravelogueWithAI() {
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
 3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
 <div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
+
+【名所浮世絵の配置】写真情報に[浮世絵:URL]が含まれる場合、その写真セクションの情景描写の後に浮世絵を配置:
+<div style="margin:1.5rem 0 0 0;text-align:center;"><img src="浮世絵URL" alt="名所浮世絵" style="width:100%;max-width:600px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:inline-block;"/><p style="margin-top:0.5rem;font-size:0.85rem;color:#666;font-style:italic;">※この名所の浮世絵風イラスト</p></div>
 
 重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください`;
@@ -7755,6 +7802,12 @@ const ANIME_STYLES = {
     brand: '旅の思い出',
     prompt: '',
     brandClass: 'anime-brand-event'
+  },
+  'meisho-ukiyoe': {
+    label: '名所浮世絵風',
+    brand: '名所絵',
+    prompt: '',
+    brandClass: 'anime-brand-ukiyoe'
   }
 };
 
@@ -8082,6 +8135,7 @@ async function showAnimeModal() {
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
   const isDetail4Pages = styleId === 'detail4pages';
   const isEventStory = styleId === 'event-story';
+  const isMeishoUkiyoe = styleId === 'meisho-ukiyoe';
 
   try {
     if (btn) btn.textContent = '画像生成中...';
@@ -8143,6 +8197,224 @@ async function showAnimeModal() {
         if (eventStoryInput) eventStoryInput.value = '';
       } else {
         alert('出来事アニメの生成に失敗しました。APIキーと入力内容を確認してください。');
+      }
+      return;
+    }
+
+    // 名所浮世絵風: 名所情報をWikipediaや旅行記から収集し、浮世絵風の絵画を生成
+    if (isMeishoUkiyoe) {
+      const meishoInput = document.getElementById('meishoUkiyoeInput');
+      const meishoText = meishoInput?.value?.trim();
+      if (!meishoText) {
+        alert('名所の説明を入力してください。\n例：お遍路第六番札所安楽寺の巡礼記');
+        return;
+      }
+
+      const ukiyoeStyleSelect = document.getElementById('meishoUkiyoeStyleSelect');
+      const ukiyoeStyle = ukiyoeStyleSelect?.value || 'hiroshige';
+      const ukiyoeArtistName = ukiyoeStyle === 'hiroshige' ? '歌川広重' : '葛飾北斎';
+
+      setStatus('名所情報を収集中...');
+      if (btn) btn.textContent = '名所情報収集中...';
+
+      // トリップの旅行記と写真から名所関連情報を収集
+      const tripName = trip.name || '旅行';
+      const photos = trip.photos || [];
+
+      // 名所に関連する写真を広く収集（キーワードマッチング）
+      const meishoKeywords = meishoText.split(/[、。・\s]+/).filter(w => w.length >= 2);
+      const relatedPhotos = photos.filter(p => {
+        const photoText = [p.name, p.placeName, p.description].filter(Boolean).join(' ');
+        return meishoKeywords.some(keyword => photoText.includes(keyword));
+      });
+
+      // 写真からの詳細情報を収集
+      const photoInfo = {
+        places: [],
+        landmarks: [],
+        descriptions: [],
+        stampRally: []
+      };
+
+      relatedPhotos.forEach(p => {
+        if (p.placeName && !photoInfo.places.includes(p.placeName)) {
+          photoInfo.places.push(p.placeName);
+        }
+        if (p.name) {
+          photoInfo.landmarks.push(p.name);
+        }
+        if (p.description) {
+          photoInfo.descriptions.push(p.description);
+        }
+        if (p.landmarkNo) {
+          photoInfo.stampRally.push(`第${p.landmarkNo}番: ${p.name || '名所'}`);
+        }
+      });
+
+      // 旅行記から該当箇所を詳細に抽出
+      let travelogueContext = '';
+      let travelogueDetails = [];
+      if (trip.travelogueHtml && trip.travelogueHtml.trim()) {
+        const sections = parseTravelogueSections(trip.travelogueHtml);
+        // 名所に関連するセクションを抽出
+        const relatedSections = sections.filter(s => {
+          const sectionText = s.title + s.text;
+          return meishoKeywords.some(keyword => sectionText.includes(keyword));
+        });
+
+        if (relatedSections.length > 0) {
+          travelogueContext = relatedSections.map(s =>
+            (s.title ? `【${s.title}】` : '') + s.text
+          ).join('\n\n');
+          travelogueDetails = relatedSections.map(s => s.text);
+        } else {
+          // 関連セクションがなければ全体のサマリーを使用
+          travelogueContext = sections.map(s => s.text).join(' ').slice(0, 800);
+        }
+      }
+
+      // トリップの説明・背景情報
+      const tripBackground = trip.description || '';
+
+      // 一連の作品名を抽出（例: お遍路八十八ケ所巡り）
+      const seriesMatch = meishoText.match(/(お遍路.*?巡り|四国.*?巡礼|.*?街道|.*?参り|.*?巡り|.*?八十八.*)/);
+      const seriesName = seriesMatch ? seriesMatch[1] : '';
+
+      setStatus('浮世絵風の絵画を生成中...');
+      if (btn) btn.textContent = '浮世絵生成中...';
+
+      // キャラクター画像を取得
+      const charImg = await getCharacterImageForGeneration();
+
+      const ukiyoePrompt = [
+        `${ukiyoeArtistName}風の日本画で、以下の名所での旅の体験を余すことなく表現した、趣ある且つ楽しそうな浮世絵風の絵画を1枚生成してください。`,
+        '',
+        '【重要】画像内のすべての文字・タイトル・説明は必ず日本語のみで記述してください。英語は一切使用しないでください。',
+        '',
+        `【作風】${ukiyoeArtistName}の作風を踏襲した日本画。`,
+        ukiyoeStyle === 'hiroshige'
+          ? '- 歌川広重風: 柔らかな色彩、穏やかな構図、叙情的な風景、旅情を感じさせる雰囲気。名所建築を主役に、小さな人物を配置した情景。'
+          : '- 葛飾北斎風: 大胆な構図、鮮やかな色使い、躍動感のある表現、ダイナミックな自然描写。雄大な名所を主役に、人物は小さく。',
+        '',
+        '【構図の重要指示】',
+        '- メインの主役はお寺・神社・名所の建物や風景（画面の大部分を占める）',
+        '- 人物（メインキャラクターや旅人）は小さく描く（画面全体の10-15%程度）',
+        '- 浮世絵の伝統的な構図：雄大な名所を背景に、小さな旅人が点在する',
+        '- 名所の壮大さや美しさが一目で伝わる構図を優先',
+        '',
+        '【表現の自由度】',
+        '- 基本は浮世絵様式で統一するが、写真から得られた要素（建物、風景、物品など）は写実的な描写を部分的に混ぜてもOK',
+        '- 浮世絵の伝統的な平面性と、写真の立体感や質感を融合した現代的な浮世絵表現も可',
+        '- 全体の調和を保ちながら、写真の持つリアリティを活かして名所の魅力をより豊かに表現',
+        '- ただし、人物表現は写実的にせず、ソフトで優しいタッチで描く',
+        '',
+        '【必須要素】',
+        '- 趣があり、且つ楽しそうな雰囲気',
+        '- 浮世絵特有の装飾的な表現と構図',
+        '- 日本の伝統的な色彩（藍色、朱色、金色など）を基調としつつ、写真の色彩も活用',
+        '- 名所の風景と建物の特徴（写真の写実的要素を適度に取り入れる）',
+        '- 旅人（巡礼者・参拝者など）の姿や表情',
+        '- 御朱印帳や札所の雰囲気',
+        '- 土産物や名物の描写',
+        '- 旅の体験や出来事を象徴する要素',
+        seriesName ? `- 画像内に「${seriesName}」という作品シリーズ名を配置` : '',
+        '',
+        `【名所の説明】${meishoText}`,
+        ''
+      ];
+
+      // キャラクター画像がある場合の指示を追加
+      if (charImg) {
+        ukiyoePrompt.splice(18, 0,
+          '【メインキャラクター】',
+          'アップロードされた人物を、浮世絵の中の旅人として描いてください。',
+          `- ${ukiyoeArtistName}の描く人物画のスタイルを基本に、ソフトで優しいタッチで表現`,
+          '- 重要：人物は小さく描く（画面全体の10-15%程度のサイズ）',
+          '- 名所を訪れる旅人・巡礼者として、名所の前や参道などに小さく配置',
+          '- 人物の基本的な雰囲気は保ちつつ、写実的ではなく柔らかく親しみやすい表情に',
+          '- 浮世絵風の装束で、穏やかで温かみのある人物表現に',
+          '- 線は細く優しく、色彩は柔らかく、実写感は完全に排除',
+          '- 主役はあくまで名所建築であり、人物は添え物として小さく',
+          ''
+        );
+      }
+
+      if (tripBackground) {
+        ukiyoePrompt.push('【旅の背景】');
+        ukiyoePrompt.push(tripBackground);
+        ukiyoePrompt.push('');
+      }
+
+      if (photoInfo.places.length > 0) {
+        ukiyoePrompt.push('【訪問場所】');
+        ukiyoePrompt.push(photoInfo.places.join('、'));
+        ukiyoePrompt.push('');
+      }
+
+      if (photoInfo.landmarks.length > 0) {
+        ukiyoePrompt.push('【名所・ランドマーク】');
+        ukiyoePrompt.push(photoInfo.landmarks.join('、'));
+        ukiyoePrompt.push('');
+      }
+
+      if (photoInfo.stampRally.length > 0) {
+        ukiyoePrompt.push('【スタンプラリー・札所巡り】');
+        ukiyoePrompt.push(photoInfo.stampRally.join('、'));
+        ukiyoePrompt.push('※御朱印や札所の雰囲気を絵画に反映してください');
+        ukiyoePrompt.push('');
+      }
+
+      if (photoInfo.descriptions.length > 0) {
+        ukiyoePrompt.push('【写真に記録された詳細情報】');
+        photoInfo.descriptions.forEach((desc, i) => {
+          ukiyoePrompt.push(`${i + 1}. ${desc}`);
+        });
+        ukiyoePrompt.push('');
+      }
+
+      if (travelogueContext) {
+        ukiyoePrompt.push('【旅行記に記録された体験・出来事・登場人物】');
+        ukiyoePrompt.push(travelogueContext.slice(0, 1200));
+        ukiyoePrompt.push('※旅行記の内容（出会った人、経験した事、買ったもの、もらったものなど）を絵画の要素として表現してください');
+        ukiyoePrompt.push('');
+      }
+
+      ukiyoePrompt.push('【絵画作成の指針】');
+      ukiyoePrompt.push(`この名所での旅の体験を${ukiyoeArtistName}風の浮世絵として余すことなく表現してください。`);
+      ukiyoePrompt.push('- 【最重要】お寺・神社・名所の建物や風景を画面の主役として大きく描く（画面の80-85%）');
+      if (charImg) {
+        ukiyoePrompt.push('- アップロードされた人物は小さく描く（画面の10-15%程度）');
+        ukiyoePrompt.push('- 人物は写実的ではなく、ソフトで優しいタッチ、親しみやすく柔らかな表現で');
+      }
+      ukiyoePrompt.push('- 名所の雄大さ・美しさ・趣を最優先に表現し、旅人は小さく点在させる');
+      ukiyoePrompt.push('- すべての人物（メインキャラクター、その他の登場人物）は小さく、ソフトなタッチで、写実的にならないように');
+      ukiyoePrompt.push('- 写真から得られた建物や風景の特徴は、写実的な要素を残して描いてもOK（全体の浮世絵様式との調和を保つ）');
+      ukiyoePrompt.push('- 浮世絵らしい構図と装飾性を保ちながら、写真のリアリティも活かした現代的な表現');
+      ukiyoePrompt.push('- 見る人に「この場所に行ってみたい」「この名所を訪れたい」と思わせる魅力的な作品に');
+      ukiyoePrompt.push('- 趣と楽しさが共存する、温かみのある絵画に仕上げてください');
+
+      const promptText = ukiyoePrompt.filter(line => line !== '').join('\n');
+      const generatedDataUrl = await generateImageWithAI(promptText, charImg, animeCfg);
+
+      if (generatedDataUrl) {
+        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'ukiyoe');
+        const animeData = {
+          url: storageUrl,
+          timestamp: Date.now(),
+          style: 'meisho-ukiyoe',
+          meishoText: meishoText,
+          ukiyoeStyle: ukiyoeStyle,
+          ukiyoeArtist: ukiyoeArtistName
+        };
+        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
+        currentTrip.generatedAnimes.push(animeData);
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+        setStatus(`${ukiyoeArtistName}風の浮世絵を生成しました`);
+        // 入力欄をクリア
+        if (meishoInput) meishoInput.value = '';
+      } else {
+        alert('浮世絵の生成に失敗しました。APIキーと入力内容を確認してください。');
       }
       return;
     }
@@ -9660,13 +9932,15 @@ function initEventListeners() {
   if (animePlayBtn) animePlayBtn.onclick = () => toggleAnimePlay();
   if (animeModal) animeModal.onclick = (e) => { if (e.target === animeModal) closeAnimeModal(); };
 
-  // アニメスタイル選択時に出来事入力欄の表示を切り替え
+  // アニメスタイル選択時に出来事入力欄・名所浮世絵入力欄の表示を切り替え
   const animeStyleSelect = document.getElementById('animeStyleSelect');
   const eventStoryInputWrap = document.getElementById('eventStoryInputWrap');
-  if (animeStyleSelect && eventStoryInputWrap) {
+  const meishoUkiyoeInputWrap = document.getElementById('meishoUkiyoeInputWrap');
+  if (animeStyleSelect && eventStoryInputWrap && meishoUkiyoeInputWrap) {
     animeStyleSelect.onchange = () => {
-      const isEventStory = animeStyleSelect.value === 'event-story';
-      eventStoryInputWrap.style.display = isEventStory ? '' : 'none';
+      const value = animeStyleSelect.value;
+      eventStoryInputWrap.style.display = value === 'event-story' ? '' : 'none';
+      meishoUkiyoeInputWrap.style.display = value === 'meisho-ukiyoe' ? '' : 'none';
     };
   }
 
