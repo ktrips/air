@@ -937,12 +937,12 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   }
 }
 
-/* モバイル縦向き：縦長動画をさらに大きく表示（幅と高さを50%増加） */
+/* モバイル縦向き：縦長動画を画面の下から2/3の大きさで表示 */
 @media (max-width: 768px) and (orientation: portrait) {
   .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
-    width: 90vw; /* 60vw × 1.5 = 90vw */
-    height: 147vh; /* 98vh × 1.5 = 147vh - 高さを50%増加 */
-    max-height: 147vh;
+    width: 90vw;
+    height: calc(100vh * 2 / 3); /* 画面の下から2/3の高さ */
+    max-height: calc(100vh * 2 / 3);
     aspect-ratio: 9 / 16;
     bottom: 10px;
   }
