@@ -2385,6 +2385,12 @@ async function updateMapMarkers() {
       const landmarkMarkers = [];
 
       (trip.photos || []).forEach((p, i) => {
+        // トリップ選択時は最初と最後の写真のみを表示
+        const photoCount = trip.photos.length;
+        const isFirstPhoto = i === 0;
+        const isLastPhoto = i === photoCount - 1;
+        if (!isFirstPhoto && !isLastPhoto) return;
+
         // モバイルで親トリップ表示時は最初のランドマークのみ
         if (isParentShowingChild && isMobileView()) {
           const isFirstLandmark = !!(p.landmarkNo) && !trip.photos.slice(0, i).some(prevP => prevP.landmarkNo);
