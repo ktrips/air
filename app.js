@@ -4852,11 +4852,15 @@ function renderTripList() {
     list.appendChild(row);
     // モバイルでは詳細を展開しない
     if (isSelected && !isMobileView()) {
+      console.log(`トリップ詳細を表示:`, { name: t.name, isParent: t.isParent });
       const detail = document.createElement('div');
       detail.className = 'trip-detail-inline';
       if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
       const photos = t.isParent ? [] : (t.photos || []);
       const children = t.isParent ? getOrderedTrips().filter(x => x.parentId === t.id) : [];
+      if (t.isParent && children.length > 0) {
+        console.log(`親トリップの子トリップを表示: ${children.length}件`);
+      }
       let html = '';
       if (t.description) {
         html += `<p class="trip-detail-desc">`;
@@ -4888,11 +4892,66 @@ function renderTripList() {
       }
       if (children.length > 0) {
         html += '<p class="trip-detail-children"><strong>子トリップ:</strong> ';
-        html += children.map(c => escapeHtml(c.name || c.id)).join('、');
+        html += children.map((c, idx) => {
+          return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
+        }).join('、');
         html += '</p>';
+      }
+      // 編集者モード: トリップIDを表示してコピー可能に
+      if (isEditor()) {
+        const tripIdUrl = `${window.location.origin}${window.location.pathname}?tripId=${t.id}`;
+        html += `<p class="trip-detail-id" style="font-size:0.85em;color:#666;margin-top:0.5rem;">`;
+        html += `<strong>ID:</strong> <code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em;user-select:all;">${escapeHtml(t.id)}</code> `;
+        html += `<button class="btn-copy-trip-id" data-trip-id="${escapeHtml(t.id)}" data-trip-url="${escapeHtml(tripIdUrl)}" style="font-size:0.8em;padding:2px 8px;margin-left:4px;cursor:pointer;">URLコピー</button>`;
+        html += `</p>`;
       }
       detail.innerHTML = html;
       list.appendChild(detail);
+
+      // URLコピーボタンにクリックイベントを追加
+      detail.querySelectorAll('.btn-copy-trip-id').forEach(btn => {
+        btn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const tripUrl = btn.getAttribute('data-trip-url');
+          try {
+            await navigator.clipboard.writeText(tripUrl);
+            const originalText = btn.textContent;
+            btn.textContent = 'コピー完了!';
+            btn.style.background = '#28a745';
+            btn.style.color = '#fff';
+            setTimeout(() => {
+              btn.textContent = originalText;
+              btn.style.background = '';
+              btn.style.color = '';
+            }, 2000);
+          } catch (err) {
+            console.error('クリップボードへのコピー失敗:', err);
+            alert(`URLをコピーできませんでした。\n手動でコピーしてください:\n${tripUrl}`);
+          }
+        };
+      });
+
+      // 子トリップリンクにクリックイベントを追加
+      detail.querySelectorAll('.child-trip-link').forEach(link => {
+        link.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const childTripId = link.getAttribute('data-trip-id');
+          if (childTripId) {
+            try {
+              await loadTripById(childTripId);
+              if (isMobileView()) {
+                document.getElementById('tripPanel')?.classList.remove('open');
+                document.getElementById('tripSheetOverlay')?.classList.remove('open');
+              }
+            } catch (err) {
+              console.error('子トリップ読み込みエラー:', err);
+              alert('子トリップの読み込みに失敗しました: ' + (err.message || err));
+            }
+          }
+        };
+      });
       detail.querySelectorAll('.trip-detail-video-btn').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(t)); };
       });
@@ -5339,31 +5398,55 @@ async function loadTripById(id) {
       currentTrip = { ...cached, id: cached.id };
       currentPhotoIndex = 0;
 
-      // URLにトリップ名パラメータを追加
+      // URLにトリップ名パラメータを追加（IDもコンソールに表示）
       const newUrl = new URL(window.location.href);
       newUrl.searchParams.set('trip', encodeURIComponent(currentTrip.name));
       window.history.replaceState({}, '', newUrl.toString());
+
+      // トリップID確認用のログ（URLで使用可能）
+      console.log(`✓ トリップID: ${id}`);
+      console.log(`  → IDで開くURL: ${window.location.origin}${window.location.pathname}?tripId=${id}`);
 
       await updateTripInputs();
       // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
       refreshTripSelect();
       renderThumbnails();
+
+      // マーカー更新と地図表示範囲調整を確実に実行
+      console.log('🗺️ マーカーを更新中...');
       await updateMapMarkers();
+      console.log('✓ マーカー更新完了');
+
       await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
-      // トリップの全ポイントが収まるように地図を調整
-      const photos = getDisplayPhotos();
-      if (photos.length > 0 && map) {
-        const bounds = [];
-        photos.forEach(p => {
-          if (p.lat != null && p.lng != null) {
-            bounds.push([p.lat, p.lng]);
+      // トリップの全ポイントが収まるように地図を調整（マーカー更新後に実行）
+      setTimeout(() => {
+        const photos = getDisplayPhotos();
+        console.log(`🗺️ 地図表示範囲を調整: 写真数=${photos.length}`);
+        if (photos.length > 0 && map) {
+          const bounds = [];
+          photos.forEach(p => {
+            if (p.lat != null && p.lng != null) {
+              bounds.push([p.lat, p.lng]);
+            }
+          });
+          console.log(`🗺️ 地図に表示する座標数: ${bounds.length}`);
+          if (bounds.length > 0) {
+            try {
+              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+              console.log(`✅ 地図の表示範囲を調整しました`);
+            } catch (err) {
+              console.error('❌ fitBoundsエラー:', err);
+            }
+          } else {
+            console.warn('⚠️ GPS座標を持つ写真がありません');
           }
-        });
-        if (bounds.length > 0) {
-          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+        } else if (photos.length === 0) {
+          console.warn('⚠️ 表示する写真がありません');
+        } else if (!map) {
+          console.error('❌ 地図が初期化されていません');
         }
-      }
+      }, 300); // マーカーのレンダリングを待つ
 
       // アニメ画像一覧を表示
       console.log('トリップロード（キャッシュ）:', {
@@ -5436,23 +5519,42 @@ async function loadTripById(id) {
       // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
       refreshTripSelect();
       renderThumbnails();
+
+      console.log('🗺️ マーカーを更新中...');
       await updateMapMarkers();
+      console.log('✓ マーカー更新完了');
+
       if (map) map.invalidateSize();
       await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
-      // トリップの全ポイントが収まるように地図を調整
-      const photos = getDisplayPhotos();
-      if (photos.length > 0 && map) {
-        const bounds = [];
-        photos.forEach(p => {
-          if (p.lat != null && p.lng != null) {
-            bounds.push([p.lat, p.lng]);
+      // トリップの全ポイントが収まるように地図を調整（マーカー更新後に実行）
+      setTimeout(() => {
+        const photos = getDisplayPhotos();
+        console.log(`🗺️ 地図表示範囲を調整: 写真数=${photos.length}`);
+        if (photos.length > 0 && map) {
+          const bounds = [];
+          photos.forEach(p => {
+            if (p.lat != null && p.lng != null) {
+              bounds.push([p.lat, p.lng]);
+            }
+          });
+          console.log(`🗺️ 地図に表示する座標数: ${bounds.length}`);
+          if (bounds.length > 0) {
+            try {
+              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+              console.log(`✅ 地図の表示範囲を調整しました`);
+            } catch (err) {
+              console.error('❌ fitBoundsエラー:', err);
+            }
+          } else {
+            console.warn('⚠️ GPS座標を持つ写真がありません');
           }
-        });
-        if (bounds.length > 0) {
-          map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+        } else if (photos.length === 0) {
+          console.warn('⚠️ 表示する写真がありません');
+        } else if (!map) {
+          console.error('❌ 地図が初期化されていません');
         }
-      }
+      }, 300); // マーカーのレンダリングを待つ
 
       // アニメ画像一覧を表示
       console.log('トリップロード（Firestore）:', {
@@ -10094,58 +10196,127 @@ function init() {
       refreshTripSelect();
       refreshTripParentSelectOptions();
 
-      // URLパラメータからトリップ名を取得
+      // URLパラメータからトリップ名またはIDを取得
       const urlParams = new URLSearchParams(window.location.search);
-      const tripNameParam = urlParams.get('trip');
+      const tripParam = urlParams.get('t') || urlParams.get('id'); // 短縮形: ?t= または ?id=
+      const tripIdParam = urlParams.get('tripId'); // 旧形式: ?tripId=
+      const tripNameParam = urlParams.get('trip'); // 名前指定: ?trip=
+      const tripOrderParam = urlParams.get('n'); // 順序指定: ?n=1
       const openTravelogue = urlParams.get('travelogue') === 'true';
-      const isHomeUrl = !tripNameParam; // ?trip= 指定なし = ホームURL
+      const isHomeUrl = !tripParam && !tripIdParam && !tripNameParam && !tripOrderParam;
+
+      console.log('🔍 URLパラメータ解析:', {
+        url: window.location.href,
+        search: window.location.search,
+        tripParam,
+        tripIdParam,
+        tripNameParam,
+        tripOrderParam,
+        isHomeUrl
+      });
 
       let tripToLoad = null;
 
-      if (tripNameParam) {
-        // URLパラメータでトリップ名が指定されている場合、そのトリップを検索
-        const decodedTripName = decodeURIComponent(tripNameParam);
-        const foundTrip = myTrips.find(t => t.name === decodedTripName);
+      // 優先順位: t/id > tripId > n > trip
+      if (tripParam) {
+        // ?t= または ?id= (短縮形でトリップIDを指定)
+        console.log(`🆔 URLパラメータ: t/id=${tripParam}`);
+        console.log(`🆔 検索対象トリップ数: ${myTrips.length}件`);
+        const foundTrip = myTrips.find(t => t.id === tripParam);
         if (foundTrip) {
-          console.log(`URLパラメータからトリップを開きます: ${decodedTripName} (親トリップ: ${foundTrip.isParent ? 'はい' : 'いいえ'})`);
+          console.log(`✅ トリップを発見 (短縮ID指定): ${foundTrip.name} (ID: ${foundTrip.id}, 親: ${foundTrip.isParent ? 'はい' : 'いいえ'})`);
           tripToLoad = foundTrip.id;
 
           // 親トリップの場合、確実に親トリップビューで表示
           if (foundTrip.isParent) {
-            console.log(`親トリップをデフォルト表示: ${foundTrip.name}`);
+            console.log(`📁 親トリップをデフォルト表示: ${foundTrip.name}`);
           }
         } else {
-          console.warn(`トリップ名 "${decodedTripName}" が見つかりませんでした`);
+          console.error(`❌ トリップID "${tripParam}" が見つかりませんでした`);
+          console.log(`📋 登録されているトリップID (${myTrips.length}件):`, myTrips.map(t => `${t.name}: ${t.id}`));
+        }
+      } else if (tripIdParam) {
+        // ?tripId= (旧形式でトリップIDを指定)
+        console.log(`🆔 URLパラメータ: tripId=${tripIdParam}`);
+        console.log(`🆔 検索対象トリップ数: ${myTrips.length}件`);
+        const foundTrip = myTrips.find(t => t.id === tripIdParam);
+        if (foundTrip) {
+          console.log(`✅ トリップを発見 (ID指定): ${foundTrip.name} (ID: ${foundTrip.id}, 親: ${foundTrip.isParent ? 'はい' : 'いいえ'})`);
+          tripToLoad = foundTrip.id;
+
+          // 親トリップの場合、確実に親トリップビューで表示
+          if (foundTrip.isParent) {
+            console.log(`📁 親トリップをデフォルト表示: ${foundTrip.name}`);
+          }
+        } else {
+          console.error(`❌ トリップID "${tripIdParam}" が見つかりませんでした`);
+          console.log(`📋 登録されているトリップID (${myTrips.length}件):`, myTrips.map(t => `${t.name}: ${t.id}`));
+        }
+      } else if (tripOrderParam) {
+        // ?n=1 (順序番号でトリップを指定)
+        const order = parseInt(tripOrderParam, 10);
+        const orderedTrips = getOrderedTrips();
+        console.log(`🔢 URLパラメータ: n=${order} (登録トリップ数: ${orderedTrips.length})`);
+        if (order > 0 && order <= orderedTrips.length) {
+          const foundTrip = orderedTrips[order - 1];
+          console.log(`✅ トリップを発見 (順序指定): ${foundTrip.name} (ID: ${foundTrip.id}, 親: ${foundTrip.isParent ? 'はい' : 'いいえ'})`);
+          tripToLoad = foundTrip.id;
+
+          // 親トリップの場合、確実に親トリップビューで表示
+          if (foundTrip.isParent) {
+            console.log(`📁 親トリップをデフォルト表示: ${foundTrip.name}`);
+          }
+        } else {
+          console.error(`❌ 順序番号 ${order} が範囲外です (1-${orderedTrips.length})`);
+        }
+      } else if (tripNameParam) {
+        // URLパラメータでトリップ名が指定されている場合、そのトリップを検索
+        console.log(`🔍 URLパラメータ: trip=${tripNameParam}`);
+        let decodedTripName = decodeURIComponent(tripNameParam);
+        console.log(`🔍 1回デコード後: "${decodedTripName}"`);
+
+        // 二重エンコードチェック: %が含まれている場合はもう一度デコード
+        if (decodedTripName.includes('%')) {
+          try {
+            const doubleDecoded = decodeURIComponent(decodedTripName);
+            console.log(`🔍 二重エンコードを検出: "${decodedTripName}" → "${doubleDecoded}"`);
+            decodedTripName = doubleDecoded;
+          } catch (e) {
+            console.warn('⚠️ デコードエラー:', e);
+          }
+        }
+
+        console.log(`🔍 最終的なトリップ名: "${decodedTripName}"`);
+        const foundTrip = myTrips.find(t => t.name === decodedTripName);
+        if (foundTrip) {
+          console.log(`✅ トリップを発見: ${decodedTripName} (ID: ${foundTrip.id}, 親: ${foundTrip.isParent ? 'はい' : 'いいえ'})`);
+          tripToLoad = foundTrip.id;
+
+          // 親トリップの場合、確実に親トリップビューで表示
+          if (foundTrip.isParent) {
+            console.log(`📁 親トリップをデフォルト表示: ${foundTrip.name}`);
+          }
+        } else {
+          console.error(`❌ トリップ名 "${decodedTripName}" が見つかりませんでした`);
+          console.log(`📋 登録されているトリップ名 (${myTrips.length}件):`, myTrips.map(t => t.name));
         }
       }
 
-      // ホームURL（?trip= なし）の場合はドメインに応じたデフォルト親トリップを自動選択
+      // ホームURL（?trip= なし）の場合は直近のトリップを自動選択
       if (!tripToLoad && isHomeUrl) {
         const host = window.location.hostname || '';
         const orderedTrips = getOrderedTrips();
 
-        if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-          // ohenro.ktrips.net: 「しまなみ街道と四国お遍路旅」を確実に自動選択
-          const defaultParentName = 'しまなみ街道と四国お遍路旅';
-          const defaultTrip = myTrips.find(t => t.name === defaultParentName && t.isParent);
-          if (defaultTrip) {
-            console.log(`[${host}] デフォルト親トリップを自動選択: ${defaultParentName}`);
-            tripToLoad = defaultTrip.id;
-            // URLパラメータに親トリップを追加して、確実に表示されるようにする
-            window.history.replaceState({}, '', `?trip=${encodeURIComponent(defaultParentName)}`);
+        if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$|^air\.ktrips\.net$|^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$|^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) {
+          // 直近のトリップ（最初のトリップ）を自動選択
+          if (orderedTrips.length > 0) {
+            const latestTrip = orderedTrips[0];
+            console.log(`[${host}] 直近のトリップを自動選択: ${latestTrip.name} (親: ${latestTrip.isParent ? 'はい' : 'いいえ'})`);
+            tripToLoad = latestTrip.id;
+            // URLパラメータにトリップを追加
+            window.history.replaceState({}, '', `?t=${latestTrip.id}`);
           } else {
-            console.warn(`[${host}] デフォルト親トリップ "${defaultParentName}" が見つかりませんでした`);
-          }
-        } else if (/^air\.ktrips\.net$|^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$|^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) {
-          // air.ktrips.net: 最初の親トリップを確実に自動選択
-          const firstParent = orderedTrips.find(t => t.isParent);
-          if (firstParent) {
-            console.log(`[${host}] 先頭の親トリップを自動選択: ${firstParent.name}`);
-            tripToLoad = firstParent.id;
-            // URLパラメータに親トリップを追加して、確実に表示されるようにする
-            window.history.replaceState({}, '', `?trip=${encodeURIComponent(firstParent.name)}`);
-          } else {
-            console.warn(`[${host}] 親トリップが見つかりませんでした`);
+            console.warn(`[${host}] トリップが見つかりませんでした`);
           }
         }
       }
@@ -10160,7 +10331,16 @@ function init() {
 
       if (tripToLoad) {
         try {
+          console.log(`📂 トリップを読み込みます: ${tripToLoad}`);
+          console.log(`📂 読み込み前のcurrentTrip:`, currentTrip?.id || 'null');
           await loadTripById(tripToLoad);
+          console.log(`✅ トリップ読み込み完了:`, {
+            id: currentTrip?.id,
+            name: currentTrip?.name,
+            isParent: currentTrip?.isParent,
+            photosCount: getDisplayPhotos().length,
+            childrenCount: currentTrip?.isParent ? getOrderedTrips().filter(t => t.parentId === currentTrip.id).length : 0
+          });
 
           // 旅行記パラメータがある場合、旅行記モーダルを開く
           if (openTravelogue && currentTrip) {
@@ -10169,12 +10349,13 @@ function init() {
             }, 500); // トリップの読み込みが完全に完了するまで少し待つ
           }
         } catch (err) {
-          console.error('トリップ読み込みエラー:', err);
+          console.error('❌ トリップ読み込みエラー:', err);
           // トリップ読み込みに失敗した場合は、デフォルトビューを表示
           await updateHeaderInfo();
           await updateMapMarkers();
         }
       } else {
+        console.log('ℹ️ 読み込むトリップが指定されていません。デフォルト表示を使用します。');
         await updateHeaderInfo();
         await updateMapMarkers();
       }

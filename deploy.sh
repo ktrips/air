@@ -7,14 +7,20 @@ set -e
 
 echo "🚀 Air デプロイ開始..."
 
-# config.jsの存在確認
+# config.jsの存在確認と自動作成
 if [ ! -f "config.js" ]; then
   echo "⚠️  警告: config.js が見つかりません"
-  echo "config.example.js をコピーしてconfig.jsを作成してください"
-  read -p "デプロイを続行しますか？ (y/N): " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    exit 1
+  if [ -f "config.template.js" ]; then
+    echo "📝 config.template.js から config.js を作成します..."
+    cp config.template.js config.js
+    echo "✓ config.js を作成しました"
+  else
+    echo "❌ エラー: config.template.js も見つかりません"
+    read -p "デプロイを続行しますか？ (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+      exit 1
+    fi
   fi
 fi
 
