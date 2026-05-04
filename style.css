@@ -913,10 +913,11 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
     border-radius: 8px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
   }
-  /* モバイル縦長動画：9:16で画面いっぱいに */
+  /* モバイル縦長動画：9:16で画面いっぱいに（高さを50%増加） */
   .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
     width: auto;
-    height: 96vh;
+    height: 144vh; /* 96vh × 1.5 = 144vh */
+    max-height: 144vh;
     aspect-ratio: 9 / 16;
     top: auto;
     bottom: 20px;
@@ -936,10 +937,10 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   }
 }
 
-/* モバイル縦向き：縦長動画をさらに大きく表示（画面の3/5の幅） */
+/* モバイル縦向き：縦長動画をさらに大きく表示（幅を50%増加：60vw → 90vw） */
 @media (max-width: 768px) and (orientation: portrait) {
   .playback-photo-overlay.playback-video-fullscreen.playback-video-portrait {
-    width: 60vw;
+    width: 90vw; /* 60vw × 1.5 = 90vw */
     height: auto;
     max-height: 98vh;
     aspect-ratio: 9 / 16;

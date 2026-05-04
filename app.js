@@ -4851,7 +4851,7 @@ function renderTripList() {
     row.appendChild(actions);
     list.appendChild(row);
     // モバイルでは詳細を展開しない
-    if (isSelected && !t.isParent && !isMobileView()) {
+    if (isSelected && !isMobileView()) {
       const detail = document.createElement('div');
       detail.className = 'trip-detail-inline';
       if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
@@ -10107,8 +10107,13 @@ function init() {
         const decodedTripName = decodeURIComponent(tripNameParam);
         const foundTrip = myTrips.find(t => t.name === decodedTripName);
         if (foundTrip) {
-          console.log(`URLパラメータからトリップを開きます: ${decodedTripName}`);
+          console.log(`URLパラメータからトリップを開きます: ${decodedTripName} (親トリップ: ${foundTrip.isParent ? 'はい' : 'いいえ'})`);
           tripToLoad = foundTrip.id;
+
+          // 親トリップの場合、確実に親トリップビューで表示
+          if (foundTrip.isParent) {
+            console.log(`親トリップをデフォルト表示: ${foundTrip.name}`);
+          }
         } else {
           console.warn(`トリップ名 "${decodedTripName}" が見つかりませんでした`);
         }
