@@ -3,17 +3,16 @@
 GPS付き写真をアップロードすると撮影場所を地図上に表示し、スライドショーで楽しめるWebアプリ。Google ログインで Firestore にトリップを保存・共有。
 
 **URL**: https://air.ktrips.net  
-**バージョン**: v1.6.5
+**バージョン**: a.1.7.3
 
-## 最新アップデート（v1.6.5）
+## 最新アップデート（a.1.7.3）
 
-- 🌐 **Mapbox 3D地図**: 自動再生中に Mapbox GL JS による 3D 地図に切り替え。ルート線・ポイントがグロー効果で強調表示される（`config.js` に `MAPBOX_TOKEN` を設定すると有効）
-- 📱 **PWA対応**: Service Worker（`sw.js`）を追加。静的アセットをオフラインキャッシュし、初回以降の表示を高速化
-- 💾 **IndexedDB GPXキャッシュ**: GPX ファイルを IndexedDB に 24 時間キャッシュ。再アクセス時の読み込みを省略
-- 🔑 **config.js でMapboxトークン管理**: `config.js`（`.gitignore` 対象）で `window.MAPBOX_TOKEN` を設定。Git 管理外でトークンを安全に保持
-- ✨ **出来事生成（AI アニメ）**: AI アニメ生成に「出来事生成」スタイルを追加。旅の印象的な出来事をキャラアニメ 5 コマで生成（キャラ画像必須）
-- 📤 **旅行記シェアボタン**: 旅行記を Twitter / Instagram（URL コピー）/ Facebook でシェア可能
-- ⚡ **パフォーマンス最適化**: マップマーカー更新の debounce（300ms）、トリップ一覧の onSnapshot リアルタイム同期＋5分間メモリキャッシュ
+- 🏠 **親トリップ自動選択**: ドメイン別に自動的にデフォルト親トリップを選択
+  - `ohenro.ktrips.net` → 「しまなみ街道と四国お遍路旅」を自動選択
+  - `air.ktrips.net` および `airj.ktrips.net`, `air.jp.ktrips.net`, `airg.ktrips.net`, `air.gl.ktrips.net` → 最初の親トリップを自動選択
+  - URL パラメータ `?trip=` で自動エンコード・表示
+- 📱 **モバイル動画表示サイズ最適化**: 自動再生時の縦長動画を画面の下から 2/3 のサイズで表示（より見やすく）
+- 📖 **Help モーダルにAI使用量チェックリンク追加**: Gemini API・Claude API の使用状況を確認できるリンクを Help に追加
 
 ## 機能
 
