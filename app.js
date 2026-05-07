@@ -4897,40 +4897,8 @@ function renderTripList() {
         }).join('、');
         html += '</p>';
       }
-      // 編集者モード: トリップIDを表示してコピー可能に
-      if (isEditor()) {
-        const tripIdUrl = `${window.location.origin}${window.location.pathname}?tripId=${t.id}`;
-        html += `<p class="trip-detail-id" style="font-size:0.85em;color:#666;margin-top:0.5rem;">`;
-        html += `<strong>ID:</strong> <code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em;user-select:all;">${escapeHtml(t.id)}</code> `;
-        html += `<button class="btn-copy-trip-id" data-trip-id="${escapeHtml(t.id)}" data-trip-url="${escapeHtml(tripIdUrl)}" style="font-size:0.8em;padding:2px 8px;margin-left:4px;cursor:pointer;">URLコピー</button>`;
-        html += `</p>`;
-      }
       detail.innerHTML = html;
       list.appendChild(detail);
-
-      // URLコピーボタンにクリックイベントを追加
-      detail.querySelectorAll('.btn-copy-trip-id').forEach(btn => {
-        btn.onclick = async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const tripUrl = btn.getAttribute('data-trip-url');
-          try {
-            await navigator.clipboard.writeText(tripUrl);
-            const originalText = btn.textContent;
-            btn.textContent = 'コピー完了!';
-            btn.style.background = '#28a745';
-            btn.style.color = '#fff';
-            setTimeout(() => {
-              btn.textContent = originalText;
-              btn.style.background = '';
-              btn.style.color = '';
-            }, 2000);
-          } catch (err) {
-            console.error('クリップボードへのコピー失敗:', err);
-            alert(`URLをコピーできませんでした。\n手動でコピーしてください:\n${tripUrl}`);
-          }
-        };
-      });
 
       // 子トリップリンクにクリックイベントを追加
       detail.querySelectorAll('.child-trip-link').forEach(link => {
