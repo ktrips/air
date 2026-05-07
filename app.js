@@ -2435,9 +2435,36 @@ async function updateMapMarkers() {
           iconSize = [34, 34];
           iconAnchor = [17, 17];
         } else if (p.videoUrl) {
-          photoIconHtml = `<div style="background:${color};width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);font-size:11px;line-height:1;">▶</div>`;
-          iconSize = [24, 24];
-          iconAnchor = [12, 12];
+          const videoThumbUrl = getVideoThumbnailUrl(p.videoUrl);
+          if (videoThumbUrl) {
+            if (isParentMobileView) {
+              photoIconHtml = `
+                <div style="position:relative;width:40px;height:40px;">
+                  <img src="${videoThumbUrl}" style="width:40px;height:40px;border-radius:5px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+                  <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);border-radius:5px;">
+                    <div style="background:rgba(255,255,255,0.9);width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;padding-left:2px;">▶</div>
+                  </div>
+                </div>
+              `;
+              iconSize = [40, 40];
+              iconAnchor = [20, 40];
+            } else {
+              photoIconHtml = `
+                <div style="position:relative;width:56px;height:56px;">
+                  <img src="${videoThumbUrl}" style="width:56px;height:56px;border-radius:7px;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
+                  <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);border-radius:7px;">
+                    <div style="background:rgba(255,255,255,0.9);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;padding-left:2px;">▶</div>
+                  </div>
+                </div>
+              `;
+              iconSize = [56, 56];
+              iconAnchor = [28, 56];
+            }
+          } else {
+            photoIconHtml = `<div style="background:${color};width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);font-size:11px;line-height:1;">▶</div>`;
+            iconSize = [24, 24];
+            iconAnchor = [12, 12];
+          }
         } else {
           photoIconHtml = `<span style="background:${color};border:2px solid #fff;width:12px;height:12px;border-radius:50%;display:block;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>`;
           iconSize = [12, 12];
