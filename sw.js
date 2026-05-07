@@ -7,7 +7,7 @@
  *   - GPX ファイル: cache-first（IndexedDB とは別の HTTP キャッシュ層）
  */
 
-const CACHE_VERSION = 'air-v2'; // ストリーミング旅行記生成・Phase1/2対応
+const CACHE_VERSION = 'air-v3'; // trip-detail-id URLコピー削除・タイムアウト増加等
 
 // インストール時に事前キャッシュする同一オリジンアセット
 const PRECACHE_ASSETS = [

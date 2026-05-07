@@ -2434,6 +2434,10 @@ async function updateMapMarkers() {
           photoIconHtml = `<div style="background:${color};width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:16px;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5)">${no}</div>`;
           iconSize = [34, 34];
           iconAnchor = [17, 17];
+        } else if (p.videoUrl) {
+          photoIconHtml = `<div style="background:${color};width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4);font-size:11px;line-height:1;">▶</div>`;
+          iconSize = [24, 24];
+          iconAnchor = [12, 12];
         } else {
           photoIconHtml = `<span style="background:${color};border:2px solid #fff;width:12px;height:12px;border-radius:50%;display:block;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>`;
           iconSize = [12, 12];
@@ -6557,11 +6561,11 @@ async function generateTravelogueWithAI() {
       }
     }
 
-    // 🚀 高速モード: タイムアウトを短縮（基本90秒 + 写真20枚ごとに20秒）
-    const baseTimeout = 90000;
-    const additionalTimeout = Math.floor(photoCount / 20) * 20000;
+    // タイムアウト設定（基本180秒 + 写真20枚ごとに30秒）
+    const baseTimeout = 180000;
+    const additionalTimeout = Math.floor(photoCount / 20) * 30000;
     const timeout = baseTimeout + additionalTimeout;
-    console.log(`⚡ 高速モード - タイムアウト設定: ${timeout / 1000}秒 (写真${photoCount}枚)`);
+    console.log(`タイムアウト設定: ${timeout / 1000}秒 (写真${photoCount}枚)`);
 
     const fetchWithTimeout = async (url, options, timeoutMs = timeout) => {
       const controller = new AbortController();
@@ -10270,26 +10274,40 @@ function init() {
         }
       }
 
-      // ホームURL（?trip= なし）の場合は直近のトリップを自動選択
+      // ホームURL（?trip= なし）の場合は前回のトリップまたはデフォルトを自動選択
       if (!tripToLoad && isHomeUrl) {
         const host = window.location.hostname || '';
         const orderedTrips = getOrderedTrips();
 
         if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$|^air\.ktrips\.net$|^airj\.ktrips\.net$|^air\.jp\.ktrips\.net$|^airg\.ktrips\.net$|^air\.gl\.ktrips\.net$/.test(host)) {
-          // 直近のトリップ（最初のトリップ）を自動選択
-          if (orderedTrips.length > 0) {
-            const latestTrip = orderedTrips[0];
-            console.log(`[${host}] 直近のトリップを自動選択: ${latestTrip.name} (親: ${latestTrip.isParent ? 'はい' : 'いいえ'})`);
-            tripToLoad = latestTrip.id;
-            // URLパラメータにトリップを追加
-            window.history.replaceState({}, '', `?t=${latestTrip.id}`);
-          } else {
-            console.warn(`[${host}] トリップが見つかりませんでした`);
+          // 再訪問：前回開いたトリップを表示
+          const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
+          if (lastTripId) {
+            const lastTrip = myTrips.find(t => t.id === lastTripId);
+            if (lastTrip) {
+              console.log(`[${host}] 再訪問 - 前回のトリップを表示: ${lastTrip.name}`);
+              tripToLoad = lastTripId;
+            }
+          }
+
+          // 初回アクセス：「Day1 しまなみ街道」をデフォルト表示
+          if (!tripToLoad) {
+            const defaultTrip = myTrips.find(t => t.name === 'Day1 しまなみ街道');
+            if (defaultTrip) {
+              console.log(`[${host}] 初回アクセス - デフォルトトリップを表示: ${defaultTrip.name}`);
+              tripToLoad = defaultTrip.id;
+            } else if (orderedTrips.length > 0) {
+              // フォールバック：リスト先頭のトリップ
+              console.log(`[${host}] フォールバック - 先頭トリップを表示: ${orderedTrips[0].name}`);
+              tripToLoad = orderedTrips[0].id;
+            } else {
+              console.warn(`[${host}] トリップが見つかりませんでした`);
+            }
           }
         }
       }
 
-      // ドメインデフォルトも見つからなかった場合は、前回のトリップを開く
+      // 対象ドメイン以外で未解決の場合は、前回のトリップを開く
       if (!tripToLoad) {
         const lastTripId = (() => { try { return localStorage.getItem(LAST_TRIP_ID_KEY); } catch (_) { return null; } })();
         if (lastTripId) {
