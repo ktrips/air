@@ -4793,7 +4793,10 @@ function getTripsForDisplay() {
       .sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0));
     if (r.isParent && children.length === 0 && !matchesRegion(r)) return; // 親のみで子がマッチしない場合は非表示
     result.push({ trip: r, isChild: false });
-    children.forEach(c => result.push({ trip: c, isChild: true }));
+    // URLパラメータで親トリップ指定時は子トリップを表示しない
+    if (!tripFilterParentName) {
+      children.forEach(c => result.push({ trip: c, isChild: true }));
+    }
   });
   return result;
 }
