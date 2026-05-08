@@ -266,9 +266,15 @@ function initRegionFilterFromUrl() {
     const host = window.location.hostname || '';
     const params = new URLSearchParams(window.location.search);
 
-    // ohenro/henro.ktrips.net: 「しまなみ街道と四国お遍路旅」とその子トリップのみ表示
-    if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-      tripFilterParentName = 'しまなみ街道と四国お遍路旅';
+    // URLパラメータ trip で親トリップ名を指定
+    const tripParam = params.get('trip');
+    if (tripParam) {
+      tripFilterParentName = decodeURIComponent(tripParam).trim();
+    } else {
+      // ohenro/henro.ktrips.net: 「しまなみ街道と四国お遍路旅」とその子トリップのみ表示
+      if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
+        tripFilterParentName = 'しまなみ街道と四国お遍路旅';
+      }
     }
 
     let region = params.get('region');
@@ -9613,6 +9619,15 @@ function initEventListeners() {
     await Promise.all([loadMyTrips(), loadTripOrder()]);
     renderTripList();
     refreshTripSelect();
+
+    // URLパラメータで指定された親トリップを読み込む
+    if (tripFilterParentName) {
+      const parentTrip = myTrips.find(t => (t.name || '').trim() === tripFilterParentName && t.isParent);
+      if (parentTrip) {
+        await loadTripById(parentTrip.id);
+      }
+    }
+
     await updateMapMarkers();
     await updateHeaderInfo();
   });
