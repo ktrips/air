@@ -2325,7 +2325,12 @@ async function updateMapMarkers() {
 
   const tripsToShow = [];
   if (currentTrip?.isParent) {
-    tripsToShow.push(...getOrderedTrips().filter(t => t.parentId === currentTrip.id));
+    // URLパラメータで親トリップのみ表示する場合は、子トリップを表示しない
+    if (tripFilterParentName) {
+      tripsToShow.push(currentTrip);
+    } else {
+      tripsToShow.push(...getOrderedTrips().filter(t => t.parentId === currentTrip.id));
+    }
   } else if (currentTrip) {
     tripsToShow.push(currentTrip);
   } else {
