@@ -9633,6 +9633,18 @@ function initEventListeners() {
       const parentTrip = myTrips.find(t => (t.name || '').trim() === tripFilterParentName && t.isParent);
       if (parentTrip) {
         await loadTripById(parentTrip.id);
+      } else {
+        // 親トリップが見つからない場合、部分一致で検索
+        const partialMatch = myTrips.find(t => {
+          const name = (t.name || '').trim();
+          return name.includes(tripFilterParentName) && t.isParent;
+        });
+        if (partialMatch) {
+          await loadTripById(partialMatch.id);
+        } else {
+          console.warn('親トリップが見つかりません:', tripFilterParentName);
+          console.log('利用可能な親トリップ:', myTrips.filter(t => t.isParent).map(t => t.name));
+        }
       }
     }
 
