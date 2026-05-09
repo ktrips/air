@@ -266,14 +266,24 @@ function initRegionFilterFromUrl() {
     const host = window.location.hostname || '';
     const params = new URLSearchParams(window.location.search);
 
-    // URLパラメータ trip で親トリップ名を指定
-    const tripParam = params.get('trip');
-    if (tripParam) {
-      tripFilterParentName = decodeURIComponent(tripParam).trim();
+    // URLパラメータで トリップ ID または トリップ名を指定
+    // ?trip_id=xxx（ID指定） または ?trip=トリップ名（名前指定）
+    const tripIdParam = params.get('trip_id');
+    const tripNameParam = params.get('trip');
+
+    if (tripIdParam) {
+      // ID ベースの指定：そのまま使用
+      window.appUrlTripId = tripIdParam;
+      console.log('🔗 URLパラメータ: trip_id =', tripIdParam);
+    } else if (tripNameParam) {
+      // 名前ベースの指定：正規化して保存（後で検索）
+      window.appUrlTripName = decodeURIComponent(tripNameParam).trim();
+      console.log('🔗 URLパラメータ: trip =', window.appUrlTripName);
     } else {
-      // ohenro/henro.ktrips.net: 「しまなみ街道と四国お遍路旅」とその子トリップのみ表示
+      // ドメイン名による自動選択
       if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-        tripFilterParentName = 'しまなみ街道と四国お遍路旅';
+        window.appUrlTripName = 'しまなみ街道と四国お遍路旅';
+        console.log('🏠 ドメイン自動選択: ohenro.ktrips.net');
       }
     }
 
@@ -9644,22 +9654,60 @@ function initEventListeners() {
     renderTripList();
     refreshTripSelect();
 
-    // URLパラメータで指定された親トリップを読み込む
-    if (tripFilterParentName) {
-      const parentTrip = myTrips.find(t => (t.name || '').trim() === tripFilterParentName && t.isParent);
-      if (parentTrip) {
-        await loadTripById(parentTrip.id);
+    // URLパラメータで指定されたトリップを読み込む
+    let tripToLoad = null;
+
+    if (window.appUrlTripId) {
+      // ID ベースの検索
+      tripToLoad = myTrips.find(t => t.id === window.appUrlTripId);
+      if (tripToLoad) {
+        console.log('✅ ID で トリップを見つけました:', tripToLoad.name);
       } else {
-        // 親トリップが見つからない場合、部分一致で検索
-        const partialMatch = myTrips.find(t => {
-          const name = (t.name || '').trim();
-          return name.includes(tripFilterParentName) && t.isParent;
-        });
-        if (partialMatch) {
-          await loadTripById(partialMatch.id);
-        } else {
-          console.warn('親トリップが見つかりません:', tripFilterParentName);
-          console.log('利用可能な親トリップ:', myTrips.filter(t => t.isParent).map(t => t.name));
+        console.warn('❌ ID でトリップが見つかりません:', window.appUrlTripId);
+        console.log('利用可能なトリップID:', myTrips.map(t => ({ id: t.id, name: t.name })));
+      }
+    } else if (window.appUrlTripName) {
+      // 名前ベースの検索（複数の戦略を試す）
+      const searchName = window.appUrlTripName.toLowerCase().trim();
+
+      // 1. 完全一致（大文字小文字を区別しない）
+      tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().trim() === searchName);
+      if (tripToLoad) {
+        console.log('✅ 完全一致でトリップを見つけました:', tripToLoad.name);
+      }
+
+      // 2. 完全一致失敗時は部分一致
+      if (!tripToLoad) {
+        tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().includes(searchName));
+        if (tripToLoad) {
+          console.log('✅ 部分一致でトリップを見つけました:', tripToLoad.name);
+        }
+      }
+
+      // 3. 名前に検索語が含まれている（逆向き）
+      if (!tripToLoad) {
+        tripToLoad = myTrips.find(t => searchName.includes((t.name || '').toLowerCase().trim()));
+        if (tripToLoad) {
+          console.log('✅ 逆向き一致でトリップを見つけました:', tripToLoad.name);
+        }
+      }
+
+      if (!tripToLoad) {
+        console.warn('❌ トリップが見つかりません:', window.appUrlTripName);
+        console.log('利用可能なトリップ:', myTrips.slice(0, 10).map(t => ({ id: t.id, name: t.name, isParent: t.isParent })));
+      }
+    }
+
+    if (tripToLoad) {
+      console.log('🚀 URLパラメータで指定されたトリップを読み込みます:', tripToLoad.name);
+      await loadTripById(tripToLoad.id);
+      // トリップ名をフィルタに設定（子トリップの場合は親を見つける）
+      if (tripToLoad.isParent) {
+        tripFilterParentName = tripToLoad.name;
+      } else if (tripToLoad.parentId) {
+        const parent = myTrips.find(t => t.id === tripToLoad.parentId);
+        if (parent) {
+          tripFilterParentName = parent.name;
         }
       }
     }
