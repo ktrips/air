@@ -6618,11 +6618,14 @@ async function generateTravelogueWithAI() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        console.log(`🔗 API呼び出し: ${url.split('?')[0]}...`);
         const response = await fetch(url, { ...options, signal: controller.signal });
         clearTimeout(timeoutId);
+        console.log(`✅ API応答ステータス: ${response.status}`);
         return response;
       } catch (error) {
         clearTimeout(timeoutId);
+        console.error('📡 ネットワークエラー:', error.name, error.message);
         if (error.name === 'AbortError') {
           throw new Error(`API呼び出しがタイムアウトしました（${timeoutMs / 1000}秒）。写真が多い場合は数を減らしてみてください。`);
         }
@@ -6895,13 +6898,20 @@ async function generateTravelogueWithAI() {
     console.error('旅行記生成エラー:', err);
     console.error('エラースタック:', err.stack);
     console.error('トリップ情報:', { trip, currentTrip });
+    console.error('AI設定:', { provider: cfg?.provider, hasApiKey: !!cfg?.apiKey });
+
     let errorMessage = '旅行記の生成に失敗しました。\n\n';
 
     if (err.message) {
       errorMessage += `エラー: ${err.message}\n\n`;
     }
 
-    if (err.message && err.message.includes('トリップ')) {
+    if (!cfg?.apiKey?.trim()) {
+      errorMessage = 'APIキーが設定されていません。\n\n';
+      errorMessage += 'メニュー → AI設定 で以下を確認してください:\n';
+      errorMessage += '1. プロバイダーを選択（Gemini / OpenAI / Anthropic）\n';
+      errorMessage += '2. APIキーを入力';
+    } else if (err.message && err.message.includes('トリップ')) {
       errorMessage += 'トリップ情報が不正です。\n';
       errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
     } else if (err.message && err.message.includes('API')) {
@@ -6913,8 +6923,14 @@ async function generateTravelogueWithAI() {
     } else if (err.message && err.message.includes('undefined')) {
       errorMessage += 'データが不完全です。\n';
       errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
+    } else if (err.message && (err.message.includes('Network') || err.message.includes('fetch'))) {
+      errorMessage += 'ネットワーク接続が失敗しました。\n\n';
+      errorMessage += '確認事項:\n';
+      errorMessage += '1. インターネット接続を確認\n';
+      errorMessage += '2. VPN/ファイアウォール設定を確認\n';
+      errorMessage += '3. ブラウザのコンソール(F12)でエラー詳細を確認';
     } else {
-      errorMessage += 'コンソールログを確認してください。';
+      errorMessage += 'コンソールログ(F12)を確認してください。';
     }
 
     alert(errorMessage);
