@@ -284,11 +284,14 @@ function initRegionFilterFromUrl() {
 /** トリップの所在を判定: 'japan' | 'global' | null（判定不可の場合はnull＝両方に表示） */
 function getTripRegion(trip, allTrips) {
   const photos = trip.photos || [];
-  const hasJapan = photos.some(p => isCoordInJapan(p.lat, p.lng));
-  const hasGlobal = photos.some(p => {
-    if (p.lat == null || p.lng == null) return false;
-    return !isCoordInJapan(p.lat, p.lng);
-  });
+  // 1回のループでjapan/global両フラグを決定（some()2回走査を排除）
+  let hasJapan = false, hasGlobal = false;
+  for (const p of photos) {
+    if (p.lat == null || p.lng == null) continue;
+    if (isCoordInJapan(p.lat, p.lng)) hasJapan = true;
+    else hasGlobal = true;
+    if (hasJapan && hasGlobal) break; // 早期終了
+  }
   if (trip.isParent && photos.length === 0 && allTrips) {
     const childIds = new Set(allTrips.filter(t => t.parentId === trip.id).map(t => t.id));
     if (childIds.size > 0) {
@@ -2332,14 +2335,20 @@ async function updateMapMarkers() {
   const placedTripCards = []; // 親トリップ時: 各旅行記ボタンの配置位置（かぶり回避用）
   const routePolylines = []; // 親トリップ時: 他トリップのルート（かぶり回避用）
   let globalIdx = 0;
+
+  // GPXを全トリップ分まとめて並列取得（直列待ちを解消）
+  const gpxTexts = await Promise.all(
+    tripsToShow.map(trip => getGpxContent(trip).catch(err => {
+      console.warn('GPX取得失敗:', trip.name || trip.id, err);
+      return null;
+    }))
+  );
+
   for (let tripIdx = 0; tripIdx < tripsToShow.length; tripIdx++) {
     const trip = tripsToShow[tripIdx];
     const color = trip.color || TRIP_COLORS[tripIdx % TRIP_COLORS.length];
     let pts = [];
-    const gpxText = await getGpxContent(trip).catch(err => {
-      console.warn('GPX取得失敗:', trip.name || trip.id, err);
-      return null;
-    });
+    const gpxText = gpxTexts[tripIdx];
     if (gpxText) {
       pts = parseGpxPoints(gpxText);
     }
@@ -3525,7 +3534,7 @@ function showPhotoPopupEditMode(lat, lng) {
 
     try {
       // 元のポイントをそのままディープコピー（フォームの内容は反映しない）
-      const duplicatedPhoto = JSON.parse(JSON.stringify(photos[idx]));
+      const duplicatedPhoto = structuredClone(photos[idx]);
 
       // ランドマークとスタンプのチェックを外す
       duplicatedPhoto.isLandmark = false;
@@ -5406,15 +5415,15 @@ async function loadTripById(id) {
       console.log(`✓ トリップID: ${id}`);
       console.log(`  → IDで開くURL: ${window.location.origin}${window.location.pathname}?tripId=${id}`);
 
-      await updateTripInputs();
-      // renderTripList は renderTripDetailPane() 内で呼ばれるため除去
+      // 同期処理を先に実行
       refreshTripSelect();
       renderThumbnails();
 
-      // マーカー更新と地図表示範囲調整を確実に実行
-      console.log('🗺️ マーカーを更新中...');
-      await updateMapMarkers();
-      console.log('✓ マーカー更新完了');
+      // UIとマップの更新を並列実行（両者は独立）
+      await Promise.all([
+        updateTripInputs(),
+        updateMapMarkers()
+      ]);
 
       await renderTripDetailPane(); // → updateHeaderInfo() + renderTripList() を内包
 
@@ -5642,9 +5651,11 @@ async function renderTripDetailPane() {
 
 function escapeHtml(s) {
   if (!s) return '';
-  const div = document.createElement('div');
-  div.textContent = s;
-  return div.innerHTML;
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /** 指定トリップの動画URLを表示順で取得（トリップ動画→ポイント動画の順） */
