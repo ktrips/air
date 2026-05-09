@@ -1,0 +1,75 @@
+{
+  "name": "Air — 地図と写真でエア旅行",
+  "short_name": "Air",
+  "description": "GPS付き写真をアップロードすると撮影場所を地図上に表示し、スライドショーで楽しめるWebアプリ",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#1a73e8",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a73e8' width='192' height='192'/><text x='50%' y='50%' font-size='120' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif'>A</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect fill='%231a73e8' width='512' height='512'/><text x='50%' y='50%' font-size='300' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif'>A</text></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><defs><style>.air-icon-bg { fill: %231a73e8; } .air-icon-text { fill: white; font-size: 140px; font-weight: bold; font-family: sans-serif; text-anchor: middle; dominant-baseline: middle; }</style></defs><rect class='air-icon-bg' width='192' height='192'/><circle cx='96' cy='60' r='20' fill='white'/><path d='M 96 85 Q 75 100 70 130 Q 68 145 80 150 L 112 150 Q 124 145 122 130 Q 117 100 96 85 Z' fill='white'/></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 540 720'><rect fill='%23f5f5f5' width='540' height='720'/><text x='270' y='360' font-size='60' fill='%231a73e8' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif'>Air</text></svg>",
+      "sizes": "540x720",
+      "type": "image/svg+xml",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1280 720'><rect fill='%23f5f5f5' width='1280' height='720'/><text x='640' y='360' font-size='100' fill='%231a73e8' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif'>Air — 地図と写真でエア旅行</text></svg>",
+      "sizes": "1280x720",
+      "type": "image/svg+xml",
+      "form_factor": "wide"
+    }
+  ],
+  "categories": ["travel", "photography"],
+  "shortcuts": [
+    {
+      "name": "新規トリップ",
+      "short_name": "新規",
+      "description": "新しいトリップを作成します",
+      "url": "/?action=new",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%2334a853' width='192' height='192'/><text x='96' y='110' font-size='140' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif'>+</text></svg>",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "トリップ一覧",
+      "short_name": "一覧",
+      "description": "保存されたトリップを表示します",
+      "url": "/",
+      "icons": [
+        {
+          "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a73e8' width='192' height='192'/><text x='96' y='110' font-size='120' font-weight='bold' fill='white' text-anchor='middle' dominant-baseline='middle' font-family='sans-serif'>A</text></svg>",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  ],
+  "prefer_related_applications": false
+}
