@@ -6226,6 +6226,42 @@ function generateTripContentHash(trip) {
   }
 }
 
+/**
+ * 過去の旅行記HTMLから写真URLをキーに説明テキストを抽出する。
+ * @param {string} html - 旅行記のHTML文字列
+ * @returns {Map<string, {name:string, overlay:string, description:string}>}
+ */
+function extractPhotoDescriptionsFromTravelogue(html) {
+  const map = new Map();
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const sections = doc.querySelectorAll('div[style*="margin:1.5rem 0"]');
+    sections.forEach(section => {
+      const img = section.querySelector('img');
+      if (!img) return;
+      const photoUrl = img.getAttribute('src') || '';
+      if (!photoUrl) return;
+
+      const nameEl = section.querySelector('div[style*="top:12px"]');
+      const overlayEl = section.querySelector('div[style*="bottom:0"]');
+      const descEl = section.querySelector('div[style*="flex:1"]');
+
+      const name = nameEl ? nameEl.textContent.trim() : '';
+      const overlay = overlayEl ? overlayEl.textContent.trim() : '';
+      const description = descEl ? descEl.textContent.trim() : '';
+
+      if (overlay || description) {
+        map.set(photoUrl, { name, overlay, description });
+      }
+    });
+    console.log(`📚 過去の旅行記から ${map.size} 件の写真説明を抽出`);
+  } catch (e) {
+    console.warn('旅行記HTML解析エラー:', e);
+  }
+  return map;
+}
+
 // ─── 旅行記生成ストリーミングヘルパー ────────────────────────────────────────
 /**
  * SSE / ストリーミングで AI からテキストを受け取り、チャンクごとに onChunk(partialText) を呼ぶ。
@@ -6385,6 +6421,9 @@ async function generateTravelogueWithAI() {
   const btn = document.getElementById('generateTravelogueBtn');
   const originalBtnText = btn?.textContent || '旅行記生成';
 
+  // カスタム指示（強調場所・除外事項など）を取得
+  const customInstructions = (document.getElementById('travelogueCustomInstructions')?.value || '').trim();
+
   console.log(`⏱️ 準備完了: ${Date.now() - startTime}ms`);
 
   // 既存の旅行記がある場合は上書き（削除せずに更新）
@@ -6459,6 +6498,43 @@ async function generateTravelogueWithAI() {
     });
   }
 
+  // ── 過去の旅行記から既存の写真説明を取得して流用 ──────────────────────────
+  let prevPhotoDescriptions = new Map();
+  const prevTravelogueUrl = (() => {
+    if (trip.travelogueUrl) return trip.travelogueUrl;
+    if (trip.travelogueHistory?.length > 0) {
+      const sorted = [...trip.travelogueHistory].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      return sorted[0]?.url || null;
+    }
+    return null;
+  })();
+
+  if (prevTravelogueUrl) {
+    try {
+      setStatus('過去の旅行記を参照中...');
+      const res = await fetch(prevTravelogueUrl);
+      if (res.ok) {
+        const prevHtml = await res.text();
+        prevPhotoDescriptions = extractPhotoDescriptionsFromTravelogue(prevHtml);
+      }
+    } catch (e) {
+      console.warn('過去の旅行記の取得に失敗（スキップ）:', e);
+    }
+  }
+
+  // 写真を「流用可能（既存）」と「新規」に分類
+  let reuseCount = 0;
+  photoInfos.forEach(pi => {
+    if (prevPhotoDescriptions.has(pi.url)) {
+      pi.prevContent = prevPhotoDescriptions.get(pi.url);
+      reuseCount++;
+    }
+  });
+  if (reuseCount > 0) {
+    console.log(`♻️ 過去の旅行記から ${reuseCount} 件の写真説明を流用予定 (新規: ${photoInfos.length - reuseCount} 件)`);
+    setStatus(`過去の旅行記から ${reuseCount} 件を流用、${photoInfos.length - reuseCount} 件を新規生成...`);
+  }
+
   const tripColor = trip.color || '#e1306c';
 
   // アニメ画像: 表紙(cover)、詳細(detail)、名所浮世絵(ukiyoe)を分離
@@ -6498,11 +6574,22 @@ async function generateTravelogueWithAI() {
     }
   });
 
-  // 各写真インデックスごとに最もマッチする浮世絵を選択
+  // 各写真インデックスごとに最もマッチする浮世絵を選択（各浮世絵は全体で1回のみ使用）
   const photoUkiyoeMap = new Map();
+  const usedUkiyoeUrls = new Set();
+  // 全マッチをフラット化してスコア降順にソートし、貪欲に1対1割り当て
+  const allUkiyoeMatches = [];
   ukiyoeMap.forEach((matches, photoIdx) => {
-    matches.sort((a, b) => b.matchCount - a.matchCount);
-    photoUkiyoeMap.set(photoIdx, matches[0].ukiyoe);
+    matches.forEach(({ ukiyoe, matchCount }) => {
+      allUkiyoeMatches.push({ photoIdx, ukiyoe, matchCount });
+    });
+  });
+  allUkiyoeMatches.sort((a, b) => b.matchCount - a.matchCount);
+  allUkiyoeMatches.forEach(({ photoIdx, ukiyoe }) => {
+    if (!photoUkiyoeMap.has(photoIdx) && !usedUkiyoeUrls.has(ukiyoe.url)) {
+      photoUkiyoeMap.set(photoIdx, ukiyoe);
+      usedUkiyoeUrls.add(ukiyoe.url);
+    }
   });
 
   // photoInfosに浮世絵情報を追加
@@ -6512,7 +6599,7 @@ async function generateTravelogueWithAI() {
     }
   });
 
-  // 写真情報をプロンプトに追加（浮世絵情報を含む）
+  // 写真情報をプロンプトに追加（浮世絵情報・既存説明を含む）
   if (photos.length > 0) {
     parts.push('\n写真情報:');
     photoInfos.forEach((pi) => {
@@ -6523,6 +6610,11 @@ async function generateTravelogueWithAI() {
       if (pi.description) info.push(`- ${pi.description}`);
       if (pi.ukiyoeImage) {
         info.push(`[浮世絵:${pi.ukiyoeImage.url}]`);
+      }
+      // 過去の旅行記に既存の説明がある場合はタグとして渡す
+      if (pi.prevContent) {
+        if (pi.prevContent.overlay) info.push(`[既存オーバーレイ:${pi.prevContent.overlay}]`);
+        if (pi.prevContent.description) info.push(`[既存情景描写:${pi.prevContent.description}]`);
       }
       parts.push(info.join(' '));
     });
@@ -6557,11 +6649,14 @@ async function generateTravelogueWithAI() {
 3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
 <div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
 
-【名所浮世絵の配置】写真情報に[浮世絵:URL]が含まれる場合、その写真セクションの情景描写の後に浮世絵を配置:
+【名所浮世絵の配置】写真情報に[浮世絵:URL]が含まれる場合、その写真セクションの情景描写の後に浮世絵を配置（同じURLの浮世絵は旅行記全体で1回のみ表示すること）:
 <div style="margin:1.5rem 0 0 0;text-align:center;"><img src="浮世絵URL" alt="名所浮世絵" style="width:100%;max-width:600px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:inline-block;"/><p style="margin-top:0.5rem;font-size:0.85rem;color:#666;font-style:italic;">※この名所の浮世絵風イラスト</p></div>
 
 重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
-注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください`;
+注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください${customInstructions ? `
+【ユーザー指示】以下の指示を必ず守って旅行記を生成してください:
+${customInstructions}` : ''}${reuseCount > 0 ? `
+【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
   try {
