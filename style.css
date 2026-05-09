@@ -444,7 +444,7 @@ body {
   position: relative;
   transform: translateZ(0);
   -webkit-transform: translateZ(0);
-  will-change: transform;
+  /* will-change: transform を削除 → 常時レイヤー昇格によるVRAM増大を解消 */
 }
 
 .mobile-travelogue-view {
@@ -782,7 +782,6 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
-  backdrop-filter: blur(6px);
   transition: background 0.2s;
 }
 .playback-video-bar-btn:hover {
@@ -817,7 +816,6 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(4px);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   transition: background 0.2s, transform 0.15s;
   pointer-events: auto;
@@ -1012,7 +1010,6 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   gap: 0.65rem;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   white-space: nowrap;
-  backdrop-filter: blur(6px);
   animation: slideUpFadeIn 0.2s ease;
 }
 .map-marker-save-label {
@@ -1838,8 +1835,6 @@ body.app-playing .thumbnail-close-btn {
   max-width: 140px;
   text-align: center;
   font-size: 0.75rem;
-  backdrop-filter: blur(10px) saturate(180%);
-  -webkit-backdrop-filter: blur(10px) saturate(180%);
 }
 .map-trip-action-name {
   font-weight: 700;
@@ -1883,8 +1878,6 @@ body.app-playing .thumbnail-close-btn {
               0 2px 8px rgba(0, 0, 0, 0.5),
               0 0 0 1px rgba(255, 255, 255, 0.18) inset;
   border: 2.5px solid var(--trip-color, #e1306c);
-  backdrop-filter: blur(12px) saturate(180%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
   max-width: 280px;
 }
 
@@ -1913,8 +1906,6 @@ body.app-playing .thumbnail-close-btn {
     padding: 5px 8px;
     font-size: 0.7rem;
     background: rgba(0, 0, 0, 0.88);
-    backdrop-filter: blur(10px) saturate(180%);
-    -webkit-backdrop-filter: blur(10px) saturate(180%);
     max-width: 120px;
   }
   .map-trip-action-name {
@@ -2088,7 +2079,6 @@ body.app-playing .thumbnail-close-btn {
   align-items: center;
   justify-content: center;
   transition: background 0.2s, transform 0.2s;
-  backdrop-filter: blur(4px);
 }
 
 .photo-popup-video-btn:hover {
@@ -2118,8 +2108,7 @@ body.app-playing .thumbnail-close-btn {
   top: 8px;
   left: 8px;
   padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.56);
-  backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.68);
   display: flex;
   align-items: center;
   gap: 8px;
