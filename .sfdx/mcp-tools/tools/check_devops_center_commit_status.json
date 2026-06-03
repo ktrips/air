@@ -1,0 +1,23 @@
+{
+  "name": "check_devops_center_commit_status",
+  "description": "Check the current status of a work item committed to DevOps Center.\n\n        **Use this tool to:**\n        - Check the status of a specific commit using its Request Id\n        - Verify commit processing completion before creating a pull request\n        - Ensure commits are ready for PR creation\n\n        **Input Parameters:**\n        - usernameOrAlias: The username or alias of the DevOps Center org to authenticate with\n        - requestId: The specific request Id to check status for (REQUIRED)\n\n        **Output:**\n        - Status field value for the specified request Id\n        - Request Id and associated status information",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "requestId": {
+        "type": "string",
+        "description": "Request ID from the commit operation to check status for"
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "requestId"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

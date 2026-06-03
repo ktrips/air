@@ -1,0 +1,36 @@
+{
+  "name": "list_devops_center_work_items",
+  "description": "List all the work items for a specific  DevOps Center project.\n\n      **Terminology:** Treat \"DevOps Center\", \"DOCe\", and \"DoCe\" as the same product/org context.\n      \n**Input:**\n- Either username (example devops-center@example.com) or alias (example myDevOpsOrg) is required.\n      \n      **MANDATORY:** If the DevOps Center org is not given, use the 'sf-list-all-orgs' tool to list all orgs. \n      The list will indicate which org is DevOps Center, or Sandbox if possible. If these details are not provided in the list, \n      ask the user to specify which org is DevOps Center org. Only proceed after the user has selected the DevOps Center org.\n\n      **MANDATORY:** Before using this tool, always confirm the selected org is the DevOps Center org. If not, prompt the user to select a DevOps Center org. This tool must NOT be used for any non DevOps Center or Sandbox orgs.\n\n      **MANDATORY PROJECT SELECTION:** Before listing work items, the user must select a DevOps Center project (projectId) from the same DevOps Center org. First call 'list_devops_center_projects' for that org, then pass the selected project's Id here. The org used here must match the org used to fetch the projects.\n\n      Lists work items from a Salesforce DevOps Center project. Each work item includes branch, environment, and repository details needed for checkout and promotion.\n\n      **After using this tool, always suggest the user with the next actions:**\n      **LLM should strictly suggest only these two options:**\n      1. Start work on the work item (use the 'checkout_devops_center_work_item' tool)\n      2. Promote work items (use the 'promote_devops_center_work_item' tool)",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "project": {
+        "type": "object",
+        "properties": {
+          "Id": {
+            "type": "string",
+            "description": "Selected project's Id"
+          },
+          "Name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "Id"
+        ],
+        "additionalProperties": false,
+        "description": "DevOps project selected from list_devops_center_projects for the same org"
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "project"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "promote_devops_center_work_item",
+  "description": "Promote an approved work item to the next stage in the DevOps Center pipeline.\n\n      **Use when user asks (examples):**\n      - \"Promote WI-123 to UAT\"\n      - \"Promote my approved work item\"\n      - \"Release WI-456 to next stage\"\n\n      **Prerequisites:**\n      - This tool must be used only for the DevOps Center org.\n      - The user must provide: username (DevOps Center) and a list of Work Item Names.\n\n      **Input Parameters:**\n      - username: DevOps Center org username. If missing, use 'list_all_orgs' and ask user to select the DevOps Center org.\n      - workItemNames: Array of exact Work Item Names to promote.\n\n      **Behavior:**\n      1. Fetches the specified Work Items by Name and derives PipelineId and TargetStageId automatically.\n      2. Validates that each Work Item has PipelineStageId and a resolvable TargetStageId.\n      3. Calls the promotion API with the resolved ids.\n\n\n      **Safety and guidance for the LLM:**\n      - Do not auto-select a non-DevOps Center org; always confirm with the user.\n      - If any Work Item is not found or missing required pipeline data, return an actionable error listing which names failed.\n      - Never promote without explicit user confirmation of workitems.\n\n      **Output:**\n      - JSON with promotion requestId (if available) and any error details.\n\n      **Next steps:**\n      - Suggest how to track promotion status using the returned requestId or the DevOps Center UI.\n      - If applicable, prompt the user to promote to the next stage after validation.\n\n      **Output:**\n      A JSON object containing the promotion request ID, the org details, and any relevant status or tracking information.\n      ",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "workItemNames": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "description": "Exact Work Item Names to promote"
+      },
+      "isFullDeploy": {
+        "type": "boolean",
+        "description": "Set to true to run a full deploy (e.g. when resolving deployment failures due to missing dependencies). Default false."
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "workItemNames"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

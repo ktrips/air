@@ -1,0 +1,34 @@
+{
+  "name": "run_code_analyzer",
+  "description": "A tool for performing static analysis against code.\nThis tool can validate that code conforms to best practices, check for security vulnerabilities, and identify possible\nperformance issues. It returns a JSON containing the absolute path to a results file if such a file was created,\nand a string indicating the overall success or failure of the operation.\n\nWhen to use this tool:\n- When the user asks you to generate files, use this tool to scan those files.\n- When the user asks you to check code for problems, use this tool to do that.\n\nREQUIRED INPUT - Directory:\n- You MUST provide the \"directory\" parameter with the absolute path to the project/workspace root.\n- The tool will automatically search for code-analyzer.yml or code-analyzer.yaml config files in this directory.\n- Config files contain custom rule configurations, severities, and ignore patterns that will be respected.\n- If no config file is found in the directory, default configuration will be used.\n\nOPTIONAL - Custom Config Path:\n- Use \"configPath\" parameter only if the config file has a custom name or is in a non-standard location.\n- If provided, configPath takes precedence over config files in directory.\n\nOptional: Provide a \"selector\" to choose which rules to run. Supports:\n- Rule names: \"WhileLoopsMustUseBraces\", \"no-unused-vars\"\n- Engines: \"pmd\", \"eslint\", \"regex\"\n- Tags: \"Security\", \"Performance\", \"Recommended\"\n- Severities: \"Critical\", \"High\", \"1\", \"2\"\n- Combinations: \"Security:pmd\", \"(Security,Performance):eslint\"\n\nExamples:\n- \"WhileLoopsMustUseBraces\" → run specific rule by name\n- \"Security:pmd\" → run Security-tagged PMD rules\n- \"Critical\" → run all Critical-severity rules\n- \"(Security,Performance):eslint\" → ESLint rules tagged Security or Performance\n\nAfter completion: Use the \"query_code_analyzer_results\" tool to filter and explain results, e.g., top-N most severe violations or violations by category/tag.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "A JSON-formatted array of between 1 and 10 files on the users machine that should be scanned. These paths MUST be ABSOLUTE paths, and not relative paths."
+      },
+      "directory": {
+        "type": "string",
+        "description": "REQUIRED: Absolute path to the workspace/directory. The tool will automatically search for code-analyzer.yml or code-analyzer.yaml config files in this directory. This should typically be the root directory of the project being analyzed."
+      },
+      "selector": {
+        "type": "string",
+        "description": "Optional selector for Code Analyzer rules. Supports rule names, engines, tags, severities, and combinations. If omitted, \"recommended\" rules run.\nExamples: \"WhileLoopsMustUseBraces\", \"Security:pmd\", \"Critical\", \"(Security,Performance):eslint\", \"pmd:High\""
+      },
+      "configPath": {
+        "type": "string",
+        "description": "Optional absolute path to a Code Analyzer configuration file with a custom name or in a non-standard location. Use this when your config file has a different name or is not in the directory. If provided, this takes precedence over config files found in directory."
+      }
+    },
+    "required": [
+      "target",
+      "directory"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

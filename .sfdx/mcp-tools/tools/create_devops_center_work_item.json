@@ -1,0 +1,34 @@
+{
+  "name": "create_devops_center_work_item",
+  "description": "Creates a new DevOps Center Work Item in the specified project.\n\n**Usage notes:**\n- This tool must be used for the DevOps Center org only. If the org is not provided, use 'list_all_orgs' to select the DevOps Center org.\n- A DevOps Center project must be selected first from the same org. If the projectId is not known, call 'list_devops_center_projects' for that org and ask the user to select a project. Use that project's Id here.\n- Ensure the org used to select the project is the same org passed to this tool.\n- **(Mandatory)** Always ask the user to give the work item subject. Don't proceed until the user has provided the subject. **(Mandatory)**\n\n**API:** POST /services/data/v65.0/connect/devops/projects/<ProjectID>/workitem\n**Body:** { \"subject\": string, \"description\": string }\n\n**Input parameters:**\n- usernameOrAlias: DevOps Center org username or alias. If missing, use 'list_all_orgs' and ask user to select the DevOps Center org.\n- projectId: DevOps Center Project ID from list_devops_center_projects for the same org.\n- subject: Work item subject.\n- description: Work item description (optional).\n\n**Output:**\n- success: Whether the create succeeded.\n- workItemId, workItemName, subject: Created work item details on success.\n- error: Error message if the create failed.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "projectId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "DevOps Center Project ID selected from list_devops_center_projects for the same org."
+      },
+      "subject": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Work item subject."
+      },
+      "description": {
+        "type": "string",
+        "description": "Work item description."
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "projectId",
+      "subject"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

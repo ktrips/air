@@ -1,0 +1,45 @@
+{
+  "name": "resolve_devops_center_deployment_failure",
+  "description": "Determine if **full promotion** can fix a deployment failure and guide the user.\n\n**Inputs:** workItemName (mandatory), sourceBranchName (mandatory), errorDetails (mandatory), localPath (optional; defaults to current working directory), targetBranchName (optional; when provided, source and target are compared to confirm if full promotion will resolve).\n\n**Behavior:**\n1. **Merge conflict**: Full promotion cannot fix → instruct to use **resolve_devops_center_merge_conflict**.\n2. **All other errors**: The tool **checks out the source branch** in the repo (at localPath), then parses the error for a missing dependency and checks if the **source branch** contains it. If **source contains the missing dependency** → full promotion can fix → ask for confirmation (see below), then proceed to full promotion after user confirms. If **source does not contain it** (or no dependency could be parsed) → return generic instructions to resolve the deployment failure.\n\n**MANDATORY – Ask for confirmation; do NOT run full promotion without it:**\n- When this tool returns that full promotion can fix the failure, you MUST present the confirmation request to the user and STOP.\n- Do NOT call **promote_devops_center_work_item** until the user explicitly confirms (e.g. \"Yes\", \"Proceed\", \"Go ahead\").\n- Only after the user confirms should you call **promote_devops_center_work_item** with usernameOrAlias, workItemNames: [workItemName], isFullDeploy: true.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "workItemName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Work Item name (mandatory). Exact name of the work item that failed deployment."
+      },
+      "sourceBranchName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Source branch name (mandatory). The work item branch where the change lives."
+      },
+      "targetBranchName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Target branch name (optional). When provided with localPath, the tool compares source and target to determine if the missing dependency is in source but not in target, confirming full promotion will resolve the failure."
+      },
+      "errorDetails": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Error details from the failed deployment (mandatory). Used to determine if full promotion can fix the failure."
+      },
+      "localPath": {
+        "type": "string",
+        "description": "Local path to the repository (defaults to current working directory)"
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "workItemName",
+      "sourceBranchName",
+      "errorDetails"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

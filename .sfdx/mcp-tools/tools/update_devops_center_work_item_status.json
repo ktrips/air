@@ -1,0 +1,33 @@
+{
+  "name": "update_devops_center_work_item_status",
+  "description": "Update the status of a DevOps Center work item to either \"In Progress\" or \"Ready to Promote\".\n\n      **Use when user asks (examples):**\n      - \"Mark WI-123 In Progress\"\n      - \"Set work item WI-456 to Ready to Promote\"\n      - \"Change work item status to In Progress\"\n      - \"Mark my work item as Ready to Promote\"\n\n      **Prerequisites:**\n      - This tool must be used only for the DevOps Center org.\n      - The user must provide: username (DevOps Center), Work Item Name, and the desired status.\n\n      **Input Parameters:**\n      - usernameOrAlias: DevOps Center org username or alias. If missing, use 'list_all_orgs' and ask user to select the DevOps Center org.\n      - workItemName: Exact Work Item Name (e.g. WI-00000001).\n      - status: New status - either \"In Progress\" or \"Ready to Promote\".\n\n      **Output:**\n      - success: Whether the update succeeded.\n      - workItemId, workItemName, status: Updated work item details on success.\n      - error: Error message if the work item was not found or update failed.\n\n      **Next steps:**\n      - After marking \"Ready to Promote\", suggest promoting the work item (using 'promote_devops_center_work_item') when appropriate.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "workItemName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact Work Item Name to update (e.g. WI-00000001)."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "In Progress",
+          "Ready to Promote"
+        ],
+        "description": "New status: 'In Progress' or 'Ready to Promote'"
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "workItemName",
+      "status"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

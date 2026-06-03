@@ -1,0 +1,34 @@
+{
+  "name": "commit_devops_center_work_item",
+  "description": "Commit SFDX project changes and register the commit SHA in DevOps Center.\n\n**CRITICAL:** Do not run git commands (git add/commit/push) manually. When a user asks to commit, call this tool so DevOps Center correctly tracks metadata and links the commit to the Work Item.\n**CRITICAL:** This tool commits on the currently checked out branch. Ensure current branch matches the selected Work Item branch before running.\n\n**Inputs to validate before execution:**\n1. DevOps Center org identifier (username or alias)\n2. Work Item Name that resolves in the org\n3. Repository path pointing to the project root (git repo)\n4. Non-empty commit message\n\n**Use this tool to:**\n- Finalize and record changes for a Work Item in DevOps Center\n- Commit using DevOps Center credentials and conventions\n- Ensure metadata changes are captured correctly in the pipeline\n\n**After execution:**\n- Follow the returned instructions to push (if not pushed automatically)\n- Then create a PR (use 'create_devops_center_pull_request') as the next step\n\n**Output:**\n- commitSha: The resulting commit SHA (plus push instructions if applicable)\n\n**Example:**\n- \"Commit my changes with message 'Fix bug in account logic' and tie it to WI-1092.\"",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "usernameOrAlias": {
+        "type": "string",
+        "description": "The username or alias for the Salesforce org to run this tool against.\n\nA username follows the <name@domain.com> format.\nIf the user refers to an org with a string not following that format, it can be a valid alias.\n\nIMPORTANT:\n- If it is not clear what the username or alias is, run the #get_username tool to resolve it.\n- NEVER guess or make-up a username or alias.\n"
+      },
+      "workItemName": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Exact Work Item Name to commit workitem."
+      },
+      "commitMessage": {
+        "type": "string",
+        "description": "Commit message describing the changes (ask user for input)"
+      },
+      "repoPath": {
+        "type": "string",
+        "description": "Absolute path to the git repository root. Defaults to current working directory."
+      }
+    },
+    "required": [
+      "usernameOrAlias",
+      "workItemName",
+      "commitMessage",
+      "repoPath"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
