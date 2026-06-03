@@ -165,7 +165,9 @@ function invalidateOrderedTripsCache() {
 /** トリップに旅行記が存在するか判定 */
 function tripHasTravelogue(trip) {
   return !!(
-    tripHasTravelogue(trip)
+    (trip.travelogueHtml && trip.travelogueHtml.trim()) ||
+    trip.travelogueUrl ||
+    (trip.travelogueHistory?.length > 0)
   );
 }
 
@@ -180,7 +182,7 @@ function getLatestTravelogueEntry(trip) {
 
 /** 親トリップIDに属する子トリップ一覧を返す */
 function getChildTrips(parentId) {
-  return getChildTrips(parentId);
+  return getOrderedTrips().filter(t => t.parentId === parentId);
 }
 
 /** 写真ポップアップを安全に閉じる */
