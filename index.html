@@ -430,6 +430,14 @@
             <option value="anthropic">Anthropic</option>
           </select>
         </div>
+        <div class="menu-field" id="aiModelField">
+          <label for="aiModelSelect">画像生成モデル</label>
+          <select id="aiModelSelect" class="menu-select">
+            <option value="gpt-image-1-mini">gpt-image-1-mini（推奨）</option>
+            <option value="gpt-image-1">gpt-image-1</option>
+            <option value="dall-e-3">DALL-E 3</option>
+          </select>
+        </div>
         <div class="menu-field">
           <label for="aiApiKeyInput">API キー</label>
           <input type="password" id="aiApiKeyInput" class="menu-input" placeholder="選択したプロバイダーのAPIキー" autocomplete="off">

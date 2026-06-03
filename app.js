@@ -6174,9 +6174,11 @@ async function loadUserAiConfig() {
   try {
     const doc = await window.firebaseDb.collection('users').doc(window.firebaseAuth.currentUser.uid).get();
     const d = doc.exists ? doc.data() : {};
+    const provider = d.aiProvider || 'gemini';
     const cfg = {
-      provider: d.aiProvider || 'gemini',
-      apiKey: (d.aiApiKey || '').trim() || null
+      provider,
+      apiKey: (d.aiApiKey || '').trim() || null,
+      model: d.aiModel || (provider === 'openai' ? 'gpt-image-1-mini' : null)
     };
     cachedAiConfig = cfg;
     return cfg;
@@ -6191,7 +6193,8 @@ async function saveUserAiConfig(cfg) {
   try {
     await window.firebaseDb.collection('users').doc(window.firebaseAuth.currentUser.uid).set({
       aiProvider: cfg.provider,
-      aiApiKey: (cfg.apiKey || '').trim()
+      aiApiKey: (cfg.apiKey || '').trim(),
+      aiModel: cfg.model || null
     }, { merge: true });
     cachedAiConfig = cfg;
     return { ok: true };
@@ -6201,17 +6204,27 @@ async function saveUserAiConfig(cfg) {
   }
 }
 
+function updateAiModelFieldVisibility(provider) {
+  const modelField = document.getElementById('aiModelField');
+  if (!modelField) return;
+  modelField.style.display = provider === 'openai' ? '' : 'none';
+}
+
 function showAiSettingsModal() {
   if (!window.firebaseAuth?.currentUser) {
     alert('ログインしてください');
     return;
   }
   loadUserAiConfig().then((cfg) => {
-    if (!cfg) cfg = { provider: 'gemini', apiKey: '' };
+    if (!cfg) cfg = { provider: 'gemini', apiKey: '', model: null };
     const providerSelect = document.getElementById('aiProviderSelect');
+    const modelSelect = document.getElementById('aiModelSelect');
     const aiInput = document.getElementById('aiApiKeyInput');
-    if (providerSelect) providerSelect.value = cfg.provider || 'gemini';
+    const provider = cfg.provider || 'gemini';
+    if (providerSelect) providerSelect.value = provider;
+    if (modelSelect) modelSelect.value = cfg.model || 'gpt-image-1-mini';
     if (aiInput) aiInput.value = cfg.apiKey || '';
+    updateAiModelFieldVisibility(provider);
   });
   document.getElementById('aiSettingsModal').classList.add('open');
 }
@@ -8219,23 +8232,41 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
   const provider = cfg.provider || 'gemini';
   try {
     if (provider === 'openai') {
+      const model = cfg.model || 'gpt-image-1-mini';
+      const isGptImage = model.startsWith('gpt-image-');
+
+      const body = isGptImage
+        ? {
+            model,
+            prompt,
+            n: 1,
+            size: '1024x1536',   // 縦長（gpt-image-1系）
+            quality: 'medium',
+            output_format: 'png'
+          }
+        : {
+            model,               // dall-e-3
+            prompt,
+            n: 1,
+            size: '1024x1792',
+            quality: 'hd'
+          };
+
       const res = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${cfg.apiKey}`
         },
-        body: JSON.stringify({
-          model: 'dall-e-3',
-          prompt: prompt,
-          n: 1,
-          size: '1024x1792',
-          quality: 'hd'
-        })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-      return data.data?.[0]?.url || null;
+      // gpt-image-1系はb64_jsonで返る
+      const item = data.data?.[0];
+      if (!item) return null;
+      if (item.b64_json) return `data:image/png;base64,${item.b64_json}`;
+      return item.url || null;
     }
     if (provider === 'anthropic') {
       const apiKey = cfg.apiKey;
@@ -10220,11 +10251,13 @@ function initEventListeners() {
   if (aiSettingsModalClose) aiSettingsModalClose.onclick = () => closeAiSettingsModal();
   if (aiSettingsSaveBtn) aiSettingsSaveBtn.onclick = async () => {
     const providerSelect = document.getElementById('aiProviderSelect');
+    const modelSelect = document.getElementById('aiModelSelect');
     const aiInput = document.getElementById('aiApiKeyInput');
     const provider = providerSelect?.value || 'gemini';
+    const model = provider === 'openai' ? (modelSelect?.value || 'gpt-image-1-mini') : null;
     const apiKey = aiInput?.value || '';
     try {
-      await saveUserAiConfig({ provider, apiKey });
+      await saveUserAiConfig({ provider, apiKey, model });
       closeAiSettingsModal();
       setStatus('AI設定を保存しました');
     } catch (err) {
@@ -10232,6 +10265,9 @@ function initEventListeners() {
     }
   };
   const aiProviderSelect = document.getElementById('aiProviderSelect');
+  if (aiProviderSelect) {
+    aiProviderSelect.onchange = () => updateAiModelFieldVisibility(aiProviderSelect.value);
+  }
   if (aiSettingsModal) aiSettingsModal.onclick = (e) => { if (e.target === aiSettingsModal) closeAiSettingsModal(); };
 
   const travelogueModal = document.getElementById('travelogueModal');
