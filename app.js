@@ -6406,7 +6406,7 @@ async function streamTravelogueFromAI(provider, cfg, systemPrompt, userPrompt, o
           'Authorization': `Bearer ${cfg.apiKey}`
         },
         body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
+          model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: userPrompt   }
@@ -6430,7 +6430,7 @@ async function streamTravelogueFromAI(provider, cfg, systemPrompt, userPrompt, o
           'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
+          model: 'claude-3-5-haiku-20241022',
           max_tokens: 8192,
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }],
@@ -6724,8 +6724,15 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
 【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
+  const TRAVELOGUE_MODELS = {
+    gemini: 'gemini-2.5-flash',
+    openai: 'gpt-4o-mini',
+    anthropic: 'claude-3-5-haiku-20241022'
+  };
+  const travelogueModel = TRAVELOGUE_MODELS[provider] || provider;
+
   try {
-    setStatus('旅行記を生成中... (数分かかる場合があります)');
+    setStatus(`旅行記を生成中... [${travelogueModel}]`);
     if (btn) btn.textContent = '旅行記生成中...';
 
     // 不要なsetIntervalを削除（パフォーマンス最適化）
@@ -6800,7 +6807,7 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
             'Authorization': `Bearer ${cfg.apiKey}`
           },
           body: JSON.stringify({
-            model: 'gpt-3.5-turbo',
+            model: 'gpt-4o-mini',
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt }
@@ -6828,7 +6835,7 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
             'anthropic-version': '2023-06-01'
           },
           body: JSON.stringify({
-            model: 'claude-3-haiku-20240307',
+            model: 'claude-3-5-haiku-20241022',
             max_tokens: 4096,
             system: systemPrompt,
             messages: [{ role: 'user', content: userPrompt }]
