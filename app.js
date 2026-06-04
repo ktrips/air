@@ -8219,8 +8219,8 @@ async function generateImageWithNanoBananaPro2(prompt, cfg, characterImage = nul
       text: prompt
     });
 
-    // Gemini image-preview モデルを使用して画像を生成
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    // Gemini image モデルを使用して画像を生成
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-3.1-flash-image:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -8230,10 +8230,7 @@ async function generateImageWithNanoBananaPro2(prompt, cfg, characterImage = nul
           parts: parts
         }],
         generationConfig: {
-          temperature: 1.0,
-          topK: 40,
-          topP: 0.95,
-          imageConfig: { aspectRatio: '3:4' }
+          responseModalities: ['TEXT', 'IMAGE']
         }
       })
     });
@@ -8341,7 +8338,6 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
       throw new Error('Timeout');
     }
     if (provider === 'gemini') {
-      // Imagen API はブラウザから CORS でブロックされるため generateContent を使用
       const geminiModel = cfg.model || 'gemini-3.1-flash-image';
       const parts = [];
       if (imageUrl && imageUrl.startsWith('data:')) {
@@ -8352,16 +8348,13 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
       }
       parts.push({ text: prompt });
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts }],
           generationConfig: {
-            temperature: 1.0,
-            topK: 40,
-            topP: 0.95,
-            imageConfig: { aspectRatio: '3:4' }
+            responseModalities: ['TEXT', 'IMAGE']
           }
         })
       });
@@ -8373,12 +8366,14 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
         const mimeType = imagePart.inlineData.mimeType || 'image/jpeg';
         return `data:${mimeType};base64,${imagePart.inlineData.data}`;
       }
+      // レスポンスに画像が含まれない場合はデバッグ情報をログ出力
+      console.warn('Gemini画像生成: 画像データなし', JSON.stringify(data).slice(0, 500));
       return null;
     }
     return null;
   } catch (e) {
-    console.error('Image generation:', e);
-    return null;
+    console.error('Image generation error:', e);
+    throw e;
   }
 }
 
@@ -8899,17 +8894,13 @@ async function showAnimeModal() {
         alert('画像は生成されましたが、保存に失敗しました: ' + (err.message || String(err)));
       }
     } else {
-      const errorMsg = '画像生成に失敗しました。以下を確認してください：\n\n' +
-                      '1. AI設定で「画像生成用（Nano Banana Pro2）」のAPIキーが正しく設定されているか\n' +
-                      '2. APIキーに十分なクレジットがあるか\n' +
-                      '3. ブラウザのコンソール（F12）でエラー詳細を確認してください';
+      const errorMsg = '画像生成に失敗しました（画像データが返されませんでした）。\n\nAI設定でAPIキーが正しく設定されているか確認してください。';
       alert(errorMsg);
       setStatus('画像生成に失敗しました');
     }
   } catch (err) {
     console.error('アニメ生成エラー:', err);
-    const errorMsg = '画像生成に失敗しました: ' + (err.message || String(err)) + '\n\n' +
-                    'ブラウザのコンソール（F12）で詳細なエラーログを確認してください。';
+    const errorMsg = '画像生成に失敗しました: ' + (err.message || String(err));
     alert(errorMsg);
   } finally {
     if (btn) btn.textContent = originalBtnText;
