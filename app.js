@@ -6178,7 +6178,7 @@ async function loadUserAiConfig() {
     const cfg = {
       provider,
       apiKey: (d.aiApiKey || '').trim() || null,
-      model: d.aiModel || (provider === 'openai' ? 'gpt-image-1-mini' : null)
+      model: d.aiModel || AI_MODEL_DEFAULTS[provider] || null
     };
     cachedAiConfig = cfg;
     return cfg;
@@ -6204,10 +6204,46 @@ async function saveUserAiConfig(cfg) {
   }
 }
 
-function updateAiModelFieldVisibility(provider) {
+const AI_MODEL_OPTIONS = {
+  openai: [
+    { value: 'gpt-image-1-mini', label: 'gpt-image-1-mini（リーズナブル）' },
+    { value: 'gpt-image-1',      label: 'gpt-image-1（標準）' },
+    { value: 'dall-e-3',         label: 'DALL-E 3（旧世代）' }
+  ],
+  gemini: [
+    { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image（リーズナブル）' },
+    { value: 'gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image（標準）' },
+    { value: 'gemini-3-pro-image',     label: 'Gemini 3 Pro Image（ハイスペック）' }
+  ]
+};
+
+const AI_MODEL_DEFAULTS = {
+  openai: 'gpt-image-1-mini',
+  gemini: 'gemini-3.1-flash-image'
+};
+
+function updateAiModelFieldVisibility(provider, currentModel) {
   const modelField = document.getElementById('aiModelField');
-  if (!modelField) return;
-  modelField.style.display = provider === 'openai' ? '' : 'none';
+  const modelSelect = document.getElementById('aiModelSelect');
+  if (!modelField || !modelSelect) return;
+
+  const options = AI_MODEL_OPTIONS[provider];
+  if (!options) {
+    modelField.style.display = 'none';
+    return;
+  }
+
+  // ドロップダウンを再構築
+  modelSelect.innerHTML = options.map(o =>
+    `<option value="${o.value}">${o.label}</option>`
+  ).join('');
+
+  // 保存済みモデルがこのプロバイダーのオプションに存在すれば復元
+  const defaultModel = AI_MODEL_DEFAULTS[provider] || options[0].value;
+  const savedValid = currentModel && options.some(o => o.value === currentModel);
+  modelSelect.value = savedValid ? currentModel : defaultModel;
+
+  modelField.style.display = '';
 }
 
 function showAiSettingsModal() {
@@ -6222,9 +6258,8 @@ function showAiSettingsModal() {
     const aiInput = document.getElementById('aiApiKeyInput');
     const provider = cfg.provider || 'gemini';
     if (providerSelect) providerSelect.value = provider;
-    if (modelSelect) modelSelect.value = cfg.model || 'gpt-image-1-mini';
     if (aiInput) aiInput.value = cfg.apiKey || '';
-    updateAiModelFieldVisibility(provider);
+    updateAiModelFieldVisibility(provider, cfg.model);
   });
   document.getElementById('aiSettingsModal').classList.add('open');
 }
@@ -8299,8 +8334,8 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
       throw new Error('Timeout');
     }
     if (provider === 'gemini') {
-      // gemini-3.1-flash-image-preview (generateContent) を使用
-      // Imagen API はブラウザから CORS でブロックされるため、generateContent を使用
+      // Imagen API はブラウザから CORS でブロックされるため generateContent を使用
+      const geminiModel = cfg.model || 'gemini-3.1-flash-image';
       const parts = [];
       if (imageUrl && imageUrl.startsWith('data:')) {
         const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
@@ -8310,7 +8345,7 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
       }
       parts.push({ text: prompt });
 
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -10254,7 +10289,7 @@ function initEventListeners() {
     const modelSelect = document.getElementById('aiModelSelect');
     const aiInput = document.getElementById('aiApiKeyInput');
     const provider = providerSelect?.value || 'gemini';
-    const model = provider === 'openai' ? (modelSelect?.value || 'gpt-image-1-mini') : null;
+    const model = AI_MODEL_OPTIONS[provider] ? (modelSelect?.value || AI_MODEL_DEFAULTS[provider] || null) : null;
     const apiKey = aiInput?.value || '';
     try {
       await saveUserAiConfig({ provider, apiKey, model });
@@ -10266,7 +10301,7 @@ function initEventListeners() {
   };
   const aiProviderSelect = document.getElementById('aiProviderSelect');
   if (aiProviderSelect) {
-    aiProviderSelect.onchange = () => updateAiModelFieldVisibility(aiProviderSelect.value);
+    aiProviderSelect.onchange = () => updateAiModelFieldVisibility(aiProviderSelect.value, null);
   }
   if (aiSettingsModal) aiSettingsModal.onclick = (e) => { if (e.target === aiSettingsModal) closeAiSettingsModal(); };
 
