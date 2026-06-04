@@ -8385,16 +8385,24 @@ async function showAnimeModal() {
   }
 
   const cfg = cachedAiConfig ?? (await loadUserAiConfig());
+  const provider = cfg?.provider || 'gemini';
   const apiKey = cfg?.apiKey?.trim();
+
   if (!apiKey) {
-    alert('AIアニメ生成にはGemini APIキーが必要です。AI設定でAPIキーを入力してください。');
+    alert('AI画像生成にはAPIキーが必要です。AI設定でAPIキーを入力してください。');
     return;
   }
 
-  // アニメ生成用のcfgを作成（Geminiを使用）
+  if (provider === 'anthropic') {
+    alert('Anthropicは画像生成に対応していません。AI設定でGeminiまたはOpenAIを選択してください。');
+    return;
+  }
+
+  // アニメ生成用cfg（ユーザー設定のプロバイダー・モデルを使用）
   const animeCfg = {
-    provider: 'gemini',
-    apiKey: apiKey
+    provider,
+    apiKey,
+    model: cfg?.model || null
   };
 
   const btn = document.getElementById('generateAnimeBtnViewer');
