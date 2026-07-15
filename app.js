@@ -10455,18 +10455,24 @@ function init() {
             }
           }
 
-          // 初回アクセス：「Day1 しまなみ街道」をデフォルト表示
+          // 初回アクセス：「しまなみ街道と四国お遍路旅」の親トリップを一覧表示状態でデフォルト表示
           if (!tripToLoad) {
-            const defaultTrip = myTrips.find(t => t.name === 'Day1 しまなみ街道');
-            if (defaultTrip) {
-              console.log(`[${host}] 初回アクセス - デフォルトトリップを表示: ${defaultTrip.name}`);
-              tripToLoad = defaultTrip.id;
-            } else if (orderedTrips.length > 0) {
-              // フォールバック：リスト先頭のトリップ
-              console.log(`[${host}] フォールバック - 先頭トリップを表示: ${orderedTrips[0].name}`);
-              tripToLoad = orderedTrips[0].id;
+            const defaultParentTrip = myTrips.find(t => t.isParent && t.name === 'しまなみ街道と四国お遍路旅');
+            if (defaultParentTrip) {
+              console.log(`[${host}] 初回アクセス - デフォルト親トリップを表示: ${defaultParentTrip.name}`);
+              tripToLoad = defaultParentTrip.id;
             } else {
-              console.warn(`[${host}] トリップが見つかりませんでした`);
+              const defaultTrip = myTrips.find(t => t.name === 'Day1 しまなみ街道');
+              if (defaultTrip) {
+                console.log(`[${host}] 初回アクセス - デフォルトトリップを表示: ${defaultTrip.name}`);
+                tripToLoad = defaultTrip.id;
+              } else if (orderedTrips.length > 0) {
+                // フォールバック：リスト先頭のトリップ
+                console.log(`[${host}] フォールバック - 先頭トリップを表示: ${orderedTrips[0].name}`);
+                tripToLoad = orderedTrips[0].id;
+              } else {
+                console.warn(`[${host}] トリップが見つかりませんでした`);
+              }
             }
           }
         }
