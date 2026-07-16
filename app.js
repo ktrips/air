@@ -148,6 +148,9 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ（onSnapshot が
 
 // Firestore onSnapshot リスナーの解除関数（null = 未設定）
 let _tripsUnsubscribe = null;
+// 同じユーザーに対する loadMyTrips() のセットアップが進行中の場合、二重リスナーを防ぐために共有する Promise
+let _tripsLoadPromise = null;
+let _tripsLoadPromiseUserId = null;
 
 // getOrderedTrips() メモ化キャッシュ
 let _orderedTripsCache = null;
@@ -4624,6 +4627,13 @@ async function loadMyTrips() {
     return;
   }
 
+  // 同じユーザーへのリスナーセットアップが既に進行中（初回スナップショット未到着）:
+  // ここで新規リスナーを張ると、先発のリスナーが解除されて誰にも resolve されない
+  // Promise が残ってしまうため、進行中の Promise をそのまま共有して待つ
+  if (_tripsLoadPromise && _tripsLoadPromiseUserId === currentUserId) {
+    return _tripsLoadPromise;
+  }
+
   // ユーザー変更または初回: 既存リスナーを解除してから新規設定
   if (_tripsUnsubscribe) {
     _tripsUnsubscribe();
@@ -4631,7 +4641,8 @@ async function loadMyTrips() {
   }
 
   // onSnapshot で初回データ到着を Promise で待つ
-  return new Promise((resolve, reject) => {
+  _tripsLoadPromiseUserId = currentUserId;
+  _tripsLoadPromise = new Promise((resolve, reject) => {
     let firstFire = true;
 
     const query = window.firebaseAuth?.currentUser
@@ -4654,6 +4665,7 @@ async function loadMyTrips() {
           renderTripList();
           refreshTripSelect();
           refreshTripParentSelectOptions();
+          resolve();
         }
       },
       (err) => {
@@ -4671,7 +4683,11 @@ async function loadMyTrips() {
         }
       }
     );
+  }).finally(() => {
+    _tripsLoadPromise = null;
+    _tripsLoadPromiseUserId = null;
   });
+  return _tripsLoadPromise;
 }
 
 async function loadTripOrder() {
@@ -5382,6 +5398,24 @@ function renderColorSwatches() {
   });
 }
 
+/**
+ * 地図コンテナの幅が確定してから fitBounds を実行する。
+ * ページ初回ロード直後は #map のレイアウト幅が一瞬 0 のままになる区間があり、
+ * その状態で fitBounds を呼ぶと（bounds が正しくても）異常なズームで確定してしまい、
+ * 以降なにをしても自然には直らない。コンテナ幅が実際に付くまで待ってから調整する。
+ * requestAnimationFrame はタブが非アクティブだと止まるため setTimeout でポーリングする。
+ */
+function fitMapBoundsWhenReady(bounds, options, attemptsLeft = 50) {
+  if (!map) return;
+  map.invalidateSize();
+  const size = map.getSize();
+  if ((size.x > 0 && size.y > 0) || attemptsLeft <= 0) {
+    map.fitBounds(bounds, options);
+    return;
+  }
+  setTimeout(() => fitMapBoundsWhenReady(bounds, options, attemptsLeft - 1), 100);
+}
+
 async function loadTripById(id) {
   if (!window.firebaseDb) {
     throw new Error('Firebase が初期化されていません。ページを再読み込みしてください。');
@@ -5435,7 +5469,7 @@ async function loadTripById(id) {
           console.log(`🗺️ 地図に表示する座標数: ${bounds.length}`);
           if (bounds.length > 0) {
             try {
-              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+              fitMapBoundsWhenReady(bounds, { padding: [50, 50], maxZoom: 17 });
               console.log(`✅ 地図の表示範囲を調整しました`);
             } catch (err) {
               console.error('❌ fitBoundsエラー:', err);
@@ -5540,7 +5574,7 @@ async function loadTripById(id) {
           console.log(`🗺️ 地図に表示する座標数: ${bounds.length}`);
           if (bounds.length > 0) {
             try {
-              map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+              fitMapBoundsWhenReady(bounds, { padding: [50, 50], maxZoom: 17 });
               console.log(`✅ 地図の表示範囲を調整しました`);
             } catch (err) {
               console.error('❌ fitBoundsエラー:', err);
@@ -9731,8 +9765,13 @@ function initEventListeners() {
       console.log('認証状態変化: ログアウト状態');
       cachedAiConfig = null;
     }
-    // 認証ユーザーが変わったので onSnapshot リスナーをリセット（loadMyTrips が再設定する）
-    if (_tripsUnsubscribe) {
+    // ユーザーが実際に変わった場合のみ onSnapshot リスナーをリセット（loadMyTrips が再設定する）。
+    // 無条件にリセットすると、初回ロード時に init() 側の loadMyTrips() が張ったリスナーを
+    // 同一ユーザーでの初回 onAuthStateChanged 発火が横から解除してしまい、
+    // 誰にも resolve されない Promise が残ってホームURLの初期トリップ選択が止まっていた。
+    const newUserId = user?.uid || 'public';
+    const userChanged = tripsCache.userId != null && tripsCache.userId !== newUserId;
+    if (userChanged && _tripsUnsubscribe) {
       _tripsUnsubscribe();
       _tripsUnsubscribe = null;
       tripsCache.data = null;
