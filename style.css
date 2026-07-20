@@ -53,14 +53,27 @@ body {
 }
 
 .header-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.header-logo-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.header-logo-text {
   font-size: 1.5rem;
   font-weight: 700;
-  flex-shrink: 0;
   background: var(--gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  cursor: pointer;
 }
 
 .header-right {
@@ -270,12 +283,20 @@ body {
   }
 
   .header-logo {
+    display: flex !important;
+  }
+
+  .header-logo-text {
     font-size: 1.25rem;
-    display: block !important;
+  }
+
+  .header-logo-icon {
+    width: 20px;
+    height: 20px;
   }
 
   .header-logo.hidden {
-    display: block !important;
+    display: flex !important;
   }
 
   .header-mobile-content {

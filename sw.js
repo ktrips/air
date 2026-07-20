@@ -7,7 +7,7 @@
  *   - GPX ファイル: cache-first（IndexedDB とは別の HTTP キャッシュ層）
  */
 
-const CACHE_VERSION = 'air-v3'; // trip-detail-id URLコピー削除・タイムアウト増加等
+const CACHE_VERSION = 'air-v4'; // 旅行テーマfavicon・manifest.json追加
 
 // インストール時に事前キャッシュする同一オリジンアセット
 const PRECACHE_ASSETS = [
@@ -16,6 +16,13 @@ const PRECACHE_ASSETS = [
   '/app.js',
   '/style.css',
   '/map-trip-name.css',
+  '/manifest.json',
+  '/icon.svg',
+  '/favicon-16.png',
+  '/favicon-32.png',
+  '/apple-touch-icon.png',
+  '/icon-192.png',
+  '/icon-512.png',
 ];
 
 // CDN / 外部オリジン – cache-first

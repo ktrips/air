@@ -3,7 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#dc2743">
+  <meta name="description" content="GPS付き写真をアップロードすると撮影場所を地図上に表示し、スライドショーで楽しめるWebアプリ">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Air">
   <title>Air — 地図と写真でエア旅行</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -15,7 +25,10 @@
 <body>
   <div class="app">
     <header class="header" id="appHeader">
-      <div class="header-logo" id="headerLogo" role="button" tabindex="0" aria-label="トリップ一覧に戻る">Air</div>
+      <div class="header-logo" id="headerLogo" role="button" tabindex="0" aria-label="トリップ一覧に戻る">
+        <img src="icon.svg" alt="" class="header-logo-icon" width="24" height="24">
+        <span class="header-logo-text">Air</span>
+      </div>
       <div class="header-mobile-content" id="headerMobileContent">
         <div class="header-mobile-trip-name" id="headerMobileTripName"></div>
       </div>

@@ -294,8 +294,8 @@ function getAppTitle() {
 function applyAppTitle() {
   const title = getAppTitle();
   document.title = title + ' — 地図と写真でエア旅行';
-  const headerLogo = document.getElementById('headerLogo');
-  if (headerLogo) headerLogo.textContent = title;
+  const headerLogoText = document.getElementById('headerLogo')?.querySelector('.header-logo-text');
+  if (headerLogoText) headerLogoText.textContent = title;
 }
 
 /** URLパラメータとドメインからフィルタを設定 */
