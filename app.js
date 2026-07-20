@@ -2903,6 +2903,7 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     const orientation = await detectVideoOrientation(p.videoUrl);
     overlay.classList.add('playback-video-fullscreen');
     card.classList.add('playback-video-card');
+    overlay.classList.remove('playback-photo-landscape', 'playback-photo-portrait');
     if (orientation === 'portrait') {
       overlay.classList.add('playback-video-portrait');
     } else {
@@ -3009,8 +3010,14 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     const img = document.createElement('img');
     img.loading = 'eager';
     img.decoding = 'async';
-    img.src = p.url || '';
     img.alt = p.name || '';
+    // 写真の縦横比を判定してクラスを設定（横長は幅広く、縦長は大きく表示）
+    img.onload = () => {
+      const isLandscape = img.naturalWidth >= img.naturalHeight;
+      overlay.classList.toggle('playback-photo-landscape', isLandscape);
+      overlay.classList.toggle('playback-photo-portrait', !isLandscape);
+    };
+    img.src = p.url || '';
     photoWrap.appendChild(img);
   }
 
@@ -3067,6 +3074,8 @@ function hidePlaybackPhotoOverlay() {
     // video-fullscreenクラスも削除
     overlay.classList.remove('playback-video-fullscreen');
     overlay.classList.remove('playback-video-portrait');
+    overlay.classList.remove('playback-photo-landscape');
+    overlay.classList.remove('playback-photo-portrait');
 
     // カードのvideo-cardクラスも削除
     const card = document.getElementById('playbackPhotoCard');

@@ -919,6 +919,19 @@ body:has(.mobile-travelogue-view[style*="display: block"]) .thumbnail-strip-cont
   body.app-playing .playback-photo-overlay:not(.playback-video-fullscreen) .playback-photo-card img {
     max-height: 42.5vh;
   }
+  /* 横長写真: 幅を広く表示 */
+  body.app-playing .playback-photo-overlay.playback-photo-landscape:not(.playback-video-fullscreen) .playback-photo-card {
+    width: 92vw;
+    max-width: 92vw;
+  }
+  /* 縦長写真: 通常の自動再生表示より20%大きく表示 */
+  body.app-playing .playback-photo-overlay.playback-photo-portrait:not(.playback-video-fullscreen) .playback-photo-card {
+    width: 87.6vw;
+    max-width: 87.6vw;
+  }
+  body.app-playing .playback-photo-overlay.playback-photo-portrait:not(.playback-video-fullscreen) .playback-photo-card img {
+    max-height: 51vh;
+  }
   /* モバイル動画：横長動画は中央下部に */
   .playback-photo-overlay.playback-video-fullscreen {
     left: 50%;
