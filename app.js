@@ -2549,18 +2549,16 @@ async function updateMapMarkers() {
         const tripRef = trip;
         const photoIdx = i;
         const idx = globalIdx++;
-        // エディターモードの時だけクリック可能（編集用）
-        if (isEditor()) {
-          m.on('click', async () => {
-            if (!currentTrip) {
-              await loadTripById(tripRef.id);
-              currentPhotoIndex = photoIdx;
-            } else {
-              currentPhotoIndex = idx;
-            }
-            showPhotoAtIndex(currentPhotoIndex);
-          });
-        }
+        // 写真マーカーはログインの有無に関わらずクリックで写真を表示
+        m.on('click', async () => {
+          if (!currentTrip) {
+            await loadTripById(tripRef.id);
+            currentPhotoIndex = photoIdx;
+          } else {
+            currentPhotoIndex = idx;
+          }
+          showPhotoAtIndex(currentPhotoIndex);
+        });
         if (isEditor() && m.dragging) {
           m.on('dragend', () => {
             const pos = m.getLatLng();

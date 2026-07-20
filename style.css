@@ -1837,6 +1837,7 @@ body.app-playing .thumbnail-close-btn {
 .map-photo-marker {
   background: none !important;
   border: none !important;
+  cursor: pointer;
 }
 
 /* 親トリップ表示時の地図上の各トリップの旅行記・動画ボタン */
