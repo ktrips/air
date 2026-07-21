@@ -1,7 +1,13 @@
 [
   {
-    "origin": ["*"],
-    "method": ["GET", "HEAD", "PUT", "POST", "DELETE"],
+    "origin": [
+      "https://air.ktrips.net",
+      "https://ohenro.ktrips.net",
+      "http://localhost:*",
+      "https://localhost:*"
+    ],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Accept-Ranges", "Content-Length"],
     "maxAgeSeconds": 3600
   }
 ]

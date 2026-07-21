@@ -109,6 +109,8 @@
   - Esri 航空写真
   - ハイブリッド（ラベル）
 - **マーカー**: 写真位置、ランドマーク番号表示、トリップ色で区別
+  - **マーカー表示最適化**: トリップ選択時に最初と最後の写真マーカーのみ表示してビジュアルノイズを削減
+  - **ビデオマーカー**: 動画URLを持つポイントはサムネイル画像と再生ボタンアイコンを表示（モバイル: 40x40px, デスクトップ: 56x56px）
 - **デフォルト**: 中心（日本）、ズームレベル適宜
 
 #### 4.1.4 地名検索
@@ -142,6 +144,11 @@
 - **親トリップ**: 写真・GPS不要のフォルダ。子トリップをまとめる
 - **子トリップ**: `parentId` で親を指定
 - **一覧**: 親のみデフォルト表示、クリックで子を展開
+- **URLパラメータ指定**: `?trip=親トリップ名` で直接親トリップを指定・表示
+  - 完全一致・部分一致の両方で検索
+  - 指定時は親トリップのみ表示（子トリップは表示されない）
+  - 地図には親トリップのマーカー・ルートのみ表示
+  - 例: `?trip=しまなみ街道と四国お遍路旅`
 
 #### 4.3.2 トリップカラー
 
@@ -306,12 +313,43 @@ python3 -m http.server 8080
 
 ---
 
-## 10. 制限・注意事項
+## 10. Firebase Storage設定
+
+### 10.1 CORS設定
+
+Firebase Storage からの画像・GPXファイル読み込みを有効にするには、CORS (Cross-Origin Resource Sharing) を設定する必要があります。
+
+**設定内容** (`cors.json`)：
+```json
+[
+  {
+    "origin": [
+      "https://air.ktrips.net",
+      "https://ohenro.ktrips.net",
+      "http://localhost:*",
+      "https://localhost:*"
+    ],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Accept-Ranges", "Content-Length"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
+
+**設定方法**：
+```bash
+gcloud storage buckets cors set ./cors.json gs://airgo-trip.appspot.com
+```
+
+---
+
+## 11. 制限・注意事項
 
 - **GPS情報**: スマートフォンで「位置情報をオン」にして撮影した写真を推奨
 - **ファイル読み込み**: 一部ブラウザで `index.html` 直接開きに制限がある場合はローカルサーバーを推奨
 - **AI API Key**: Firestore `users` にユーザーごとに保存。共有環境では使用しないこと
 - **Firestore**: ネイティブモード・asia-northeast1 で作成すること
+- **Firebase Storage CORS**: 画像やGPXファイルが読み込めない場合、上記CORS設定を確認すること
 
 ---
 
@@ -321,6 +359,8 @@ python3 -m http.server 8080
 |------|------|
 | `initMap()` | Leaflet 地図初期化 |
 | `initMapSearch()` | 地名検索初期化 |
+| `updateMapMarkers()` | 地図マーカー更新（フォルタリング・表示制御含む） |
+| `getTripsForDisplay()` | 表示用トリップをフィルタリング（URLパラメータ・リージョン対応） |
 | `handleFiles(files)` | 写真アップロード処理 |
 | `parseGpx(xml)` | GPX パース |
 | `saveTrip(opts)` | トリップ保存（UI連携） |

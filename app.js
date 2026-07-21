@@ -19,7 +19,7 @@ let gpxLayers = [];
 let tripLeaderLayers = [];
 let playbackPulseMarker = null; // 自動再生中の現在ポイントパルスマーカー
 let playTimer = null;
-let playIntervalMs = 3000;
+let playIntervalMs = 5000;
 let playbackPhotos = []; // 再生中の写真配列
 let playbackVideoEndCallback = null;
 let playbackVideoTimer = null; // 動画再生時の30秒タイマー
@@ -304,9 +304,25 @@ function initRegionFilterFromUrl() {
     const host = window.location.hostname || '';
     const params = new URLSearchParams(window.location.search);
 
-    // ohenro/henro.ktrips.net: 「しまなみ街道と四国お遍路旅」とその子トリップのみ表示
-    if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-      tripFilterParentName = 'しまなみ街道と四国お遍路旅';
+    // URLパラメータで トリップ ID または トリップ名を指定
+    // ?trip_id=xxx（ID指定） または ?trip=トリップ名（名前指定）
+    const tripIdParam = params.get('trip_id');
+    const tripNameParam = params.get('trip');
+
+    if (tripIdParam) {
+      // ID ベースの指定：そのまま使用
+      window.appUrlTripId = tripIdParam;
+      console.log('🔗 URLパラメータ: trip_id =', tripIdParam);
+    } else if (tripNameParam) {
+      // 名前ベースの指定：正規化して保存（後で検索）
+      window.appUrlTripName = decodeURIComponent(tripNameParam).trim();
+      console.log('🔗 URLパラメータ: trip =', window.appUrlTripName);
+    } else {
+      // ドメイン名による自動選択
+      if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
+        window.appUrlTripName = 'しまなみ街道と四国お遍路旅';
+        console.log('🏠 ドメイン自動選択: ohenro.ktrips.net');
+      }
     }
 
     let region = params.get('region');
@@ -2362,7 +2378,12 @@ async function updateMapMarkers() {
 
   const tripsToShow = [];
   if (currentTrip?.isParent) {
-    tripsToShow.push(...getChildTrips(currentTrip.id));
+    // URLパラメータで親トリップのみ表示する場合は、子トリップを表示しない
+    if (tripFilterParentName) {
+      tripsToShow.push(currentTrip);
+    } else {
+      tripsToShow.push(...getChildTrips(currentTrip.id));
+    }
   } else if (currentTrip) {
     tripsToShow.push(currentTrip);
   } else {
@@ -2434,6 +2455,12 @@ async function updateMapMarkers() {
       const landmarkMarkers = [];
 
       (trip.photos || []).forEach((p, i) => {
+        // トリップ選択時は最初と最後の写真のみを表示
+        const photoCount = trip.photos.length;
+        const isFirstPhoto = i === 0;
+        const isLastPhoto = i === photoCount - 1;
+        if (!isFirstPhoto && !isLastPhoto) return;
+
         // モバイルで親トリップ表示時は最初のランドマークのみ
         if (isParentShowingChild && isMobileView()) {
           const isFirstLandmark = !!(p.landmarkNo) && !trip.photos.slice(0, i).some(prevP => prevP.landmarkNo);
@@ -4181,7 +4208,7 @@ async function startPlay() {
     // 前回の再生状態をリセット
     lastPlaybackPhotoUrl = null;
 
-    const intervalSec = 3;
+    const intervalSec = 5;
     playIntervalMs = intervalSec * 1000;
     const playBtn = document.getElementById('playBtn');
     if (playBtn) playBtn.textContent = '■ 停止';
@@ -4820,7 +4847,10 @@ function getTripsForDisplay() {
       .sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0));
     if (r.isParent && children.length === 0 && !matchesRegion(r)) return; // 親のみで子がマッチしない場合は非表示
     result.push({ trip: r, isChild: false });
-    children.forEach(c => result.push({ trip: c, isChild: true }));
+    // URLパラメータで親トリップ指定時は子トリップを表示しない
+    if (!tripFilterParentName) {
+      children.forEach(c => result.push({ trip: c, isChild: true }));
+    }
   });
   return result;
 }
@@ -4923,6 +4953,41 @@ function renderTripList() {
     };
     const actions = document.createElement('div');
     actions.className = 'trip-item-actions';
+
+    // Navigation button "→"
+    const navBtn = document.createElement('button');
+    navBtn.textContent = '→';
+    navBtn.className = 'trip-item-nav-btn';
+    navBtn.title = 'このトリップに移動';
+    navBtn.onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        await loadTripById(t.id);
+        if (isMobileView()) {
+          document.getElementById('tripPanel')?.classList.remove('open');
+          document.getElementById('tripSheetOverlay')?.classList.remove('open');
+        }
+      } catch (err) {
+        console.error('トリップ読み込みエラー:', err);
+      }
+    };
+    actions.appendChild(navBtn);
+
+    // Travelogue button "旅行記" if trip has travelogue
+    const hasTravelogue = (t.travelogueHtml && t.travelogueHtml.trim()) || t.travelogueUrl ||
+      (t.travelogueHistory?.length > 0);
+    if (hasTravelogue) {
+      const travelogueBtn = document.createElement('button');
+      travelogueBtn.textContent = '📖';
+      travelogueBtn.className = 'trip-item-travelogue-btn';
+      travelogueBtn.title = '旅行記';
+      travelogueBtn.onclick = (e) => {
+        e.stopPropagation();
+        showTravelogueModal(t);
+      };
+      actions.appendChild(travelogueBtn);
+    }
+
     if (isEditor()) {
       const dragHandle = document.createElement('span');
       dragHandle.className = 'trip-item-drag-handle';
@@ -6779,11 +6844,14 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        console.log(`🔗 API呼び出し: ${url.split('?')[0]}...`);
         const response = await fetch(url, { ...options, signal: controller.signal });
         clearTimeout(timeoutId);
+        console.log(`✅ API応答ステータス: ${response.status}`);
         return response;
       } catch (error) {
         clearTimeout(timeoutId);
+        console.error('📡 ネットワークエラー:', error.name, error.message);
         if (error.name === 'AbortError') {
           throw new Error(`API呼び出しがタイムアウトしました（${timeoutMs / 1000}秒）。写真が多い場合は数を減らしてみてください。`);
         }
@@ -7053,13 +7121,20 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     console.error('旅行記生成エラー:', err);
     console.error('エラースタック:', err.stack);
     console.error('トリップ情報:', { trip, currentTrip });
+    console.error('AI設定:', { provider: cfg?.provider, hasApiKey: !!cfg?.apiKey });
+
     let errorMessage = '旅行記の生成に失敗しました。\n\n';
 
     if (err.message) {
       errorMessage += `エラー: ${err.message}\n\n`;
     }
 
-    if (err.message && err.message.includes('トリップ')) {
+    if (!cfg?.apiKey?.trim()) {
+      errorMessage = 'APIキーが設定されていません。\n\n';
+      errorMessage += 'メニュー → AI設定 で以下を確認してください:\n';
+      errorMessage += '1. プロバイダーを選択（Gemini / OpenAI / Anthropic）\n';
+      errorMessage += '2. APIキーを入力';
+    } else if (err.message && err.message.includes('トリップ')) {
       errorMessage += 'トリップ情報が不正です。\n';
       errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
     } else if (err.message && err.message.includes('API')) {
@@ -7071,8 +7146,14 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     } else if (err.message && err.message.includes('undefined')) {
       errorMessage += 'データが不完全です。\n';
       errorMessage += 'トリップを再度選択してから、もう一度お試しください。';
+    } else if (err.message && (err.message.includes('Network') || err.message.includes('fetch'))) {
+      errorMessage += 'ネットワーク接続が失敗しました。\n\n';
+      errorMessage += '確認事項:\n';
+      errorMessage += '1. インターネット接続を確認\n';
+      errorMessage += '2. VPN/ファイアウォール設定を確認\n';
+      errorMessage += '3. ブラウザのコンソール(F12)でエラー詳細を確認';
     } else {
-      errorMessage += 'コンソールログを確認してください。';
+      errorMessage += 'コンソールログ(F12)を確認してください。';
     }
 
     alert(errorMessage);
@@ -9789,6 +9870,65 @@ function initEventListeners() {
     await Promise.all([loadMyTrips(), loadTripOrder()]);
     renderTripList();
     refreshTripSelect();
+
+    // URLパラメータで指定されたトリップを読み込む
+    let tripToLoad = null;
+
+    if (window.appUrlTripId) {
+      // ID ベースの検索
+      tripToLoad = myTrips.find(t => t.id === window.appUrlTripId);
+      if (tripToLoad) {
+        console.log('✅ ID で トリップを見つけました:', tripToLoad.name);
+      } else {
+        console.warn('❌ ID でトリップが見つかりません:', window.appUrlTripId);
+        console.log('利用可能なトリップID:', myTrips.map(t => ({ id: t.id, name: t.name })));
+      }
+    } else if (window.appUrlTripName) {
+      // 名前ベースの検索（複数の戦略を試す）
+      const searchName = window.appUrlTripName.toLowerCase().trim();
+
+      // 1. 完全一致（大文字小文字を区別しない）
+      tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().trim() === searchName);
+      if (tripToLoad) {
+        console.log('✅ 完全一致でトリップを見つけました:', tripToLoad.name);
+      }
+
+      // 2. 完全一致失敗時は部分一致
+      if (!tripToLoad) {
+        tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().includes(searchName));
+        if (tripToLoad) {
+          console.log('✅ 部分一致でトリップを見つけました:', tripToLoad.name);
+        }
+      }
+
+      // 3. 名前に検索語が含まれている（逆向き）
+      if (!tripToLoad) {
+        tripToLoad = myTrips.find(t => searchName.includes((t.name || '').toLowerCase().trim()));
+        if (tripToLoad) {
+          console.log('✅ 逆向き一致でトリップを見つけました:', tripToLoad.name);
+        }
+      }
+
+      if (!tripToLoad) {
+        console.warn('❌ トリップが見つかりません:', window.appUrlTripName);
+        console.log('利用可能なトリップ:', myTrips.slice(0, 10).map(t => ({ id: t.id, name: t.name, isParent: t.isParent })));
+      }
+    }
+
+    if (tripToLoad) {
+      console.log('🚀 URLパラメータで指定されたトリップを読み込みます:', tripToLoad.name);
+      await loadTripById(tripToLoad.id);
+      // トリップ名をフィルタに設定（子トリップの場合は親を見つける）
+      if (tripToLoad.isParent) {
+        tripFilterParentName = tripToLoad.name;
+      } else if (tripToLoad.parentId) {
+        const parent = myTrips.find(t => t.id === tripToLoad.parentId);
+        if (parent) {
+          tripFilterParentName = parent.name;
+        }
+      }
+    }
+
     await updateMapMarkers();
     await updateHeaderInfo();
   });
