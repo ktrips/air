@@ -19,7 +19,7 @@ let gpxLayers = [];
 let tripLeaderLayers = [];
 let playbackPulseMarker = null; // 自動再生中の現在ポイントパルスマーカー
 let playTimer = null;
-let playIntervalMs = 10000;
+let playIntervalMs = 5000;
 let playbackPhotos = []; // 再生中の写真配列
 let playbackVideoEndCallback = null;
 let playbackVideoTimer = null; // 動画再生時の30秒タイマー
@@ -4177,7 +4177,7 @@ async function startPlay() {
     // 前回の再生状態をリセット
     lastPlaybackPhotoUrl = null;
 
-    const intervalSec = 10;
+    const intervalSec = 5;
     playIntervalMs = intervalSec * 1000;
     const playBtn = document.getElementById('playBtn');
     if (playBtn) playBtn.textContent = '■ 停止';
