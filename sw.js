@@ -7,7 +7,7 @@
  *   - GPX ファイル: cache-first（IndexedDB とは別の HTTP キャッシュ層）
  */
 
-const CACHE_VERSION = 'air-v4'; // 旅行テーマfavicon・manifest.json追加
+const CACHE_VERSION = 'air-v5'; // favicon背景を白に変更
 
 // インストール時に事前キャッシュする同一オリジンアセット
 const PRECACHE_ASSETS = [
