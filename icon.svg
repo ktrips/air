@@ -8,6 +8,8 @@
       <stop offset="100%" stop-color="#bc1888"/>
     </linearGradient>
   </defs>
+  <!-- 背景（白） -->
+  <rect width="64" height="64" fill="#ffffff"/>
   <!-- 位置ピン（旅の目的地） -->
   <path d="M32 4C20.4 4 11 13.4 11 25c0 15.5 21 33.6 21 33.6S53 40.5 53 25C53 13.4 43.6 4 32 4z" fill="url(#airIconGradient)"/>
   <!-- 白い円（ピンの中の背景） -->
