@@ -5007,9 +5007,36 @@ function renderTripList() {
       if (t.isParent && children.length > 0) {
         html += `<p class="trip-detail-meta">子トリップ ${children.length} 件</p>`;
       }
+      if (children.length > 0) {
+        html += '<p class="trip-detail-children"><strong>子トリップ:</strong> ';
+        html += children.map((c, idx) => {
+          return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
+        }).join('、');
+        html += '</p>';
+      }
       detail.innerHTML = html;
       list.appendChild(detail);
 
+      // 子トリップリンクにクリックイベントを追加
+      detail.querySelectorAll('.child-trip-link').forEach(link => {
+        link.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const childTripId = link.getAttribute('data-trip-id');
+          if (childTripId) {
+            try {
+              await loadTripById(childTripId);
+              if (isMobileView()) {
+                document.getElementById('tripPanel')?.classList.remove('open');
+                document.getElementById('tripSheetOverlay')?.classList.remove('open');
+              }
+            } catch (err) {
+              console.error('子トリップ読み込みエラー:', err);
+              alert('子トリップの読み込みに失敗しました: ' + (err.message || err));
+            }
+          }
+        };
+      });
       detail.querySelectorAll('.trip-detail-video-btn').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); playVideoSequence(getTripVideoUrlsForTrip(t)); };
       });
