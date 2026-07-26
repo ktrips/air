@@ -4585,6 +4585,22 @@ async function saveTrip(opts = {}) {
       const res = await saveTripOrder([...tripOrder, currentTrip.id]);
       if (!res.ok) console.warn('順序の保存に失敗:', res.err);
     }
+    // 親トリップの公開設定を変更した場合、既存の子トリップにも同じ公開設定を反映
+    // （子トリップが非公開のままだと、未ログインユーザーから中身が見えなくなるため）
+    if (isParent) {
+      const children = myTrips.filter(t => t.parentId === currentTrip.id && t.public !== currentTrip.public);
+      if (children.length > 0) {
+        try {
+          const batch = window.firebaseDb.batch();
+          children.forEach(c => {
+            batch.update(window.firebaseDb.collection('trips').doc(c.id), { public: currentTrip.public });
+          });
+          await batch.commit();
+        } catch (err) {
+          console.warn('子トリップの公開設定同期に失敗:', err);
+        }
+      }
+    }
     setStatus('保存しました');
     closeMenu();
     const travelogueBeforeReload = {
@@ -5465,6 +5481,7 @@ async function addChildTripUnder(parentId) {
   const parent = myTripsMap.get(parentId);
   currentTrip = createNewTrip(parentId);
   currentTrip.color = parent?.color || TRIP_COLORS[0];
+  currentTrip.public = !!parent?.public;
   await updateTripInputs();
   document.getElementById('tripParentInput').checked = false;
   document.getElementById('tripParentSelectWrap').style.display = '';
