@@ -1473,15 +1473,6 @@ body.editor .trip-item-row[draggable="true"]:active {
   color: #ed4956;
 }
 
-.trip-item-row .trip-item-actions .trip-item-nav-btn {
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.trip-item-row .trip-item-actions .trip-item-travelogue-btn {
-  color: #6f42c1;
-}
-
 .trip-item-drag-handle {
   cursor: grab;
   color: var(--text-muted);
