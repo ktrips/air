@@ -4970,25 +4970,6 @@ function renderTripList() {
     const actions = document.createElement('div');
     actions.className = 'trip-item-actions';
 
-    // Navigation button "→"
-    const navBtn = document.createElement('button');
-    navBtn.textContent = '→';
-    navBtn.className = 'trip-item-nav-btn';
-    navBtn.title = 'このトリップに移動';
-    navBtn.onclick = async (e) => {
-      e.stopPropagation();
-      try {
-        await loadTripById(t.id);
-        if (isMobileView()) {
-          document.getElementById('tripPanel')?.classList.remove('open');
-          document.getElementById('tripSheetOverlay')?.classList.remove('open');
-        }
-      } catch (err) {
-        console.error('トリップ読み込みエラー:', err);
-      }
-    };
-    actions.appendChild(navBtn);
-
     // Travelogue button "旅行記" if trip has travelogue
     if (tripHasTravelogue(t)) {
       const travelogueBtn = document.createElement('button');
