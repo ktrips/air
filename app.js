@@ -4939,8 +4939,6 @@ function renderTripList() {
     list.innerHTML = '<p class="trip-list-empty">' + (window.firebaseAuth?.currentUser ? 'トリップがありません' : '公開トリップがありません') + '</p>';
     return;
   }
-  // 同じ親を持つ子トリップは1つの横並び（フレックス）行にまとめて表示する
-  let childrenWrapper = null;
   displayItems.forEach(({ trip: t, isChild }) => {
     const isSelected = currentTrip?.id === t.id;
     const row = document.createElement('div');
@@ -5008,17 +5006,7 @@ function renderTripList() {
     }
     row.appendChild(label);
     row.appendChild(actions);
-    if (isChild) {
-      if (!childrenWrapper) {
-        childrenWrapper = document.createElement('div');
-        childrenWrapper.className = 'trip-item-children-row';
-        list.appendChild(childrenWrapper);
-      }
-      childrenWrapper.appendChild(row);
-    } else {
-      childrenWrapper = null;
-      list.appendChild(row);
-    }
+    list.appendChild(row);
     // モバイルでは詳細を展開しない
     if (isSelected && !isMobileView()) {
       const detail = document.createElement('div');
