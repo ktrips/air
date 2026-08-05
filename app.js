@@ -2451,16 +2451,19 @@ async function updateMapMarkers() {
       const landmarkMarkers = [];
 
       (trip.photos || []).forEach((p, i) => {
-        // トリップ選択時は最初と最後の写真のみを表示
-        const photoCount = trip.photos.length;
-        const isFirstPhoto = i === 0;
-        const isLastPhoto = i === photoCount - 1;
-        if (!isFirstPhoto && !isLastPhoto) return;
+        // 親トリップ表示時（子トリップの写真マーカーを間引く場合）のみ最初と最後の写真に絞る
+        // 子トリップを直接選択した場合は、全ての写真をマーカーとして表示する
+        if (isParentShowingChild) {
+          const photoCount = trip.photos.length;
+          const isFirstPhoto = i === 0;
+          const isLastPhoto = i === photoCount - 1;
+          if (!isFirstPhoto && !isLastPhoto) return;
 
-        // モバイルで親トリップ表示時は最初のランドマークのみ
-        if (isParentShowingChild && isMobileView()) {
-          const isFirstLandmark = !!(p.landmarkNo) && !trip.photos.slice(0, i).some(prevP => prevP.landmarkNo);
-          if (!isFirstLandmark) return;
+          // モバイルで親トリップ表示時は最初のランドマークのみ
+          if (isMobileView()) {
+            const isFirstLandmark = !!(p.landmarkNo) && !trip.photos.slice(0, i).some(prevP => prevP.landmarkNo);
+            if (!isFirstLandmark) return;
+          }
         }
         const coord = ensureLatLng(p.lat, p.lng);
         if (coord) {
