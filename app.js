@@ -2706,7 +2706,7 @@ async function updateMapMarkers() {
             <div class="map-trip-action-card" style="--trip-color:${color}" data-trip-id="${escapeHtml(tripId)}">
               <div class="map-trip-action-name map-trip-action-name-clickable" style="cursor:pointer;" title="このトリップを表示">${tripName}</div>
               <div class="map-trip-action-btns">
-                ${hasTravelogue ? '<button type="button" class="map-trip-action-btn map-trip-action-travelogue" title="旅行記"><span class="map-trip-action-label">旅行記</span>📖</button>' : ''}
+                ${hasTravelogue ? '<button type="button" class="map-trip-action-btn map-trip-action-travelogue" title="旅行記">📖</button>' : ''}
                 ${hasVideo ? '<button type="button" class="map-trip-action-btn map-trip-action-video" title="動画">🎬</button>' : ''}
               </div>
             </div>`;

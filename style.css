@@ -1980,9 +1980,6 @@ body.app-playing .thumbnail-close-btn {
     height: 24px;
     font-size: 0.9rem;
   }
-  .map-trip-action-label {
-    display: none;
-  }
 }
 .map-trip-action-btn {
   min-width: 28px;
@@ -1999,10 +1996,6 @@ body.app-playing .thumbnail-close-btn {
   justify-content: center;
   gap: 4px;
   transition: opacity 0.2s;
-}
-.map-trip-action-label {
-  font-size: 0.65rem;
-  font-weight: 500;
 }
 .map-trip-action-btn:hover {
   opacity: 0.9;
