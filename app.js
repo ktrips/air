@@ -5042,13 +5042,6 @@ function renderTripList() {
       if (t.isParent && children.length > 0) {
         html += `<p class="trip-detail-meta">子トリップ ${children.length} 件</p>`;
       }
-      if (children.length > 0) {
-        html += '<p class="trip-detail-children"><strong>子トリップ:</strong> ';
-        html += children.map((c, idx) => {
-          return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
-        }).join('、');
-        html += '</p>';
-      }
       detail.innerHTML = html;
       list.appendChild(detail);
 
@@ -7354,49 +7347,58 @@ async function showTravelogueModal(trip) {
 
     let listHtml = '<div style="padding:2rem;">';
     listHtml += `<h3 style="margin-bottom:1.5rem;color:${t.color || '#e1306c'};font-size:1.5rem;font-weight:700;">旅行記を選択</h3>`;
-    listHtml += '<div style="display:flex;flex-direction:column;gap:1rem;">';
+    listHtml += '<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));gap:1rem;">';
 
     childrenWithTravelogue.forEach(c => {
       const childName = escapeHtml(c.name || '（無題）');
       const childColor = c.color || t.color || '#e1306c';
       const hasVideo = getTripVideoUrlsForTrip(c).length > 0;
-      listHtml += `<div style="display:flex;align-items:stretch;gap:0.5rem;">`;
+      const coverUrl = (c.photos || []).find(p => p.url)?.url || '';
+      listHtml += `<div class="travelogue-tile" style="position:relative;">`;
       listHtml += `<button type="button" class="child-travelogue-btn" data-trip-id="${c.id}" style="
-        flex:1;
+        width:100%;
         display:flex;
+        flex-direction:column;
         align-items:center;
-        gap:0.6rem;
-        padding:0.75rem 1.2rem;
-        background:rgba(255,255,255,0.95);
-        color:${childColor};
+        justify-content:flex-end;
+        gap:0.4rem;
+        aspect-ratio:1/1;
+        padding:0.75rem 0.6rem;
+        background:${coverUrl ? `#eee url('${escapeHtml(coverUrl)}') center/cover no-repeat` : 'rgba(255,255,255,0.95)'};
+        color:${coverUrl ? '#fff' : childColor};
         border:2px solid ${childColor};
-        border-radius:8px;
-        font-size:0.9rem;
+        border-radius:12px;
+        font-size:0.85rem;
         font-weight:700;
+        line-height:1.3;
         cursor:pointer;
         box-shadow:0 2px 8px rgba(0,0,0,0.1);
-        transition:all 0.2s;
-        text-align:left;
+        transition:transform 0.15s;
+        text-align:center;
       ">
-        <span style="font-size:1.3rem;">📖</span>
-        <span style="flex:1;">${childName}</span>
+        ${coverUrl ? `<span style="position:absolute;inset:0;border-radius:10px;background:linear-gradient(to top,rgba(0,0,0,0.75) 0%,rgba(0,0,0,0.15) 55%,transparent 100%);"></span>` : ''}
+        <span style="position:relative;font-size:1.4rem;${coverUrl ? 'filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));' : ''}">📖</span>
+        <span style="position:relative;${coverUrl ? 'text-shadow:0 1px 3px rgba(0,0,0,0.7);' : ''}">${childName}</span>
       </button>`;
       if (hasVideo) {
         listHtml += `<button type="button" class="child-video-btn" data-trip-id="${c.id}" style="
-          min-width:52px;
+          position:absolute;
+          top:6px;
+          right:6px;
+          width:30px;
+          height:30px;
           display:flex;
           align-items:center;
           justify-content:center;
-          padding:0.75rem;
+          padding:0;
           background:rgba(255,255,255,0.95);
           color:#405de6;
           border:2px solid #405de6;
-          border-radius:8px;
-          font-size:1.3rem;
+          border-radius:50%;
+          font-size:0.95rem;
           cursor:pointer;
-          box-shadow:0 2px 8px rgba(0,0,0,0.1);
-          transition:all 0.2s;
-          flex-shrink:0;
+          box-shadow:0 2px 6px rgba(0,0,0,0.25);
+          transition:transform 0.15s;
         " title="動画を再生">🎬</button>`;
       }
       listHtml += '</div>';
