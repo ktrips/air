@@ -7262,10 +7262,15 @@ async function initTravelogueMap(trip) {
       photoPoints.push([coord.lat, coord.lng]);
 
       const isLandmark = !!(p.landmarkNo);
+      const isStamp = !!(p.isStamp);
       let markerHtml;
 
-      if (isLandmark && p.url) {
-        // ランドマークは小さい写真で表示
+      if (isStamp) {
+        // スタンプは番号のみの丸（写真を表示しない）
+        const no = String(p.landmarkNo || '?').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        markerHtml = `<div style="background:${color};width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)">${no}</div>`;
+      } else if (isLandmark && p.url) {
+        // ランドマーク（スタンプでない）は小さい写真で表示
         const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         markerHtml = `
           <div style="position:relative;width:40px;height:40px;">
@@ -7282,12 +7287,13 @@ async function initTravelogueMap(trip) {
         markerHtml = `<span style="background:${color};border:2px solid #fff;width:10px;height:10px;border-radius:50%;display:block;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>`;
       }
 
+      const showsSmallPhoto = isLandmark && !isStamp && p.url;
       const marker = L.marker([coord.lat, coord.lng], {
         icon: L.divIcon({
           className: 'travelogue-map-marker',
           html: markerHtml,
-          iconSize: isLandmark && p.url ? [40, 40] : (isLandmark ? [28, 28] : [10, 10]),
-          iconAnchor: isLandmark && p.url ? [20, 40] : (isLandmark ? [14, 14] : [5, 5])
+          iconSize: showsSmallPhoto ? [40, 40] : ((isLandmark || isStamp) ? [28, 28] : [10, 10]),
+          iconAnchor: showsSmallPhoto ? [20, 40] : ((isLandmark || isStamp) ? [14, 14] : [5, 5])
         })
       });
 
