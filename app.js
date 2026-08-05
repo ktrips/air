@@ -319,6 +319,97 @@ async function getCharacterImageForGeneration() {
     return null;
   }
 }
+
+// アニメ生成に添付する旅行写真の最大枚数（多すぎるとAPIが重く不安定になる）
+const ANIME_REF_PHOTO_LIMIT = 4;
+// 参照写真は生成の手掛かりになれば十分なので縮小して添付する
+const ANIME_REF_PHOTO_DIM = 768;
+
+/**
+ * アニメ生成の参照に使う代表写真を選ぶ。
+ * ランドマーク（名所）を優先し、足りない分は旅程全体から均等に補って
+ * 旅の流れが伝わるようにする。
+ */
+function selectAnimeReferencePhotos(photos, limit = ANIME_REF_PHOTO_LIMIT) {
+  const withUrl = (photos || []).filter(p => p && p.url && !p.isStamp);
+  if (withUrl.length === 0) return [];
+
+  const picked = [];
+  const seen = new Set();
+  const take = (p) => {
+    if (!p || seen.has(p.url) || picked.length >= limit) return;
+    seen.add(p.url);
+    picked.push(p);
+  };
+
+  // ランドマークを優先（番号順）
+  withUrl
+    .filter(p => p.landmarkNo)
+    .sort((a, b) => (parseInt(a.landmarkNo, 10) || 0) - (parseInt(b.landmarkNo, 10) || 0))
+    .forEach(take);
+
+  // 残り枠は旅程全体から等間隔で補完
+  if (picked.length < limit) {
+    const step = Math.max(1, Math.floor(withUrl.length / limit));
+    for (let i = 0; i < withUrl.length && picked.length < limit; i += step) {
+      take(withUrl[i]);
+    }
+  }
+  return picked;
+}
+
+/** 画像URLを縮小したdataURLに変換する（参照画像の添付用） */
+async function fetchImageAsResizedDataUrl(url, maxDim = ANIME_REF_PHOTO_DIM) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+    const resized = await resizeImageToBlob(dataUrl, maxDim, 0.85);
+    if (!resized || resized.size === 0) return dataUrl;
+    return await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(resized);
+    });
+  } catch (err) {
+    console.warn('参照画像の取得に失敗（スキップ）:', url, err);
+    return null;
+  }
+}
+
+/**
+ * アニメ生成に渡す参照画像一式を用意する。
+ * 先頭をキャラ画像にして「主人公」であることをAIが解釈しやすくする。
+ */
+async function buildAnimeReferenceImages(charImg, photos, limit = ANIME_REF_PHOTO_LIMIT) {
+  const refs = [];
+  if (charImg) refs.push({ dataUrl: charImg, kind: 'character' });
+
+  const selected = selectAnimeReferencePhotos(photos, limit);
+  // 参照画像は情景を読み取れる必要があるため、サムネイルではなく本体写真を縮小して使う
+  const dataUrls = await Promise.all(
+    selected.map(p => fetchImageAsResizedDataUrl(p.url))
+  );
+  selected.forEach((p, i) => {
+    if (dataUrls[i]) {
+      refs.push({
+        dataUrl: dataUrls[i],
+        kind: 'photo',
+        label: p.name || p.placeName || '',
+        description: p.description || ''
+      });
+    }
+  });
+  return refs;
+}
+
 let addingGpsPointMode = false; // GPSポイント追加モード
 
 // トリップ所在フィルタ: 'all' | 'japan' | 'global'（URLパラメータ ?region=japan または ?region=global で指定可能）
@@ -8374,6 +8465,30 @@ const ANIME_STYLES = {
   }
 };
 
+/**
+ * トリップの旅行記本文を取得する。
+ * travelogueHtml はFirestore保存時に削除されるため通常は空で、
+ * 実体はStorage上の travelogueUrl にある。両方を見て本文を返す。
+ */
+async function getTravelogueTextForTrip(trip, maxLen = 400) {
+  if (!trip) return '';
+  try {
+    let html = trip.travelogueHtml && trip.travelogueHtml.trim() ? trip.travelogueHtml : null;
+    if (!html) {
+      const url = trip.travelogueUrl || getLatestTravelogueEntry(trip)?.url || null;
+      if (!url) return '';
+      const res = await fetch(url);
+      if (!res.ok) return '';
+      html = await res.text();
+    }
+    const sections = parseTravelogueSections(html);
+    return sections.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+  } catch (err) {
+    console.warn('旅行記テキストの取得に失敗（スキップ）:', err);
+    return '';
+  }
+}
+
 function parseTravelogueSections(html) {
   if (!html || !html.trim()) return [];
   const div = document.createElement('div');
@@ -8572,13 +8687,59 @@ async function generateImageWithNanoBananaPro2(prompt, cfg, characterImage = nul
   }
 }
 
+/** dataURL を File に変換する（画像APIのmultipart送信用） */
+function dataUrlToFile(dataUrl, filename) {
+  const m = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const bin = atob(m[2]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], filename, { type: m[1] });
+}
+
+/**
+ * 画像を生成する。
+ * @param {string} prompt
+ * @param {string|string[]|null} imageUrl 参照画像（dataURL）。配列で複数指定可。
+ *   1枚目をキャラクター、2枚目以降を旅行写真として渡す想定。
+ * @param {object} cfg
+ */
 async function generateImageWithAI(prompt, imageUrl, cfg) {
   if (!cfg?.apiKey?.trim()) return null;
   const provider = cfg.provider || 'gemini';
+  // 単一指定・複数指定のどちらも受け付ける
+  const refImages = (Array.isArray(imageUrl) ? imageUrl : [imageUrl])
+    .filter(u => typeof u === 'string' && u.startsWith('data:'));
   try {
     if (provider === 'openai') {
       const model = cfg.model || 'gpt-image-1-mini';
       const isGptImage = model.startsWith('gpt-image-');
+
+      // gpt-image-1系は参照画像を渡せる（images/edits）。
+      // generations は画像を受け付けないため、参照画像がある場合は edits を使う。
+      if (isGptImage && refImages.length > 0) {
+        const form = new FormData();
+        form.append('model', model);
+        form.append('prompt', prompt);
+        form.append('n', '1');
+        form.append('size', '1024x1536');
+        form.append('quality', 'medium');
+        refImages.forEach((d, i) => {
+          const file = dataUrlToFile(d, `ref_${i}.png`);
+          if (file) form.append('image[]', file);
+        });
+        const editRes = await fetch('https://api.openai.com/v1/images/edits', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${cfg.apiKey}` },
+          body: form
+        });
+        const editData = await editRes.json();
+        if (editData.error) throw new Error(editData.error.message || JSON.stringify(editData.error));
+        const editItem = editData.data?.[0];
+        if (editItem?.b64_json) return `data:image/png;base64,${editItem.b64_json}`;
+        if (editItem?.url) return editItem.url;
+        return null;
+      }
 
       const body = isGptImage
         ? {
@@ -8626,7 +8787,7 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
         body: JSON.stringify({
           model: 'google/gempix2',
           prompt,
-          images: imageUrl ? [imageUrl] : undefined
+          images: refImages.length > 0 ? refImages : undefined
         })
       });
       const data = await res.json();
@@ -8646,12 +8807,13 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
     if (provider === 'gemini') {
       const geminiModel = cfg.model || 'gemini-3.1-flash-image';
       const parts = [];
-      if (imageUrl && imageUrl.startsWith('data:')) {
-        const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+      // 参照画像を全て添付する（1枚目=キャラ、2枚目以降=旅行写真）
+      refImages.forEach((d) => {
+        const matches = d.match(/^data:([^;]+);base64,(.+)$/);
         if (matches) {
           parts.push({ inlineData: { mimeType: matches[1], data: matches[2] } });
         }
-      }
+      });
       parts.push({ text: prompt });
 
       const res = await fetch(`https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
@@ -8743,7 +8905,7 @@ async function showAnimeModal() {
       if (btn) btn.textContent = '出来事アニメ生成中...';
 
       const tripName = trip.name || '旅行';
-      const eventPrompt = [
+      const eventPromptParts = [
         `旅行「${tripName}」での以下の出来事を、5コマのマンガ形式で優しいタッチのアニメとして表現してください。`,
         '',
         '【重要】画像内のすべての言葉・説明・吹き出しのセリフ・ラベル・タイトルは必ず日本語のみで記述してください。英語は一切使用しないでください。',
@@ -8759,10 +8921,19 @@ async function showAnimeModal() {
         '',
         '【出来事の内容 - 5コマで展開して表現】',
         eventText,
-        ''
-      ].join('\n');
+        '',
+        '【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。ぼやけた描写は避け、細部まで丁寧に描いてください。'
+      ];
 
-      const generatedDataUrl = await generateImageWithAI(eventPrompt, charImg, animeCfg);
+      // 旅の風景が背景として伝わるよう、実際の写真も参照画像に加える
+      const eventRefs = await buildAnimeReferenceImages(charImg, trip.photos || [], 3);
+      const eventRefPhotos = eventRefs.filter(r => r.kind === 'photo');
+      if (eventRefPhotos.length > 0) {
+        eventPromptParts.push('');
+        eventPromptParts.push(`【添付の参照写真（${eventRefPhotos.length}枚）】2枚目以降はこの旅で実際に撮影した写真です。背景の風景づくりの参考にして、実在の場所の雰囲気が伝わるように描いてください。`);
+      }
+
+      const generatedDataUrl = await generateImageWithAI(eventPromptParts.join('\n'), eventRefs.map(r => r.dataUrl), animeCfg);
       if (generatedDataUrl) {
         const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'event');
         const animeData = {
@@ -8835,10 +9006,23 @@ async function showAnimeModal() {
       });
 
       // 旅行記から該当箇所を詳細に抽出
+      // （Firestoreには本文が残らないため、Storage上の旅行記も取得対象にする）
       let travelogueContext = '';
       let travelogueDetails = [];
-      if (trip.travelogueHtml && trip.travelogueHtml.trim()) {
-        const sections = parseTravelogueSections(trip.travelogueHtml);
+      let travelogueHtmlForUkiyoe = trip.travelogueHtml && trip.travelogueHtml.trim() ? trip.travelogueHtml : '';
+      if (!travelogueHtmlForUkiyoe) {
+        const tUrl = trip.travelogueUrl || getLatestTravelogueEntry(trip)?.url || null;
+        if (tUrl) {
+          try {
+            const tRes = await fetch(tUrl);
+            if (tRes.ok) travelogueHtmlForUkiyoe = await tRes.text();
+          } catch (err) {
+            console.warn('旅行記の取得に失敗（スキップ）:', err);
+          }
+        }
+      }
+      if (travelogueHtmlForUkiyoe) {
+        const sections = parseTravelogueSections(travelogueHtmlForUkiyoe);
         // 名所に関連するセクションを抽出
         const relatedSections = sections.filter(s => {
           const sectionText = s.title + s.text;
@@ -8976,8 +9160,23 @@ async function showAnimeModal() {
       ukiyoePrompt.push('- 見る人に「この場所に行ってみたい」「この名所を訪れたい」と思わせる魅力的な作品に');
       ukiyoePrompt.push('- 趣と楽しさが共存する、温かみのある絵画に仕上げてください');
 
+      // 実際の名所写真を参照画像として添付し、実在の建物・風景に忠実に描かせる
+      setStatus('参照写真を準備中...');
+      const ukiyoeRefs = await buildAnimeReferenceImages(charImg, photos);
+      const ukiyoeRefPhotos = ukiyoeRefs.filter(r => r.kind === 'photo');
+      if (ukiyoeRefPhotos.length > 0) {
+        ukiyoePrompt.push('');
+        ukiyoePrompt.push(`【添付の参照写真（${ukiyoeRefPhotos.length}枚）】${charImg ? '2枚目以降' : '添付'}はこの名所で実際に撮影した写真です。建物の形・屋根・門・自然の様子など、写真から読み取れる特徴を正確に反映し、浮世絵の様式で明瞭に描いてください。`);
+        ukiyoeRefPhotos.forEach((r, i) => {
+          const label = [r.label, r.description].filter(Boolean).join(' - ');
+          if (label) ukiyoePrompt.push(`- 参照写真${i + 1}: ${label}`);
+        });
+      }
+      ukiyoePrompt.push('【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。ぼやけた描写は避け、細部まで丁寧に描いてください。');
+
       const promptText = ukiyoePrompt.filter(line => line !== '').join('\n');
-      const generatedDataUrl = await generateImageWithAI(promptText, charImg, animeCfg);
+      setStatus('浮世絵を生成中...');
+      const generatedDataUrl = await generateImageWithAI(promptText, ukiyoeRefs.map(r => r.dataUrl), animeCfg);
 
       if (generatedDataUrl) {
         const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'ukiyoe');
@@ -9020,7 +9219,7 @@ async function showAnimeModal() {
         if (btn) btn.textContent = `詳細4ページ生成中 (${page}/4)...`;
 
         const quarterContent = getDetail4PagesQuarterContent(trip, page);
-        const pagePrompt = [
+        const pagePromptParts = [
           `この旅行「${tripName}」の旅行記と写真・説明を元に、4ページのうち${page}ページ目を生成します。`,
           '4枚の画像で旅行全体をカバーするよう、各ページは旅の1/4の内容を担当します。',
           '',
@@ -9039,10 +9238,26 @@ async function showAnimeModal() {
           '',
           `【ページ${page}/4の内容 - 5コマで要約して順に説明】`,
           quarterContent.slice(0, 1100),
-          ''
-        ].join('\n');
+          '',
+          '【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。ぼやけた描写は避け、細部まで丁寧に描いてください。'
+        ];
 
-        const generatedDataUrl = await generateImageWithAI(pagePrompt, charImg, animeCfg);
+        // このページが担当する区間の写真を参照画像として添付する
+        const allPhotos = trip.photos || [];
+        const qSize = Math.ceil(allPhotos.length / 4);
+        const quarterPhotos = allPhotos.slice((page - 1) * qSize, (page - 1) * qSize + qSize);
+        const pageRefs = await buildAnimeReferenceImages(charImg, quarterPhotos, 3);
+        const pageRefPhotos = pageRefs.filter(r => r.kind === 'photo');
+        if (pageRefPhotos.length > 0) {
+          pagePromptParts.push('');
+          pagePromptParts.push(`【添付の参照写真（${pageRefPhotos.length}枚）】${charImg ? '2枚目以降' : '添付'}はこの区間で実際に撮影した写真です。写っている風景・建物の特徴を各コマの背景に反映し、実在の場所が伝わるように明瞭に描いてください。`);
+          pageRefPhotos.forEach((r, i) => {
+            const label = [r.label, r.description].filter(Boolean).join(' - ');
+            if (label) pagePromptParts.push(`- 参照写真${i + 1}: ${label}`);
+          });
+        }
+
+        const generatedDataUrl = await generateImageWithAI(pagePromptParts.join('\n'), pageRefs.map(r => r.dataUrl), animeCfg);
         if (generatedDataUrl) {
           const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'detail');
           generatedAnimesToAdd.push({
@@ -9158,22 +9373,34 @@ async function showAnimeModal() {
       }
     }
 
-    if (trip.travelogueHtml && trip.travelogueHtml.trim()) {
-      const sections = parseTravelogueSections(trip.travelogueHtml);
-      const summary = sections.map(s => s.text).join(' ').slice(0, 300);
-      if (summary) {
-        promptParts.push(`【旅行記サマリー】${summary}`);
-      }
+    const travelogueSummary = await getTravelogueTextForTrip(trip);
+    if (travelogueSummary) {
+      promptParts.push(`【旅行記サマリー】${travelogueSummary}`);
+    }
+
+    // 実際の旅行写真を参照画像として添付し、実在の風景・建物に基づいて描かせる
+    setStatus('参照写真を準備中...');
+    const refImages = await buildAnimeReferenceImages(charImg, photos);
+    const refPhotos = refImages.filter(r => r.kind === 'photo');
+    if (refPhotos.length > 0) {
+      promptParts.push('');
+      promptParts.push(`【添付の参照写真（${refPhotos.length}枚）】${charImg ? '2枚目以降' : '添付'}はこの旅で実際に撮影した風景写真です。写真に写っている建物・自然・風景の特徴を読み取り、それらを画風に合わせて描き起こしてください。実在の場所が伝わる、具体的で明瞭な描写にしてください。`);
+      refPhotos.forEach((r, i) => {
+        const label = [r.label, r.description].filter(Boolean).join(' - ');
+        if (label) promptParts.push(`- 参照写真${i + 1}: ${label}`);
+      });
     }
 
     promptParts.push('');
     promptParts.push(`この旅行の魅力が一目で伝わる、「${coverTitle}」というタイトルの魅力的な表紙画像を作成してください。`);
+    promptParts.push('【画質】輪郭がはっきりした高精細で綺麗な仕上がりにしてください。ぼやけた描写や不明瞭な要素は避け、細部まで丁寧に描いてください。');
     if (charImg) {
       promptParts.push('人物は完全にアニメキャラクターとして描き直し、表紙全体が統一されたアニメ作品の一部として自然に調和するように仕上げてください。実写的な要素は一切残さないでください。');
     }
 
     const prompt = promptParts.join('\n');
-    const generatedDataUrl = await generateImageWithAI(prompt, charImg, animeCfg);
+    setStatus('アニメ画像を生成中...');
+    const generatedDataUrl = await generateImageWithAI(prompt, refImages.map(r => r.dataUrl), animeCfg);
 
     if (generatedDataUrl) {
       try {
