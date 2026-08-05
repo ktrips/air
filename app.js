@@ -1,9 +1,62 @@
 /* Air — 地図と写真でエア旅行（Firebase + Firestore） */
 
-// Mapbox GL JS アクセストークン
-// config.jsで設定（window.MAPBOX_TOKEN）
-if (window.mapboxgl && window.MAPBOX_TOKEN) {
-  mapboxgl.accessToken = window.MAPBOX_TOKEN;
+// Mapbox GL JS（約330KB）は自動再生の3D地図でしか使わないため、
+// 初期表示をブロックしないよう必要になった時点で読み込む。
+const MAPBOX_GL_JS_URL = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js';
+const MAPBOX_GL_CSS_URL = 'https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css';
+let mapboxLoadPromise = null;
+
+/**
+ * Mapbox GL JS を動的に読み込む。
+ * 読み込み済み・トークン未設定・失敗のいずれでも解決し、成否を boolean で返す
+ * （3D地図が使えない場合も自動再生は2Dで継続させるため）。
+ */
+function loadMapboxGl() {
+  if (mapboxLoadPromise) return mapboxLoadPromise;
+
+  mapboxLoadPromise = new Promise((resolve) => {
+    if (window.mapboxgl) {
+      if (window.MAPBOX_TOKEN) mapboxgl.accessToken = window.MAPBOX_TOKEN;
+      resolve(true);
+      return;
+    }
+    if (!window.MAPBOX_TOKEN) {
+      console.warn('Mapbox アクセストークン未設定 - 3D地図の読み込みをスキップ');
+      resolve(false);
+      return;
+    }
+
+    if (!document.querySelector(`link[href="${MAPBOX_GL_CSS_URL}"]`)) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = MAPBOX_GL_CSS_URL;
+      link.crossOrigin = '';
+      document.head.appendChild(link);
+    }
+
+    const script = document.createElement('script');
+    script.src = MAPBOX_GL_JS_URL;
+    script.crossOrigin = '';
+    script.async = true;
+    script.onload = () => {
+      if (window.mapboxgl) {
+        mapboxgl.accessToken = window.MAPBOX_TOKEN;
+        resolve(true);
+      } else {
+        console.warn('Mapbox GL JS の読み込みに失敗 - 2D地図で続行');
+        resolve(false);
+      }
+    };
+    script.onerror = () => {
+      console.warn('Mapbox GL JS の読み込みに失敗 - 2D地図で続行');
+      // 再試行できるようキャッシュを破棄する
+      mapboxLoadPromise = null;
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+
+  return mapboxLoadPromise;
 }
 
 // 15色: ピンク〜シアンのレインボー順＋緑系（地図マーカー・ルート線の色分け用）
@@ -700,7 +753,12 @@ function switchMapLayer(layerKey) {
   console.log(`マップレイヤー切り替え: ${layerKey}`);
 }
 
-function initMap3d() {
+async function initMap3d() {
+  if (map3d) return;
+  // 3D地図が必要になった時点でMapbox GL JSを読み込む（失敗時は2Dで続行）
+  const mapboxReady = await loadMapboxGl();
+  if (!mapboxReady) return;
+
   return new Promise((resolve) => {
     if (map3d) {
       resolve();
