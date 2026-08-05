@@ -2378,12 +2378,8 @@ async function updateMapMarkers() {
 
   const tripsToShow = [];
   if (currentTrip?.isParent) {
-    // URLパラメータで親トリップのみ表示する場合は、子トリップを表示しない
-    if (tripFilterParentName) {
-      tripsToShow.push(currentTrip);
-    } else {
-      tripsToShow.push(...getChildTrips(currentTrip.id));
-    }
+    // 親トリップ選択時は常に子トリップのルート・写真を地図に表示する
+    tripsToShow.push(...getChildTrips(currentTrip.id));
   } else if (currentTrip) {
     tripsToShow.push(currentTrip);
   } else {
@@ -4870,11 +4866,8 @@ function getTripsForDisplay() {
       .sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0));
     if (r.isParent && children.length === 0 && !matchesRegion(r)) return; // 親のみで子がマッチしない場合は非表示
     result.push({ trip: r, isChild: false });
-    // URLパラメータで親トリップ自体を指定した場合のみ子トリップを一覧から隠す
-    // （子トリップを直接指定した場合は、兄弟の子トリップをメニューに表示する）
-    if (!tripFilterParentName || !currentTrip?.isParent) {
-      children.forEach(c => result.push({ trip: c, isChild: true }));
-    }
+    // 親トリップの下には常に子トリップをメニューに一覧表示する
+    children.forEach(c => result.push({ trip: c, isChild: true }));
   });
   return result;
 }
