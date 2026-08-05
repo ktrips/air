@@ -1133,19 +1133,25 @@ function initMapSearch() {
 
 const MAX_PHOTO_DIM = 1920;
 const PHOTO_JPEG_QUALITY = 0.85;
+// サムネイル: 地図マーカー(50px)・一覧(100px前後)向け。Retinaを考慮して320pxに縮小する
+const THUMB_PHOTO_DIM = 320;
+const THUMB_JPEG_QUALITY = 0.75;
+// 写真はパスにタイムスタンプを含み上書きされないため、長期キャッシュを許可する
+const PHOTO_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
-function compressImageToBlob(dataUrl) {
+/** dataUrl を指定の最大辺まで縮小した JPEG Blob を返す */
+function resizeImageToBlob(dataUrl, maxDim, quality) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       let w = img.width, h = img.height;
-      if (w > MAX_PHOTO_DIM || h > MAX_PHOTO_DIM) {
+      if (w > maxDim || h > maxDim) {
         if (w > h) {
-          h = Math.round(h * MAX_PHOTO_DIM / w);
-          w = MAX_PHOTO_DIM;
+          h = Math.round(h * maxDim / w);
+          w = maxDim;
         } else {
-          w = Math.round(w * MAX_PHOTO_DIM / h);
-          h = MAX_PHOTO_DIM;
+          w = Math.round(w * maxDim / h);
+          h = maxDim;
         }
       }
       const canvas = document.createElement('canvas');
@@ -1153,11 +1159,20 @@ function compressImageToBlob(dataUrl) {
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob((blob) => resolve(blob || new Blob()), 'image/jpeg', PHOTO_JPEG_QUALITY);
+      canvas.toBlob((blob) => resolve(blob || new Blob()), 'image/jpeg', quality);
     };
     img.onerror = () => resolve(new Blob());
     img.src = dataUrl;
   });
+}
+
+function compressImageToBlob(dataUrl) {
+  return resizeImageToBlob(dataUrl, MAX_PHOTO_DIM, PHOTO_JPEG_QUALITY);
+}
+
+/** 一覧・マーカー表示用のサムネイル Blob を生成する */
+function createThumbnailBlob(dataUrl) {
+  return resizeImageToBlob(dataUrl, THUMB_PHOTO_DIM, THUMB_JPEG_QUALITY);
 }
 
 async function uploadPhotoToStorage(tripId, photoIndex, blob) {
@@ -1166,7 +1181,7 @@ async function uploadPhotoToStorage(tripId, photoIndex, blob) {
   const ref = window.firebaseStorage.ref(path);
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await ref.put(blob, { contentType: 'image/jpeg' });
+      await ref.put(blob, { contentType: 'image/jpeg', cacheControl: PHOTO_CACHE_CONTROL });
       return await ref.getDownloadURL();
     } catch (e) {
       const isRetryable = e?.message?.includes('Failed to fetch') || e?.message?.includes('NetworkError');
@@ -1177,6 +1192,29 @@ async function uploadPhotoToStorage(tripId, photoIndex, blob) {
       }
     }
   }
+}
+
+/**
+ * サムネイルをStorageにアップロードしURLを返す。
+ * 失敗しても本体写真の登録は続行させたいため、エラー時は null を返す。
+ */
+async function uploadThumbnailToStorage(tripId, photoIndex, blob) {
+  if (!blob || blob.size === 0) return null;
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) return null;
+  try {
+    const path = `trips/${tripId}/thumbs/${photoIndex}_${Date.now()}.jpg`;
+    const ref = window.firebaseStorage.ref(path);
+    await ref.put(blob, { contentType: 'image/jpeg', cacheControl: PHOTO_CACHE_CONTROL });
+    return await ref.getDownloadURL();
+  } catch (e) {
+    console.warn('サムネイルのアップロードに失敗（本体写真で代替）:', e);
+    return null;
+  }
+}
+
+/** 表示用の画像URL: サムネイルがあればそれを、無ければ本体写真を返す */
+function getPhotoThumbUrl(p) {
+  return p?.thumbUrl || p?.url || '';
 }
 
 async function deletePhotoFromStorage(photoUrl) {
@@ -1193,11 +1231,14 @@ async function deleteAllTripFiles(trip) {
   if (!trip || !window.firebaseStorage) return;
   const deletePromises = [];
 
-  // 全ての写真を削除
+  // 全ての写真（本体・サムネイル）を削除
   if (trip.photos && Array.isArray(trip.photos)) {
     for (const photo of trip.photos) {
       if (photo.url) {
         deletePromises.push(deletePhotoFromStorage(photo.url));
+      }
+      if (photo.thumbUrl) {
+        deletePromises.push(deletePhotoFromStorage(photo.thumbUrl));
       }
     }
   }
@@ -1467,8 +1508,10 @@ async function loadPhotoWithExif(file) {
   if (!blob || blob.size === 0) {
     blob = new Blob([await file.arrayBuffer()], { type: file.type || 'image/jpeg' });
   }
+  const thumbBlob = await createThumbnailBlob(dataUrl);
   return {
     blob,
+    thumbBlob,
     mime: 'image/jpeg',
     lat,
     lng,
@@ -1618,8 +1661,10 @@ async function handleFiles(files, options = {}) {
         }
         const idx = currentTrip.photos.length;
         const url = await uploadPhotoToStorage(currentTrip.id, idx, photoData.blob);
+        const thumbUrl = await uploadThumbnailToStorage(currentTrip.id, idx, photoData.thumbBlob);
         const photo = {
           url,
+          thumbUrl,
           mime: photoData.mime,
           lat,
           lng,
@@ -1747,7 +1792,7 @@ function updateTripMenuThumbnail() {
   container.innerHTML = photos
     .map((photo, idx) => `
       <div class="trip-menu-thumbnail-item" draggable="true" data-index="${idx}">
-        <img src="${escapeHtml(photo.url)}" alt="写真${idx + 1}" title="${escapeHtml(photo.name || photo.placeName || '写真')}">
+        <img src="${escapeHtml(getPhotoThumbUrl(photo))}" alt="写真${idx + 1}" loading="lazy" decoding="async" title="${escapeHtml(photo.name || photo.placeName || '写真')}">
         <button type="button" class="trip-menu-thumbnail-delete" title="削除">✕</button>
       </div>
     `)
@@ -2241,15 +2286,16 @@ function renderThumbnails() {
         };
       }
       if (p.url) {
-        // 写真がある場合（遅延読み込み対応）
+        // 写真がある場合（遅延読み込み対応 / 一覧はサムネイルを使用）
         const img = document.createElement('img');
+        const thumbSrc = getPhotoThumbUrl(p);
         if (imageObserver && i > 5) {
           // パフォーマンス最適化: 最初の6枚以降は遅延読み込み
-          img.dataset.src = p.url;
+          img.dataset.src = thumbSrc;
           img.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3C/svg%3E';
           imageObserver.observe(img);
         } else {
-          img.src = p.url;
+          img.src = thumbSrc;
         }
         img.alt = p.name;
         img.onclick = () => showPhotoAtIndex(i);
@@ -2356,13 +2402,40 @@ function getTripsWithGpsForOverview() {
  */
 function flushVisiblePhotoMarkers() {
   if (!map || pendingPhotoMarkers.length === 0) return;
+
+  /** 判定できない場合は取りこぼしを防ぐため全て表示する（表示漏れよりは描画コストを取る） */
+  const addAllPending = () => {
+    for (const item of pendingPhotoMarkers) {
+      item.marker.addTo(map);
+      markers.push(item.marker);
+    }
+    pendingPhotoMarkers = [];
+  };
+
   let bounds;
   try {
+    // 地図がまだレイアウトされていない場合、getBoundsは1点に縮退し
+    // どのマーカーも範囲外と判定されて永久に表示されなくなる。
+    // getSize()はキャッシュを返すことがあるためDOMの実寸で判定する。
+    const el = map.getContainer();
+    if (!el || el.clientWidth === 0 || el.clientHeight === 0) {
+      addAllPending();
+      return;
+    }
     // 画面外に少し余裕を持たせ、スクロール直後に空白が見えないようにする
     bounds = map.getBounds().pad(0.5);
+    // 縮退した境界（幅または高さが0）も範囲判定に使えないため全て表示する
+    if (!bounds || !bounds.isValid() ||
+        bounds.getEast() === bounds.getWest() ||
+        bounds.getNorth() === bounds.getSouth()) {
+      addAllPending();
+      return;
+    }
   } catch (_) {
+    addAllPending();
     return;
   }
+
   const stillPending = [];
   for (const item of pendingPhotoMarkers) {
     if (bounds.contains(item.latLng)) {
@@ -2375,11 +2448,12 @@ function flushVisiblePhotoMarkers() {
   pendingPhotoMarkers = stillPending;
 }
 
-/** 地図の移動・ズーム時に、表示範囲に入った写真マーカーを読み込む（初回のみ購読） */
+/** 地図の移動・ズーム・リサイズ時に、表示範囲に入った写真マーカーを読み込む（初回のみ購読） */
 function bindPhotoMarkerLazyLoading() {
   if (photoMarkerLazyBound || !map) return;
   photoMarkerLazyBound = true;
-  map.on('moveend zoomend', flushVisiblePhotoMarkers);
+  // resizeも購読する: 地図が後からサイズを得た場合に保留分を取りこぼさないため
+  map.on('moveend zoomend resize', flushVisiblePhotoMarkers);
 }
 
 async function updateMapMarkers() {
@@ -2524,7 +2598,7 @@ async function updateMapMarkers() {
             // モバイルで親トリップ表示時は小さく
             photoIconHtml = `
               <div style="position:relative;width:35px;height:35px;">
-                <img src="${p.url}" loading="lazy" decoding="async" style="width:35px;height:35px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+                <img src="${getPhotoThumbUrl(p)}" decoding="async" style="width:35px;height:35px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
                 <span style="position:absolute;top:0;left:0;background:${color};color:#fff;font-weight:bold;font-size:9px;padding:1px 3px;border-radius:2px 0 3px 0;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${no}</span>
               </div>
             `;
@@ -2533,7 +2607,7 @@ async function updateMapMarkers() {
           } else {
             photoIconHtml = `
               <div style="position:relative;width:50px;height:50px;">
-                <img src="${p.url}" loading="lazy" decoding="async" style="width:50px;height:50px;border-radius:6px;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
+                <img src="${getPhotoThumbUrl(p)}" decoding="async" style="width:50px;height:50px;border-radius:6px;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
                 <span style="position:absolute;top:0;left:0;background:${color};color:#fff;font-weight:bold;font-size:11px;padding:2px 5px;border-radius:3px 0 4px 0;box-shadow:0 2px 4px rgba(0,0,0,0.4);">${no}</span>
               </div>
             `;
@@ -2552,7 +2626,7 @@ async function updateMapMarkers() {
             if (isParentMobileView) {
               photoIconHtml = `
                 <div style="position:relative;width:40px;height:40px;">
-                  <img src="${videoThumbUrl}" loading="lazy" decoding="async" style="width:40px;height:40px;border-radius:5px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+                  <img src="${videoThumbUrl}" decoding="async" style="width:40px;height:40px;border-radius:5px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
                   <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);border-radius:5px;">
                     <div style="background:rgba(255,255,255,0.9);width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;padding-left:2px;">▶</div>
                   </div>
@@ -2563,7 +2637,7 @@ async function updateMapMarkers() {
             } else {
               photoIconHtml = `
                 <div style="position:relative;width:56px;height:56px;">
-                  <img src="${videoThumbUrl}" loading="lazy" decoding="async" style="width:56px;height:56px;border-radius:7px;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
+                  <img src="${videoThumbUrl}" decoding="async" style="width:56px;height:56px;border-radius:7px;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
                   <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);border-radius:7px;">
                     <div style="background:rgba(255,255,255,0.9);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;padding-left:2px;">▶</div>
                   </div>
@@ -3528,12 +3602,14 @@ function showPhotoPopupEditMode(lat, lng) {
 
       // 古い写真をStorageから削除（ただし、他のポイントが同じURLを使っている場合は削除しない）
       const oldPhotoUrl = photos[idx].url;
+      const oldThumbUrl = photos[idx].thumbUrl;
       if (oldPhotoUrl) {
         // 同じURLを持つ他のポイントがあるかチェック
         const otherPhotosWithSameUrl = photos.filter((p, i) => i !== idx && p.url === oldPhotoUrl);
         if (otherPhotosWithSameUrl.length === 0) {
           // 他に使っているポイントがない場合のみStorageから削除
           await deletePhotoFromStorage(oldPhotoUrl);
+          if (oldThumbUrl) await deletePhotoFromStorage(oldThumbUrl);
         } else {
           console.log('他のポイントが同じ写真を使用しているため、Storageから削除しません:', oldPhotoUrl);
         }
@@ -3541,9 +3617,11 @@ function showPhotoPopupEditMode(lat, lng) {
 
       // Storageにアップロード
       const url = await uploadPhotoToStorage(currentTrip.id, idx, photoData.blob);
+      const thumbUrl = await uploadThumbnailToStorage(currentTrip.id, idx, photoData.thumbBlob);
 
       // 写真データを更新（GPS位置は元のまま維持）
       photos[idx].url = url;
+      photos[idx].thumbUrl = thumbUrl;
       photos[idx].mime = photoData.mime;
       photos[idx].lat = originalLat;
       photos[idx].lng = originalLng;
@@ -7306,7 +7384,7 @@ async function initTravelogueMap(trip) {
         const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         markerHtml = `
           <div style="position:relative;width:40px;height:40px;">
-            <img src="${p.url}" loading="lazy" decoding="async" style="width:40px;height:40px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+            <img src="${getPhotoThumbUrl(p)}" decoding="async" style="width:40px;height:40px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
             <span style="position:absolute;top:-2px;left:-2px;background:${color};color:#fff;font-weight:bold;font-size:10px;padding:2px 4px;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${no}</span>
           </div>
         `;
@@ -7706,7 +7784,7 @@ async function showTravelogueModal(trip) {
             const landmarkNo = escapeHtml(p.landmarkNo || '');
             const pointName = escapeHtml(p.name || '');
             const imgHtml = stamped
-              ? `<img src="${escapeHtml(p.url)}" alt="${pointName}" class="stamp-card-img" loading="lazy">`
+              ? `<img src="${escapeHtml(getPhotoThumbUrl(p))}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
               : '<div class="stamp-card-empty">?</div>';
             return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-trip-id="${escapeHtml(p._tripId)}" data-photo-index="${p._photoIndex}">
               <div class="stamp-card-inner">
@@ -8057,7 +8135,7 @@ async function switchMobileTab(tab, tripToShow) {
                 const landmarkNo = escapeHtml(p.landmarkNo || '');
                 const pointName = escapeHtml(p.name || '');
                 const imgHtml = stamped
-                  ? `<img src="${escapeHtml(p.url)}" alt="${pointName}" class="stamp-card-img" loading="lazy">`
+                  ? `<img src="${escapeHtml(getPhotoThumbUrl(p))}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
                   : '<div class="stamp-card-empty">?</div>';
                 return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-trip-id="${escapeHtml(p._tripId)}" data-photo-index="${p._photoIndex}">
                   <div class="stamp-card-inner">
@@ -8167,7 +8245,7 @@ function showStampRallyModal(trip) {
       const landmarkNo = escapeHtml(p.landmarkNo || '');
       const pointName = escapeHtml(p.name || '');
       const imgHtml = stamped
-        ? `<img src="${escapeHtml(p.url)}" alt="${pointName}" class="stamp-card-img" loading="lazy">`
+        ? `<img src="${escapeHtml(getPhotoThumbUrl(p))}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
         : '<div class="stamp-card-empty">?</div>';
       return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-trip-id="${p._tripId}" data-photo-index="${p._photoIndex}">
         <div class="stamp-card-inner">
