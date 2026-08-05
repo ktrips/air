@@ -3415,6 +3415,13 @@ function showPhotoPopupEditMode(lat, lng) {
     landmarkNoWrap.style.display = landmarkCheck.checked ? 'flex' : 'none';
     if (!landmarkCheck.checked) {
       landmarkNoInput.value = '';
+    } else if (!landmarkNoInput.value.trim()) {
+      // 番号未入力のままチェックした場合は次の番号を自動採番（地図に番号が出ない不具合を防止）
+      const nums = photos
+        .map(ph => parseInt(ph.landmarkNo, 10))
+        .filter(n => !isNaN(n));
+      const nextNo = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+      landmarkNoInput.value = String(nextNo);
     }
   };
   landmarkNoWrap.style.display = landmarkCheck.checked ? 'flex' : 'none';
@@ -6731,6 +6738,7 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
 【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
+  const provider = cfg.provider || 'gemini';
   const TRAVELOGUE_MODELS = {
     gemini: 'gemini-2.5-flash',
     openai: 'gpt-4o-mini',
@@ -6746,7 +6754,6 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     // progressInterval = setInterval(...) は削除
 
     let content = '';
-    const provider = cfg.provider || 'gemini';
 
     // 写真が非常に多い場合のみ警告（閾値を50枚に引き上げ）
     const photoCount = photos.length;
