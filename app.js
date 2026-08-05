@@ -5014,8 +5014,7 @@ function renderTripList() {
       if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
       const photos = t.isParent ? [] : (t.photos || []);
       const children = t.isParent ? getChildTrips(t.id) : [];
-      if (t.isParent && children.length > 0) {
-      }
+      const siblings = (!t.isParent && t.parentId) ? getChildTrips(t.parentId).filter(s => s.id !== t.id) : [];
       let html = '';
       if (t.description) {
         html += `<p class="trip-detail-desc">`;
@@ -5047,6 +5046,13 @@ function renderTripList() {
       if (children.length > 0) {
         html += '<p class="trip-detail-children"><strong>子トリップ:</strong> ';
         html += children.map((c, idx) => {
+          return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
+        }).join('、');
+        html += '</p>';
+      }
+      if (siblings.length > 0) {
+        html += '<p class="trip-detail-children"><strong>同じ旅の他のトリップ:</strong> ';
+        html += siblings.map((c) => {
           return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
         }).join('、');
         html += '</p>';
