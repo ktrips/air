@@ -4870,8 +4870,9 @@ function getTripsForDisplay() {
       .sort((a, b) => (orderIdx.get(a.id) ?? 0) - (orderIdx.get(b.id) ?? 0));
     if (r.isParent && children.length === 0 && !matchesRegion(r)) return; // 親のみで子がマッチしない場合は非表示
     result.push({ trip: r, isChild: false });
-    // URLパラメータで親トリップ指定時は子トリップを表示しない
-    if (!tripFilterParentName) {
+    // URLパラメータで親トリップ自体を指定した場合のみ子トリップを一覧から隠す
+    // （子トリップを直接指定した場合は、兄弟の子トリップをメニューに表示する）
+    if (!tripFilterParentName || !currentTrip?.isParent) {
       children.forEach(c => result.push({ trip: c, isChild: true }));
     }
   });
@@ -4995,7 +4996,6 @@ function renderTripList() {
       dragHandle.className = 'trip-item-drag-handle';
       dragHandle.title = 'ドラッグで順番変更・親にドロップで子に';
       dragHandle.textContent = '⋮⋮';
-      dragHandle.draggable = false;
       const delBtn = document.createElement('button');
       delBtn.textContent = '×';
       delBtn.className = 'delete-btn';
