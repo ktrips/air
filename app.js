@@ -17,6 +17,9 @@ let currentPhotoIndex = 0;
 let markers = [];
 let gpxLayers = [];
 let tripLeaderLayers = [];
+// 写真マーカーの遅延読み込み用: 画面外のマーカーは地図に追加せず保留しておく
+let pendingPhotoMarkers = [];
+let photoMarkerLazyBound = false;
 let playbackPulseMarker = null; // 自動再生中の現在ポイントパルスマーカー
 let playTimer = null;
 let playIntervalMs = 5000;
@@ -2347,6 +2350,38 @@ function getTripsWithGpsForOverview() {
   return result.filter(t => t.gpxData || t.gpxDataUrl || ((t.photos || []).some(p => p.lat != null && p.lng != null)));
 }
 
+/**
+ * 保留中の写真マーカーのうち、現在の表示範囲（少し余裕を持たせた範囲）に入ったものだけを地図に追加する。
+ * 画面外のマーカーはDOM生成も画像読み込みも行わないため、写真が多いトリップでの初期表示が軽くなる。
+ */
+function flushVisiblePhotoMarkers() {
+  if (!map || pendingPhotoMarkers.length === 0) return;
+  let bounds;
+  try {
+    // 画面外に少し余裕を持たせ、スクロール直後に空白が見えないようにする
+    bounds = map.getBounds().pad(0.5);
+  } catch (_) {
+    return;
+  }
+  const stillPending = [];
+  for (const item of pendingPhotoMarkers) {
+    if (bounds.contains(item.latLng)) {
+      item.marker.addTo(map);
+      markers.push(item.marker);
+    } else {
+      stillPending.push(item);
+    }
+  }
+  pendingPhotoMarkers = stillPending;
+}
+
+/** 地図の移動・ズーム時に、表示範囲に入った写真マーカーを読み込む（初回のみ購読） */
+function bindPhotoMarkerLazyLoading() {
+  if (photoMarkerLazyBound || !map) return;
+  photoMarkerLazyBound = true;
+  map.on('moveend zoomend', flushVisiblePhotoMarkers);
+}
+
 async function updateMapMarkers() {
   if (!map) {
     console.warn('地図が初期化されていません');
@@ -2362,6 +2397,8 @@ async function updateMapMarkers() {
     console.warn('マーカー削除エラー:', e);
   }
   markers = [];
+  // 前回の未表示マーカーは破棄（地図未追加のためremoveLayerは不要）
+  pendingPhotoMarkers = [];
 
   try {
     gpxLayers.forEach(l => map.removeLayer(l));
@@ -2487,7 +2524,7 @@ async function updateMapMarkers() {
             // モバイルで親トリップ表示時は小さく
             photoIconHtml = `
               <div style="position:relative;width:35px;height:35px;">
-                <img src="${p.url}" style="width:35px;height:35px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+                <img src="${p.url}" loading="lazy" decoding="async" style="width:35px;height:35px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
                 <span style="position:absolute;top:0;left:0;background:${color};color:#fff;font-weight:bold;font-size:9px;padding:1px 3px;border-radius:2px 0 3px 0;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${no}</span>
               </div>
             `;
@@ -2496,7 +2533,7 @@ async function updateMapMarkers() {
           } else {
             photoIconHtml = `
               <div style="position:relative;width:50px;height:50px;">
-                <img src="${p.url}" style="width:50px;height:50px;border-radius:6px;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
+                <img src="${p.url}" loading="lazy" decoding="async" style="width:50px;height:50px;border-radius:6px;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
                 <span style="position:absolute;top:0;left:0;background:${color};color:#fff;font-weight:bold;font-size:11px;padding:2px 5px;border-radius:3px 0 4px 0;box-shadow:0 2px 4px rgba(0,0,0,0.4);">${no}</span>
               </div>
             `;
@@ -2515,7 +2552,7 @@ async function updateMapMarkers() {
             if (isParentMobileView) {
               photoIconHtml = `
                 <div style="position:relative;width:40px;height:40px;">
-                  <img src="${videoThumbUrl}" style="width:40px;height:40px;border-radius:5px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+                  <img src="${videoThumbUrl}" loading="lazy" decoding="async" style="width:40px;height:40px;border-radius:5px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
                   <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);border-radius:5px;">
                     <div style="background:rgba(255,255,255,0.9);width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;padding-left:2px;">▶</div>
                   </div>
@@ -2526,7 +2563,7 @@ async function updateMapMarkers() {
             } else {
               photoIconHtml = `
                 <div style="position:relative;width:56px;height:56px;">
-                  <img src="${videoThumbUrl}" style="width:56px;height:56px;border-radius:7px;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
+                  <img src="${videoThumbUrl}" loading="lazy" decoding="async" style="width:56px;height:56px;border-radius:7px;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5);object-fit:cover;display:block;" />
                   <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);border-radius:7px;">
                     <div style="background:rgba(255,255,255,0.9);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;padding-left:2px;">▶</div>
                   </div>
@@ -2609,17 +2646,19 @@ async function updateMapMarkers() {
       }
     });
 
-      // 通常マーカーを先に地図に追加（背面）
+      // 遅延読み込み: 地図への追加は表示範囲に入ってから行う（flushVisiblePhotoMarkers）
+      // 追加順に依存せず重なり順を保つため、zIndexOffsetで階層を明示する
+      // 通常マーカーは背面
       normalMarkers.forEach(({ marker, latLng }) => {
-        marker.addTo(map);
-        markers.push(marker);
+        marker.setZIndexOffset(0);
+        pendingPhotoMarkers.push({ marker, latLng });
         allLatLngs.push(latLng);
       });
 
-      // ランドマーク/スタンプマーカーを後で地図に追加（最前面）
+      // ランドマーク/スタンプマーカーは最前面
       landmarkMarkers.forEach(({ marker, latLng }) => {
-        marker.addTo(map);
-        markers.push(marker);
+        marker.setZIndexOffset(1000);
+        pendingPhotoMarkers.push({ marker, latLng });
         allLatLngs.push(latLng);
       });
 
@@ -2743,6 +2782,10 @@ async function updateMapMarkers() {
       map.fitBounds(allLatLngs, { padding: [60, 60] });
     }
   }
+
+  // 写真マーカーの遅延読み込み: 表示範囲内の分を描画し、以降は移動・ズームに追従させる
+  bindPhotoMarkerLazyLoading();
+  flushVisiblePhotoMarkers();
 
   // 自動再生中のパルスマーカーを更新
   updatePlaybackPulseMarker();
@@ -7263,7 +7306,7 @@ async function initTravelogueMap(trip) {
         const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         markerHtml = `
           <div style="position:relative;width:40px;height:40px;">
-            <img src="${p.url}" style="width:40px;height:40px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+            <img src="${p.url}" loading="lazy" decoding="async" style="width:40px;height:40px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
             <span style="position:absolute;top:-2px;left:-2px;background:${color};color:#fff;font-weight:bold;font-size:10px;padding:2px 4px;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${no}</span>
           </div>
         `;
