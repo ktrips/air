@@ -4939,6 +4939,8 @@ function renderTripList() {
     list.innerHTML = '<p class="trip-list-empty">' + (window.firebaseAuth?.currentUser ? 'トリップがありません' : '公開トリップがありません') + '</p>';
     return;
   }
+  // 同じ親を持つ子トリップは1つの横並び（フレックス）行にまとめて表示する
+  let childrenWrapper = null;
   displayItems.forEach(({ trip: t, isChild }) => {
     const isSelected = currentTrip?.id === t.id;
     const row = document.createElement('div');
@@ -5006,7 +5008,17 @@ function renderTripList() {
     }
     row.appendChild(label);
     row.appendChild(actions);
-    list.appendChild(row);
+    if (isChild) {
+      if (!childrenWrapper) {
+        childrenWrapper = document.createElement('div');
+        childrenWrapper.className = 'trip-item-children-row';
+        list.appendChild(childrenWrapper);
+      }
+      childrenWrapper.appendChild(row);
+    } else {
+      childrenWrapper = null;
+      list.appendChild(row);
+    }
     // モバイルでは詳細を展開しない
     if (isSelected && !isMobileView()) {
       const detail = document.createElement('div');
@@ -5014,7 +5026,6 @@ function renderTripList() {
       if (t.color) detail.style.setProperty('--trip-selected-color', t.color);
       const photos = t.isParent ? [] : (t.photos || []);
       const children = t.isParent ? getChildTrips(t.id) : [];
-      const siblings = (!t.isParent && t.parentId) ? getChildTrips(t.parentId).filter(s => s.id !== t.id) : [];
       let html = '';
       if (t.description) {
         html += `<p class="trip-detail-desc">`;
@@ -5046,13 +5057,6 @@ function renderTripList() {
       if (children.length > 0) {
         html += '<p class="trip-detail-children"><strong>子トリップ:</strong> ';
         html += children.map((c, idx) => {
-          return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
-        }).join('、');
-        html += '</p>';
-      }
-      if (siblings.length > 0) {
-        html += '<p class="trip-detail-children"><strong>同じ旅の他のトリップ:</strong> ';
-        html += siblings.map((c) => {
           return `<a href="#" class="child-trip-link" data-trip-id="${escapeHtml(c.id)}" style="color:var(--trip-selected-color,#007bff);text-decoration:underline;cursor:pointer;">${escapeHtml(c.name || c.id)}</a>`;
         }).join('、');
         html += '</p>';

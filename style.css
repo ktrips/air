@@ -1518,6 +1518,59 @@ body.editor .trip-item-row[draggable="true"]:active {
   margin-right: 0.25rem;
 }
 
+/* 同じ親を持つ子トリップを横並び（チップ状）に表示する行 */
+.trip-item-children-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.15rem 0.5rem 0.5rem 1.25rem;
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  gap: 0.15rem;
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child.trip-item-selected {
+  background: color-mix(in srgb, var(--trip-selected-color, #e1306c) 15%, transparent);
+  border-color: var(--trip-selected-color, #e1306c);
+  border-left: 1px solid var(--trip-selected-color, #e1306c);
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child .trip-item-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 6rem;
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child .trip-item-label::before {
+  content: '';
+  margin-right: 0;
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child .trip-item-actions button {
+  width: 20px;
+  height: 20px;
+  font-size: 0.75rem;
+}
+
+.trip-item-children-row .trip-item-row.trip-item-child .trip-item-drag-handle {
+  font-size: 0.75rem;
+  padding: 0 2px;
+}
+
 .trip-list-empty {
   color: var(--text-muted);
   font-size: 0.9rem;
