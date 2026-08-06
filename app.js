@@ -442,6 +442,99 @@ async function buildAnimeReferenceImages(charImg, photos, limit = ANIME_REF_PHOT
   return refs;
 }
 
+// 浮世絵風生成のスタイル参照画像（パブリックドメインの実作品）。
+// 文章だけで「北斎風」「広重風」と指示するより、実物を見せた方が画風の再現度が上がる。
+const UKIYOE_STYLE_REFERENCE_IMAGES = {
+  hiroshige: 'assets/ukiyoe/hiroshige.jpg', // 歌川広重「東海道五十三次」
+  hokusai: 'assets/ukiyoe/hokusai.jpg'      // 葛飾北斎「冨嶽三十六景」
+};
+const ukiyoeStyleRefCache = new Map();
+
+/** 浮世絵スタイル参照画像を取得（同一セッション内はキャッシュして再フェッチしない） */
+async function getUkiyoeStyleReferenceImage(ukiyoeStyle) {
+  const path = UKIYOE_STYLE_REFERENCE_IMAGES[ukiyoeStyle];
+  if (!path) return null;
+  if (ukiyoeStyleRefCache.has(path)) return ukiyoeStyleRefCache.get(path);
+  const dataUrl = await fetchImageAsResizedDataUrl(path, 1024);
+  if (dataUrl) ukiyoeStyleRefCache.set(path, dataUrl);
+  return dataUrl;
+}
+
+/**
+ * 旅行記・写真の生情報から、絵に描くべき情景を短く要約した「情景ブリーフ」を作る。
+ * 長大な箇条書きプロンプトに全情報を詰め込むより、要点を絞った短い核があった方が
+ * 画像生成モデルの指示追従性が高いため、生成前にテキストモデルで一度要約させる。
+ * 失敗した場合は呼び出し側で元のテキストを使えるよう null を返す。
+ */
+async function buildSceneBrief(rawText, cfg, maxChars = 120) {
+  const trimmed = (rawText || '').trim();
+  if (!trimmed) return null;
+  const prompt = [
+    `以下の旅の記録から、絵画にするための情景を${maxChars}字以内の日本語で簡潔に要約してください。`,
+    '場所の様子・そこで何をしたか・季節や時間帯・印象的なものを優先し、余計な前置きや見出しは付けず要約文のみを出力してください。',
+    '',
+    trimmed.slice(0, 2000)
+  ].join('\n');
+  const text = await generateShortTextWithAI(prompt, cfg);
+  return text ? text.trim().slice(0, maxChars * 2) : null;
+}
+
+/** 短いテキストを生成する軽量ヘルパー（情景ブリーフ用。画像生成とは別の軽量テキストモデルを使う） */
+async function generateShortTextWithAI(prompt, cfg) {
+  if (!cfg?.apiKey?.trim()) return null;
+  const provider = cfg.provider || 'gemini';
+  try {
+    if (provider === 'gemini') {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.4, maxOutputTokens: 200 }
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      return (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
+    }
+    if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.4,
+          max_tokens: 200
+        })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+      return data.choices?.[0]?.message?.content || '';
+    }
+    return null;
+  } catch (err) {
+    console.warn('情景ブリーフの生成に失敗（元テキストで続行）:', err);
+    return null;
+  }
+}
+
+/**
+ * 生成した画像をStorageに保存し、トリップに追加してリストを更新する。
+ * 保存後は新しい画像をビューアで開いてその場でプレビューできるようにする
+ * （気に入らなければ入力欄の内容はそのままなので、同じ設定でもう一度生成ボタンを押すだけで良い）。
+ */
+async function finalizeGeneratedAnime(trip, generatedDataUrl, animeData, filePrefix) {
+  const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, filePrefix);
+  const entry = { url: storageUrl, timestamp: Date.now(), ...animeData };
+  if (!trip.generatedAnimes) trip.generatedAnimes = [];
+  trip.generatedAnimes.push(entry);
+  await saveTrip({ silent: true });
+  renderGeneratedAnimesList();
+  showAnimeImageViewer([entry], trip.name || '');
+  return entry;
+}
+
 let addingGpsPointMode = false; // GPSポイント追加モード
 
 // トリップ所在フィルタ: 'all' | 'japan' | 'global'（URLパラメータ ?region=japan または ?region=global で指定可能）
@@ -8967,17 +9060,10 @@ async function showAnimeModal() {
 
       const generatedDataUrl = await generateImageWithAI(eventPromptParts.join('\n'), eventRefs.map(r => r.dataUrl), animeCfg);
       if (generatedDataUrl) {
-        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'event');
-        const animeData = {
-          url: storageUrl,
-          timestamp: Date.now(),
+        await finalizeGeneratedAnime(currentTrip, generatedDataUrl, {
           style: 'event-story',
           eventText: eventText
-        };
-        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
-        currentTrip.generatedAnimes.push(animeData);
-        await saveTrip({ silent: true });
-        renderGeneratedAnimesList();
+        }, 'event');
         setStatus('出来事の5コマアニメを生成しました');
         // 入力欄をクリア
         if (eventStoryInput) eventStoryInput.value = '';
@@ -9082,148 +9168,81 @@ async function showAnimeModal() {
       setStatus('浮世絵風の絵画を生成中...');
       if (btn) btn.textContent = '浮世絵生成中...';
 
-      // キャラクター画像を取得
+      // キャラクター画像と、実物の北斎・広重作品（スタイル参照）を取得。
+      // 文章だけで「北斎風」と指示するより、実物を見せた方が画風の再現度が上がる。
       const charImg = await getCharacterImageForGeneration();
+      const styleRefDataUrl = await getUkiyoeStyleReferenceImage(ukiyoeStyle);
+
+      // 情景ブリーフ: 生の情報を全てプロンプトに詰め込む代わりに、
+      // 何を描くべきかをテキストモデルで一度短く要約させ、それを核にする。
+      // 長い箇条書きの羅列より、要点を絞った短い指示の方が画像生成モデルの追従性が高い。
+      setStatus('情景を要約中...');
+      const briefSource = [
+        tripBackground,
+        photoInfo.places.length > 0 ? `訪問場所: ${photoInfo.places.join('、')}` : '',
+        photoInfo.landmarks.length > 0 ? `名所: ${photoInfo.landmarks.join('、')}` : '',
+        photoInfo.descriptions.join('。'),
+        travelogueContext
+      ].filter(Boolean).join('\n');
+      const sceneBrief = (await buildSceneBrief(briefSource, animeCfg)) || meishoText;
+
+      // 参照写真: 名所に関連する写真を優先し、見つからなければ旅全体から補う
+      setStatus('参照画像を準備中...');
+      const photosForRef = relatedPhotos.length > 0 ? relatedPhotos : photos;
+      const contentRefs = await buildAnimeReferenceImages(charImg, photosForRef, 3);
+      const ukiyoeRefs = styleRefDataUrl
+        ? [{ dataUrl: styleRefDataUrl, kind: 'style' }, ...contentRefs]
+        : contentRefs;
+
+      // 添付した参照画像を番号付きで説明する（画像の意味をモデルに正しく伝えるため）
+      let refIdx = 0;
+      const refExplain = [];
+      if (styleRefDataUrl) {
+        refIdx++;
+        refExplain.push(`- 参照画像${refIdx}: ${ukiyoeArtistName}の実際の代表作です。人物や構図をそのまま描き写すのではなく、筆致・色彩・空気感などの画風の手本として使ってください。`);
+      }
+      if (charImg) {
+        refIdx++;
+        refExplain.push(`- 参照画像${refIdx}: 旅の主人公です。浮世絵の中の小さな旅人として描いてください（画面の10-15%程度）。`);
+      }
+      const photoRefCount = ukiyoeRefs.filter(r => r.kind === 'photo').length;
+      if (photoRefCount > 0) {
+        const startIdx = refIdx + 1;
+        refIdx += photoRefCount;
+        refExplain.push(`- 参照画像${startIdx}${photoRefCount > 1 ? `〜${refIdx}` : ''}: この名所で実際に撮影した写真です。建物の形・屋根・門・自然の様子など写真から読み取れる特徴を正確に反映してください。`);
+      }
 
       const ukiyoePrompt = [
-        `${ukiyoeArtistName}風の日本画で、以下の名所での旅の体験を余すことなく表現した、趣ある且つ楽しそうな浮世絵風の絵画を1枚生成してください。`,
+        `${ukiyoeArtistName}風の浮世絵を1枚生成してください。`,
         '',
-        '【重要】画像内のすべての文字・タイトル・説明は必ず日本語のみで記述してください。英語は一切使用しないでください。',
+        '【絶対条件（最優先で守る）】',
+        '1. 添付の参照画像の画風・筆致・色彩を忠実に再現する（下記の参照画像の説明を参照）。',
+        '2. 名所の建物・風景を画面の主役として大きく描く（画面の80-85%）。人物は10-15%程度に小さく、写実的にはせずソフトなタッチで。',
+        '3. 画像内の文字は全て日本語のみ。英語は一切使用しない。',
         '',
-        `【作風】${ukiyoeArtistName}の作風を踏襲した日本画。`,
-        ukiyoeStyle === 'hiroshige'
-          ? '- 歌川広重風: 柔らかな色彩、穏やかな構図、叙情的な風景、旅情を感じさせる雰囲気。名所建築を主役に、小さな人物を配置した情景。'
-          : '- 葛飾北斎風: 大胆な構図、鮮やかな色使い、躍動感のある表現、ダイナミックな自然描写。雄大な名所を主役に、人物は小さく。',
+        '【この絵で描く情景】',
+        sceneBrief,
         '',
-        '【構図の重要指示】',
-        '- メインの主役はお寺・神社・名所の建物や風景（画面の大部分を占める）',
-        '- 人物（メインキャラクターや旅人）は小さく描く（画面全体の10-15%程度）',
-        '- 浮世絵の伝統的な構図：雄大な名所を背景に、小さな旅人が点在する',
-        '- 名所の壮大さや美しさが一目で伝わる構図を優先',
+        seriesName ? `【シリーズ名】画像内に「${seriesName}」という作品シリーズ名を配置` : '',
+        photoInfo.stampRally.length > 0 ? `【札所】${photoInfo.stampRally.slice(0, 5).join('、')}（御朱印や札所の雰囲気を反映）` : '',
         '',
-        '【表現の自由度】',
-        '- 基本は浮世絵様式で統一するが、写真から得られた要素（建物、風景、物品など）は写実的な描写を部分的に混ぜてもOK',
-        '- 浮世絵の伝統的な平面性と、写真の立体感や質感を融合した現代的な浮世絵表現も可',
-        '- 全体の調和を保ちながら、写真の持つリアリティを活かして名所の魅力をより豊かに表現',
-        '- ただし、人物表現は写実的にせず、ソフトで優しいタッチで描く',
+        '【参照画像について】',
+        ...refExplain,
         '',
-        '【必須要素】',
-        '- 趣があり、且つ楽しそうな雰囲気',
-        '- 浮世絵特有の装飾的な表現と構図',
-        '- 日本の伝統的な色彩（藍色、朱色、金色など）を基調としつつ、写真の色彩も活用',
-        '- 名所の風景と建物の特徴（写真の写実的要素を適度に取り入れる）',
-        '- 旅人（巡礼者・参拝者など）の姿や表情',
-        '- 御朱印帳や札所の雰囲気',
-        '- 土産物や名物の描写',
-        '- 旅の体験や出来事を象徴する要素',
-        seriesName ? `- 画像内に「${seriesName}」という作品シリーズ名を配置` : '',
-        '',
-        `【名所の説明】${meishoText}`,
-        ''
-      ];
+        '輪郭がはっきりした高精細で綺麗な仕上がりにし、ぼやけた描写は避けてください。'
+      ].filter(line => line !== '');
 
-      // キャラクター画像がある場合の指示を追加
-      if (charImg) {
-        ukiyoePrompt.splice(18, 0,
-          '【メインキャラクター】',
-          'アップロードされた人物を、浮世絵の中の旅人として描いてください。',
-          `- ${ukiyoeArtistName}の描く人物画のスタイルを基本に、ソフトで優しいタッチで表現`,
-          '- 重要：人物は小さく描く（画面全体の10-15%程度のサイズ）',
-          '- 名所を訪れる旅人・巡礼者として、名所の前や参道などに小さく配置',
-          '- 人物の基本的な雰囲気は保ちつつ、写実的ではなく柔らかく親しみやすい表情に',
-          '- 浮世絵風の装束で、穏やかで温かみのある人物表現に',
-          '- 線は細く優しく、色彩は柔らかく、実写感は完全に排除',
-          '- 主役はあくまで名所建築であり、人物は添え物として小さく',
-          ''
-        );
-      }
-
-      if (tripBackground) {
-        ukiyoePrompt.push('【旅の背景】');
-        ukiyoePrompt.push(tripBackground);
-        ukiyoePrompt.push('');
-      }
-
-      if (photoInfo.places.length > 0) {
-        ukiyoePrompt.push('【訪問場所】');
-        ukiyoePrompt.push(photoInfo.places.join('、'));
-        ukiyoePrompt.push('');
-      }
-
-      if (photoInfo.landmarks.length > 0) {
-        ukiyoePrompt.push('【名所・ランドマーク】');
-        ukiyoePrompt.push(photoInfo.landmarks.join('、'));
-        ukiyoePrompt.push('');
-      }
-
-      if (photoInfo.stampRally.length > 0) {
-        ukiyoePrompt.push('【スタンプラリー・札所巡り】');
-        ukiyoePrompt.push(photoInfo.stampRally.join('、'));
-        ukiyoePrompt.push('※御朱印や札所の雰囲気を絵画に反映してください');
-        ukiyoePrompt.push('');
-      }
-
-      if (photoInfo.descriptions.length > 0) {
-        ukiyoePrompt.push('【写真に記録された詳細情報】');
-        photoInfo.descriptions.forEach((desc, i) => {
-          ukiyoePrompt.push(`${i + 1}. ${desc}`);
-        });
-        ukiyoePrompt.push('');
-      }
-
-      if (travelogueContext) {
-        ukiyoePrompt.push('【旅行記に記録された体験・出来事・登場人物】');
-        ukiyoePrompt.push(travelogueContext.slice(0, 1200));
-        ukiyoePrompt.push('※旅行記の内容（出会った人、経験した事、買ったもの、もらったものなど）を絵画の要素として表現してください');
-        ukiyoePrompt.push('');
-      }
-
-      ukiyoePrompt.push('【絵画作成の指針】');
-      ukiyoePrompt.push(`この名所での旅の体験を${ukiyoeArtistName}風の浮世絵として余すことなく表現してください。`);
-      ukiyoePrompt.push('- 【最重要】お寺・神社・名所の建物や風景を画面の主役として大きく描く（画面の80-85%）');
-      if (charImg) {
-        ukiyoePrompt.push('- アップロードされた人物は小さく描く（画面の10-15%程度）');
-        ukiyoePrompt.push('- 人物は写実的ではなく、ソフトで優しいタッチ、親しみやすく柔らかな表現で');
-      }
-      ukiyoePrompt.push('- 名所の雄大さ・美しさ・趣を最優先に表現し、旅人は小さく点在させる');
-      ukiyoePrompt.push('- すべての人物（メインキャラクター、その他の登場人物）は小さく、ソフトなタッチで、写実的にならないように');
-      ukiyoePrompt.push('- 写真から得られた建物や風景の特徴は、写実的な要素を残して描いてもOK（全体の浮世絵様式との調和を保つ）');
-      ukiyoePrompt.push('- 浮世絵らしい構図と装飾性を保ちながら、写真のリアリティも活かした現代的な表現');
-      ukiyoePrompt.push('- 見る人に「この場所に行ってみたい」「この名所を訪れたい」と思わせる魅力的な作品に');
-      ukiyoePrompt.push('- 趣と楽しさが共存する、温かみのある絵画に仕上げてください');
-
-      // 実際の名所写真を参照画像として添付し、実在の建物・風景に忠実に描かせる
-      setStatus('参照写真を準備中...');
-      const ukiyoeRefs = await buildAnimeReferenceImages(charImg, photos);
-      const ukiyoeRefPhotos = ukiyoeRefs.filter(r => r.kind === 'photo');
-      if (ukiyoeRefPhotos.length > 0) {
-        ukiyoePrompt.push('');
-        ukiyoePrompt.push(`【添付の参照写真（${ukiyoeRefPhotos.length}枚）】${charImg ? '2枚目以降' : '添付'}はこの名所で実際に撮影した写真です。建物の形・屋根・門・自然の様子など、写真から読み取れる特徴を正確に反映し、浮世絵の様式で明瞭に描いてください。`);
-        ukiyoeRefPhotos.forEach((r, i) => {
-          const label = [r.label, r.description].filter(Boolean).join(' - ');
-          if (label) ukiyoePrompt.push(`- 参照写真${i + 1}: ${label}`);
-        });
-      }
-      ukiyoePrompt.push('【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。ぼやけた描写は避け、細部まで丁寧に描いてください。');
-
-      const promptText = ukiyoePrompt.filter(line => line !== '').join('\n');
+      const promptText = ukiyoePrompt.join('\n');
       setStatus('浮世絵を生成中...');
       const generatedDataUrl = await generateImageWithAI(promptText, ukiyoeRefs.map(r => r.dataUrl), animeCfg);
 
       if (generatedDataUrl) {
-        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'ukiyoe');
-        const animeData = {
-          url: storageUrl,
-          timestamp: Date.now(),
+        await finalizeGeneratedAnime(currentTrip, generatedDataUrl, {
           style: 'meisho-ukiyoe',
           meishoText: meishoText,
           ukiyoeStyle: ukiyoeStyle,
           ukiyoeArtist: ukiyoeArtistName
-        };
-        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
-        currentTrip.generatedAnimes.push(animeData);
-        await saveTrip({ silent: true });
-        renderGeneratedAnimesList();
+        }, 'ukiyoe');
         setStatus(`${ukiyoeArtistName}風の浮世絵を生成しました`);
         // 入力欄をクリア
         if (meishoInput) meishoInput.value = '';
@@ -9305,6 +9324,7 @@ async function showAnimeModal() {
         currentTrip.generatedAnimes.push(...generatedAnimesToAdd);
         await saveTrip({ silent: true });
         renderGeneratedAnimesList();
+        showAnimeImageViewer(generatedAnimesToAdd, currentTrip.name || '');
         setStatus(`${generatedAnimesToAdd.length}ページのアニメを生成しました`);
       } else {
         alert('詳細4ページの生成に失敗しました。APIキーと旅行記の内容を確認してください。');
@@ -9356,10 +9376,6 @@ async function showAnimeModal() {
       promptParts.push('【メインキャラクター】アップロードされた人物の特徴（顔立ち、髪型、表情など）を保ちながら、優しく親しみやすいタッチのアニメキャラクターに変換してください。柔らかな線、温かみのある色彩、穏やかな表情で描いてください。このキャラクターを旅の主人公として、選択されたテーマスタイルに完全に合わせ、背景や他の要素と統一された画風で描いてください。写真のような実写感は残さず、全体が一つのアニメ作品として調和するように仕上げてください。');
     }
 
-    if (trip.description) {
-      promptParts.push(`【旅行の説明】${trip.description}`);
-    }
-
     if (trip.url) {
       promptParts.push('【ブログ】旅の詳細記録あり');
     }
@@ -9373,11 +9389,6 @@ async function showAnimeModal() {
       if (landmarks.length > 0) {
         const landmarkNames = landmarks.map(p => `${p.landmarkNo}: ${p.name || '名所'}`).slice(0, 5).join('、');
         promptParts.push(`【スタンプラリー】${landmarkNames}`);
-      }
-
-      const descriptions = photos.filter(p => p.description).map(p => p.description).slice(0, 3);
-      if (descriptions.length > 0) {
-        promptParts.push(`【ハイライト】${descriptions.join('、')}`);
       }
 
       // 地球の歩き方表紙風: マップ情報を追加
@@ -9405,9 +9416,17 @@ async function showAnimeModal() {
       }
     }
 
-    const travelogueSummary = await getTravelogueTextForTrip(trip);
-    if (travelogueSummary) {
-      promptParts.push(`【旅行記サマリー】${travelogueSummary}`);
+    // 情景ブリーフ: 説明・写真のハイライト・旅行記本文を一度短く要約し、雰囲気の核にする。
+    // 生の長文をそのまま箇条書きで並べるより、要点を絞った方が指示追従性が高い。
+    setStatus('情景を要約中...');
+    const highlightDescriptions = photos.filter(p => p.description).map(p => p.description).slice(0, 5);
+    const travelogueRaw = await getTravelogueTextForTrip(trip, 1200);
+    const briefSource = [trip.description, highlightDescriptions.join('。'), travelogueRaw].filter(Boolean).join('\n');
+    const sceneBrief = briefSource ? await buildSceneBrief(briefSource, animeCfg) : null;
+    if (sceneBrief) {
+      promptParts.push(`【旅の雰囲気】${sceneBrief}`);
+    } else if (trip.description) {
+      promptParts.push(`【旅行の説明】${trip.description}`);
     }
 
     // 実際の旅行写真を参照画像として添付し、実在の風景・建物に基づいて描かせる
@@ -9436,31 +9455,8 @@ async function showAnimeModal() {
 
     if (generatedDataUrl) {
       try {
-        // 画像をStorageにアップロード
         setStatus('画像をStorageに保存中...');
-        const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'cover');
-
-        // トリップデータに追加
-        if (!currentTrip.generatedAnimes) {
-          currentTrip.generatedAnimes = [];
-        }
-        currentTrip.generatedAnimes.push({
-          url: storageUrl,
-          timestamp: Date.now(),
-          style: styleId
-        });
-
-        console.log('アニメ画像を追加:', {
-          url: storageUrl,
-          count: currentTrip.generatedAnimes.length
-        });
-
-        // トリップを保存
-        await saveTrip({ silent: true });
-        console.log('トリップ保存完了。generatedAnimesの数:', currentTrip.generatedAnimes.length);
-
-        // UIに追加
-        renderGeneratedAnimesList();
+        await finalizeGeneratedAnime(currentTrip, generatedDataUrl, { style: styleId }, 'cover');
         setStatus('アニメ画像を生成しました');
       } catch (err) {
         console.error('アニメ画像の保存エラー:', err);
