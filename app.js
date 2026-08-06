@@ -300,24 +300,43 @@ if ('IntersectionObserver' in window) {
   });
 }
 
-/** アニメ生成用のキャラ画像を取得（トリップ保存分またはメモリ） */
+/**
+ * アニメ生成用のキャラ画像を取得（トリップ保存分またはメモリ）。
+ * アップロード時の元ファイル（HEIC・CMYK JPEG等）をそのまま画像生成APIに
+ * 送ると「Invalid image file or mode」で失敗することがあるため、
+ * 必ずcanvasでJPEGに正規化してから返す。
+ */
 async function getCharacterImageForGeneration() {
-  if (characterImageData) return characterImageData;
-  const url = currentTrip?.characterImageUrl;
-  if (!url) return null;
-  try {
-    const res = await fetch(url);
-    const blob = await res.blob();
-    return await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.warn('キャラ画像の取得に失敗:', err);
+  const raw = characterImageData || await (async () => {
+    const url = currentTrip?.characterImageUrl;
+    if (!url) return null;
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      return await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.warn('キャラ画像の取得に失敗:', err);
+      return null;
+    }
+  })();
+  if (!raw) return null;
+
+  const normalized = await resizeImageToBlob(raw, ANIME_REF_PHOTO_DIM, 0.9);
+  if (!normalized || normalized.size === 0) {
+    console.warn('キャラ画像の正規化に失敗（元データが不正な可能性）。この画像は使用しません。');
     return null;
   }
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(normalized);
+  });
 }
 
 // アニメ生成に添付する旅行写真の最大枚数（多すぎるとAPIが重く不安定になる）
@@ -331,6 +350,8 @@ const ANIME_REF_PHOTO_DIM = 768;
  * 旅の流れが伝わるようにする。
  */
 function selectAnimeReferencePhotos(photos, limit = ANIME_REF_PHOTO_LIMIT) {
+  // p.url を持つもの（実際の写真）のみを対象にする。
+  // 動画のみのポイント（p.urlなし・p.videoUrlのみ）はここで自動的に除外される。
   const withUrl = (photos || []).filter(p => p && p.url && !p.isStamp);
   if (withUrl.length === 0) return [];
 
@@ -364,6 +385,11 @@ async function fetchImageAsResizedDataUrl(url, maxDim = ANIME_REF_PHOTO_DIM) {
     const res = await fetch(url);
     if (!res.ok) return null;
     const blob = await res.blob();
+    // 動画ファイルなど画像以外が紛れ込んでいないか念のため確認する
+    if (!blob.type || !blob.type.startsWith('image/')) {
+      console.warn('参照画像が画像形式ではないためスキップ:', url, blob.type);
+      return null;
+    }
     const dataUrl = await new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(r.result);
@@ -371,7 +397,13 @@ async function fetchImageAsResizedDataUrl(url, maxDim = ANIME_REF_PHOTO_DIM) {
       r.readAsDataURL(blob);
     });
     const resized = await resizeImageToBlob(dataUrl, maxDim, 0.85);
-    if (!resized || resized.size === 0) return dataUrl;
+    // canvasでの再エンコードに失敗した場合、元データはHEIC等の不正な
+    // 形式である可能性が高く画像生成APIが拒否するため、そのまま
+    // フォールバックさせず除外する（Invalid image file or mode対策）
+    if (!resized || resized.size === 0) {
+      console.warn('参照画像の正規化に失敗（不正な形式の可能性）。スキップ:', url);
+      return null;
+    }
     return await new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(r.result);
