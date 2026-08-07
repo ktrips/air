@@ -192,7 +192,8 @@ body {
 @media (max-width: 768px) {
   .header {
     gap: 0.5rem;
-    padding: 0.75rem 1rem;
+    /* 左は右より狭くし、ロゴアイコンを左端に寄せる（アプリ名テキストは非表示のため） */
+    padding: 0.75rem 1rem 0.75rem 0.5rem;
     position: absolute;
     top: 0;
     left: 0;
@@ -284,10 +285,12 @@ body {
 
   .header-logo {
     display: flex !important;
+    gap: 0;
   }
 
+  /* モバイルではアプリ名（Air/Ohenro等）は表示せずアイコンのみにする */
   .header-logo-text {
-    font-size: 1.25rem;
+    display: none;
   }
 
   .header-logo-icon {
