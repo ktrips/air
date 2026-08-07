@@ -5419,22 +5419,65 @@ function renderTripList() {
       } else if (photos.length > 0) {
         html += `<p class="trip-detail-desc"><span class="trip-photo-count-toggle">（${photos.length}枚）</span></p>`;
       }
-      const hasLandmarks = (t.photos || []).some(p => p.landmarkNo);
       const hasVideos = getTripVideoUrlsForTrip(t).length > 0;
       const hasTravelogue = tripHasTravelogue(t);
+      // スタンプの有無: 親トリップは全子トリップの写真を対象に集約して判定する
+      const hasStamps = t.isParent
+        ? children.some(c => (c.photos || []).some(p => p.isStamp))
+        : (t.photos || []).some(p => p.isStamp);
       // ブログボタンは表示しない（説明にリンクをつけるため）
-      if (hasVideos || hasTravelogue || hasLandmarks) {
+      if (hasVideos || hasTravelogue || hasStamps) {
         html += '<div class="trip-detail-btns">';
         if (hasTravelogue) html += `<button type="button" class="btn btn-travelogue btn-sm trip-detail-btn trip-detail-travelogue-btn">📖 旅行記</button>`;
         if (hasVideos) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">🎬 動画</button>`;
-        if (hasLandmarks) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">🎫 スタンプ</button>`;
+        if (hasStamps) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">🎫 スタンプ</button>`;
         html += '</div>';
       }
       if (t.isParent && children.length > 0) {
         html += `<p class="trip-detail-meta">子トリップ ${children.length} 件</p>`;
+
+        // 子トリップの旅行記・動画一覧（親トリップ選択時のみ）
+        const travelogueChildren = children.filter(c => tripHasTravelogue(c));
+        if (travelogueChildren.length > 0) {
+          html += '<div class="trip-detail-child-list-label">旅行記一覧</div>';
+          html += '<div class="trip-detail-child-list">';
+          html += travelogueChildren.map(c => {
+            const fullName = c.name || '（無題）';
+            return `<button type="button" class="btn btn-travelogue btn-xs trip-detail-child-travelogue-btn" data-trip-id="${escapeHtml(c.id)}" title="${escapeHtml(fullName)}">📖 ${escapeHtml(fullName.slice(0, 10))}</button>`;
+          }).join('');
+          html += '</div>';
+        }
+
+        const videoChildren = children.filter(c => getTripVideoUrlsForTrip(c).length > 0);
+        if (videoChildren.length > 0) {
+          html += '<div class="trip-detail-child-list-label">動画一覧</div>';
+          html += '<div class="trip-detail-child-list">';
+          html += videoChildren.map(c => {
+            const fullName = c.name || '（無題）';
+            return `<button type="button" class="btn btn-primary btn-xs trip-detail-child-video-btn" data-trip-id="${escapeHtml(c.id)}" title="${escapeHtml(fullName)}">🎬 ${escapeHtml(fullName.slice(0, 8))}</button>`;
+          }).join('');
+          html += '</div>';
+        }
       }
       detail.innerHTML = html;
       list.appendChild(detail);
+
+      if (t.isParent) {
+        detail.querySelectorAll('.trip-detail-child-travelogue-btn').forEach(btn => {
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            const c = children.find(x => x.id === btn.dataset.tripId);
+            if (c) showTravelogueModal(c);
+          };
+        });
+        detail.querySelectorAll('.trip-detail-child-video-btn').forEach(btn => {
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            const c = children.find(x => x.id === btn.dataset.tripId);
+            if (c) playVideoSequence(getTripVideoUrlsForTrip(c));
+          };
+        });
+      }
 
       // 子トリップリンクにクリックイベントを追加
       detail.querySelectorAll('.child-trip-link').forEach(link => {
@@ -5468,18 +5511,28 @@ function renderTripList() {
       detail.querySelectorAll('.trip-photo-count-toggle').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); toggleThumbnails(); };
       });
-      const animes = t.generatedAnimes || t.animes || [];
+      // アニメ一覧: 親トリップは全子トリップのアニメ画像を集約して表示する
+      const animes = t.isParent
+        ? children.flatMap(c => (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name })))
+        : (t.generatedAnimes || t.animes || []);
       if (animes.length > 0) {
+        if (t.isParent) {
+          const label = document.createElement('div');
+          label.className = 'trip-detail-child-list-label';
+          label.textContent = 'アニメ一覧';
+          detail.appendChild(label);
+        }
         const thumbsWrap = document.createElement('div');
         thumbsWrap.className = 'trip-detail-anime-thumbs';
         animes.forEach((anime, idx) => {
           const img = document.createElement('img');
           img.src = anime.url;
           img.alt = anime.style || '';
+          img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || '');
           img.className = 'trip-detail-thumb';
           img.onclick = (e) => {
             e.stopPropagation();
-            showAnimeImageViewer(animes, t.name);
+            showAnimeImageViewer(animes.map(a => ({ url: a.url, style: a.style })), t.name);
           };
           thumbsWrap.appendChild(img);
         });
