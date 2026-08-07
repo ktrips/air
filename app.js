@@ -5435,49 +5435,9 @@ function renderTripList() {
       }
       if (t.isParent && children.length > 0) {
         html += `<p class="trip-detail-meta">子トリップ ${children.length} 件</p>`;
-
-        // 子トリップの旅行記・動画一覧（親トリップ選択時のみ）
-        const travelogueChildren = children.filter(c => tripHasTravelogue(c));
-        if (travelogueChildren.length > 0) {
-          html += '<div class="trip-detail-child-list-label">旅行記一覧</div>';
-          html += '<div class="trip-detail-child-list">';
-          html += travelogueChildren.map(c => {
-            const fullName = c.name || '（無題）';
-            return `<button type="button" class="btn btn-travelogue btn-xs trip-detail-child-travelogue-btn" data-trip-id="${escapeHtml(c.id)}" title="${escapeHtml(fullName)}">📖 ${escapeHtml(fullName.slice(0, 10))}</button>`;
-          }).join('');
-          html += '</div>';
-        }
-
-        const videoChildren = children.filter(c => getTripVideoUrlsForTrip(c).length > 0);
-        if (videoChildren.length > 0) {
-          html += '<div class="trip-detail-child-list-label">動画一覧</div>';
-          html += '<div class="trip-detail-child-list">';
-          html += videoChildren.map(c => {
-            const fullName = c.name || '（無題）';
-            return `<button type="button" class="btn btn-primary btn-xs trip-detail-child-video-btn" data-trip-id="${escapeHtml(c.id)}" title="${escapeHtml(fullName)}">🎬 ${escapeHtml(fullName.slice(0, 8))}</button>`;
-          }).join('');
-          html += '</div>';
-        }
       }
       detail.innerHTML = html;
       list.appendChild(detail);
-
-      if (t.isParent) {
-        detail.querySelectorAll('.trip-detail-child-travelogue-btn').forEach(btn => {
-          btn.onclick = (e) => {
-            e.stopPropagation();
-            const c = children.find(x => x.id === btn.dataset.tripId);
-            if (c) showTravelogueModal(c);
-          };
-        });
-        detail.querySelectorAll('.trip-detail-child-video-btn').forEach(btn => {
-          btn.onclick = (e) => {
-            e.stopPropagation();
-            const c = children.find(x => x.id === btn.dataset.tripId);
-            if (c) playVideoSequence(getTripVideoUrlsForTrip(c));
-          };
-        });
-      }
 
       // 子トリップリンクにクリックイベントを追加
       detail.querySelectorAll('.child-trip-link').forEach(link => {
@@ -5511,9 +5471,14 @@ function renderTripList() {
       detail.querySelectorAll('.trip-photo-count-toggle').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); toggleThumbnails(); };
       });
-      // アニメ一覧: 親トリップは全子トリップのアニメ画像を集約して表示する
+      // アニメ一覧: 親トリップは各子トリップの表紙画像のみを1枚ずつ表示する
       const animes = t.isParent
-        ? children.flatMap(c => (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name })))
+        ? children
+            .map(c => {
+              const cover = getAnimeCoverForTrip(c);
+              return cover ? { ...cover, _tripName: c.name } : null;
+            })
+            .filter(Boolean)
         : (t.generatedAnimes || t.animes || []);
       if (animes.length > 0) {
         if (t.isParent) {
@@ -6221,6 +6186,21 @@ function escapeHtml(s) {
 }
 
 /** 指定トリップの動画URLを表示順で取得（トリップ動画→ポイント動画の順） */
+/**
+ * トリップの代表アニメ画像（表紙）を1枚選ぶ。
+ * 詳細4ページ・浮世絵風は表紙として不適切なため除外し、通常の表紙系
+ * スタイル（地球の歩き方風・少年ジャンプ風・旅行雑誌風・出来事生成）を優先する。
+ * 旅行記ページの表紙選定ロジックと同じ基準。
+ */
+function getAnimeCoverForTrip(trip) {
+  const animes = trip?.generatedAnimes || trip?.animes || [];
+  if (animes.length === 0) return null;
+  const coverAnimes = animes.filter(a => a.style && !String(a.style).startsWith('detail') && a.style !== 'meisho-ukiyoe');
+  if (coverAnimes.length > 0) return coverAnimes[0];
+  if (animes[0].style !== 'meisho-ukiyoe') return animes[0];
+  return null;
+}
+
 function getTripVideoUrlsForTrip(trip) {
   if (!trip) return [];
   const urls = [];

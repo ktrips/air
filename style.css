@@ -1427,16 +1427,6 @@ body.app-playing .mapboxgl-ctrl-logo {
   margin: 0.5rem 0 0.3rem 0;
 }
 
-.trip-detail-inline .trip-detail-child-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-}
-
-.trip-detail-inline .trip-detail-child-list button {
-  flex-shrink: 0;
-}
-
 .trip-item-row {
   display: flex;
   align-items: center;
