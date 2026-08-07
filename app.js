@@ -8595,17 +8595,44 @@ const ANIME_STYLES = {
  * travelogueHtml はFirestore保存時に削除されるため通常は空で、
  * 実体はStorage上の travelogueUrl にある。両方を見て本文を返す。
  */
+/**
+ * 旅行記の生HTMLを取得する。
+ * travelogueHtmlはFirestore保存時に削除されるため通常は空で、
+ * 実体はStorage上のtravelogueUrl（または履歴の最新エントリ）にある。
+ * showTravelogueModalと同じ優先順位: 履歴があれば直近（最新タイムスタンプ）の
+ * エントリを優先し、無ければトリップ本体のtravelogueHtml/travelogueUrlを使う。
+ */
+async function fetchTravelogueHtmlForTrip(trip) {
+  if (!trip) return '';
+  let html = trip.travelogueHtml && trip.travelogueHtml.trim() ? trip.travelogueHtml : null;
+  let url = trip.travelogueUrl || null;
+
+  const latest = getLatestTravelogueEntry(trip);
+  if (latest?.url) {
+    url = latest.url;
+    html = null;
+  } else if (latest?.html && latest.html.trim()) {
+    html = latest.html;
+    url = null;
+  }
+
+  if (html) return html;
+  if (!url) return '';
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return '';
+    return await res.text();
+  } catch (err) {
+    console.warn('旅行記HTMLの取得に失敗（スキップ）:', err);
+    return '';
+  }
+}
+
 async function getTravelogueTextForTrip(trip, maxLen = 400) {
   if (!trip) return '';
   try {
-    let html = trip.travelogueHtml && trip.travelogueHtml.trim() ? trip.travelogueHtml : null;
-    if (!html) {
-      const url = trip.travelogueUrl || getLatestTravelogueEntry(trip)?.url || null;
-      if (!url) return '';
-      const res = await fetch(url);
-      if (!res.ok) return '';
-      html = await res.text();
-    }
+    const html = await fetchTravelogueHtmlForTrip(trip);
+    if (!html) return '';
     const sections = parseTravelogueSections(html);
     return sections.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim().slice(0, maxLen);
   } catch (err) {
@@ -8652,15 +8679,16 @@ function getSelectedAnimeStyle() {
   return (select && select.value) || 'chikyu-cover';
 }
 
-/** 旅行記を4分割し、指定ページ(1-4)の1/4分の全文を返す */
-function getTravelogueQuarterContent(trip, pageIndex) {
+/**
+ * 旅行記を4分割し、指定ページ(1-4)の1/4分の全文を返す。
+ * travelogueHtmlが無い（Storage保存済みの）トリップでも取得できるよう
+ * fetchTravelogueHtmlForTripを使う。写真情報へのフォールバック時は
+ * 同一テキストの重複を除去する。
+ */
+async function getTravelogueQuarterContent(trip, pageIndex) {
   const pageIndex0 = Math.max(0, Math.min(pageIndex - 1, 3));
   let fullText = '';
-  let html = trip.travelogueHtml && trip.travelogueHtml.trim();
-  if (!html && trip.travelogueHistory?.length > 0) {
-    const latest = getLatestTravelogueEntry(trip);
-    if (latest?.html) html = latest.html;
-  }
+  const html = await fetchTravelogueHtmlForTrip(trip);
   if (html) {
     const sections = parseTravelogueSections(html);
     fullText = sections.map(s => (s.title ? `【${s.title}】` : '') + s.text).join('\n\n');
@@ -8668,11 +8696,14 @@ function getTravelogueQuarterContent(trip, pageIndex) {
   if (!fullText.trim()) {
     const parts = [];
     if (trip.description) parts.push(trip.description);
-    const photos = trip.photos || [];
-    photos.forEach(p => {
-      if (p.placeName) parts.push(`${p.placeName}`);
-      if (p.name) parts.push(p.name);
-      if (p.description) parts.push(p.description);
+    const seen = new Set();
+    (trip.photos || []).forEach(p => {
+      [p.placeName, p.name, p.description].filter(Boolean).forEach(text => {
+        if (!seen.has(text)) {
+          seen.add(text);
+          parts.push(text);
+        }
+      });
     });
     fullText = parts.join('。').replace(/\s+/g, ' ') || trip.name || '旅行の思い出';
   }
@@ -8686,13 +8717,16 @@ function getTravelogueQuarterContent(trip, pageIndex) {
   return fullText.slice(start, end).trim();
 }
 
-/** 詳細4ページ用: 旅行記1/4 + 対応する写真・説明をまとめて返す（そのトリップをトータルにカバー） */
-function getDetail4PagesQuarterContent(trip, pageIndex) {
+/**
+ * 詳細4ページ用: 旅行記1/4 + 対応する写真・説明をまとめて返す（そのトリップをトータルにカバー）。
+ * 同じ内容の写真情報が連続する場合は重複行を除いて詰め込みすぎを防ぐ。
+ */
+async function getDetail4PagesQuarterContent(trip, pageIndex) {
   const pageIndex0 = Math.max(0, Math.min(pageIndex - 1, 3));
   const parts = [];
 
   // 旅行記の1/4
-  const quarterText = getTravelogueQuarterContent(trip, pageIndex);
+  const quarterText = await getTravelogueQuarterContent(trip, pageIndex);
   if (quarterText) {
     parts.push('【旅行記の内容】');
     parts.push(quarterText);
@@ -8708,13 +8742,20 @@ function getDetail4PagesQuarterContent(trip, pageIndex) {
     if (quarterPhotos.length > 0) {
       parts.push('');
       parts.push('【この区間の写真と説明】');
-      quarterPhotos.forEach((p, i) => {
+      const seenLines = new Set();
+      let itemNo = 0;
+      quarterPhotos.forEach((p) => {
         const items = [];
         if (p.placeName) items.push(`場所: ${p.placeName}`);
         if (p.name) items.push(`ポイント: ${p.name}`);
         if (p.description) items.push(`説明: ${p.description}`);
         if (p.landmarkNo) items.push(`ランドマーク: 📍${p.landmarkNo}`);
-        if (items.length > 0) parts.push(`  ${i + 1}. ${items.join(' / ')}`);
+        if (items.length === 0) return;
+        const line = items.join(' / ');
+        if (seenLines.has(line)) return; // 重複する写真情報は除外
+        seenLines.add(line);
+        itemNo++;
+        parts.push(`  ${itemNo}. ${line}`);
       });
     }
   }
@@ -9258,21 +9299,30 @@ async function showAnimeModal() {
         alert('詳細4ページではキャラ画像が必須です。キャラ画像をアップロードしてください。');
         return;
       }
-      const hasContent = [1, 2, 3, 4].some(p => getDetail4PagesQuarterContent(trip, p));
+      // 4ページ分の内容を先にまとめて取得（Storage上の旅行記も参照。重複取得を避けるため1回だけ計算）
+      const quarterContents = await Promise.all([1, 2, 3, 4].map(p => getDetail4PagesQuarterContent(trip, p)));
+      const hasContent = quarterContents.some(Boolean);
       if (!hasContent) {
         alert('旅行記または写真・説明がありません。まず旅行記を生成するか、写真に説明を追加してください。');
         return;
       }
       const generatedAnimesToAdd = [];
       const tripName = trip.name || '旅行';
+      const pageArcLabels = ['旅の始まり', '前半の展開', '後半の展開', '旅の締めくくり'];
       for (let page = 1; page <= 4; page++) {
         setStatus(`詳細4ページ生成中 ${page}/4...`);
         if (btn) btn.textContent = `詳細4ページ生成中 (${page}/4)...`;
 
-        const quarterContent = getDetail4PagesQuarterContent(trip, page);
+        const quarterContent = quarterContents[page - 1];
+
+        // 情景ブリーフ: 1/4に機械的に切られた旅行記の断片をそのまま渡すより、
+        // このページで描くべき内容を先に短く要約させた方が5コマの構成が明確になる
+        setStatus(`ページ${page}/4の情景を要約中...`);
+        const pageBrief = quarterContent ? await buildSceneBrief(quarterContent, animeCfg, 150) : null;
+
         const pagePromptParts = [
-          `この旅行「${tripName}」の旅行記と写真・説明を元に、4ページのうち${page}ページ目を生成します。`,
-          '4枚の画像で旅行全体をカバーするよう、各ページは旅の1/4の内容を担当します。',
+          `この旅行「${tripName}」を4ページのマンガで表現します。今回は${page}/4ページ目（${pageArcLabels[page - 1]}）です。`,
+          '4枚の画像で旅行全体をカバーするよう、各ページは旅の1/4の内容を担当し、4ページ通して読むと旅の流れが繋がるようにします。',
           '',
           '以下の内容を1枚の画像内に5コマのマンガ形式で表現してください。',
           '',
@@ -9284,11 +9334,11 @@ async function showAnimeModal() {
           '- 1枚の画像内に5コマを縦に並べた旅行記ページのレイアウト。',
           '- アップロードされたキャラクターを主人公として、全5コマに登場させる。',
           '- 各コマでキャラクターが吹き出しで旅のスポット・名所・情景を説明する。吹き出しの言葉は全て日本語。',
-          '- 旅行記と写真の説明を踏まえ、この区間の旅の内容を5コマで要約して順に説明する。',
-          '- 4ページ全体で旅の流れが繋がるように表現。実写感は残さずアニメ調で統一。',
+          '- 5コマはそれぞれ異なる場所・出来事・瞬間を描くこと。似た構図やセリフの繰り返しは避ける。',
+          '- 実写感は残さずアニメ調で統一。',
           '',
-          `【ページ${page}/4の内容 - 5コマで要約して順に説明】`,
-          quarterContent.slice(0, 1100),
+          `【ページ${page}/4で描く内容】`,
+          pageBrief || quarterContent.slice(0, 1100),
           '',
           '【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。ぼやけた描写は避け、細部まで丁寧に描いてください。'
         ];
@@ -9393,12 +9443,17 @@ async function showAnimeModal() {
 
       // 地球の歩き方表紙風: マップ情報を追加
       if (styleId === 'chikyu-cover') {
-        // ルート順の地名リスト（重複除去）
-        const routeNames = photos
+        // ルート順の地名リスト（重複除去）。10件を超える場合は先頭に偏らないよう
+        // 全区間から均等な間隔で抜き出し、旅の後半が欠落しないようにする。
+        const uniqueRouteNames = photos
           .filter(p => p.name || p.placeName)
           .map(p => p.name || p.placeName)
-          .filter((v, i, arr) => arr.indexOf(v) === i)
-          .slice(0, 10);
+          .filter((v, i, arr) => arr.indexOf(v) === i);
+        const routeNames = uniqueRouteNames.length <= 10
+          ? uniqueRouteNames
+          : Array.from({ length: 10 }, (_, i) =>
+              uniqueRouteNames[Math.round(i * (uniqueRouteNames.length - 1) / 9)]
+            ).filter((v, i, arr) => arr.indexOf(v) === i);
         if (routeNames.length > 0) {
           promptParts.push(`【ルート順のスポット（ミニマップに使用）】${routeNames.join(' → ')}`);
         }
@@ -9419,7 +9474,8 @@ async function showAnimeModal() {
     // 情景ブリーフ: 説明・写真のハイライト・旅行記本文を一度短く要約し、雰囲気の核にする。
     // 生の長文をそのまま箇条書きで並べるより、要点を絞った方が指示追従性が高い。
     setStatus('情景を要約中...');
-    const highlightDescriptions = photos.filter(p => p.description).map(p => p.description).slice(0, 5);
+    // 同じ説明文が繰り返し登録されている写真があっても、要約の元データが偏らないよう重複を除去
+    const highlightDescriptions = [...new Set(photos.filter(p => p.description).map(p => p.description))].slice(0, 5);
     const travelogueRaw = await getTravelogueTextForTrip(trip, 1200);
     const briefSource = [trip.description, highlightDescriptions.join('。'), travelogueRaw].filter(Boolean).join('\n');
     const sceneBrief = briefSource ? await buildSceneBrief(briefSource, animeCfg) : null;
