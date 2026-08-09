@@ -271,9 +271,6 @@
           <span class="menu-label">AI生成</span>
           <button type="button" class="btn btn-secondary" id="aiSettingsBtn" title="AI API キーを設定">AI設定</button>
         </div>
-        <div class="menu-row" style="padding-left:1rem;">
-          <button type="button" class="btn btn-secondary" id="createImageBtn" title="E-Ink端末向けのマップ・カバー画像を作成">🖼️ 画像作成</button>
-        </div>
         <div class="menu-row" style="display:flex;align-items:center;gap:8px;padding-left:1rem;">
           <button type="button" class="btn btn-travelogue" id="generateTravelogueBtn" title="写真・説明・URL・動画・GPSから旅行記をAI生成">旅行記生成</button>
           <div id="travelogueHistoryLinks" style="display:flex;gap:6px;align-items:center;margin-left:8px;flex-wrap:wrap;"></div>
@@ -298,6 +295,8 @@
             <option value="detail4pages">詳細4ページ</option>
             <option value="event-story">出来事生成</option>
             <option value="meisho-ukiyoe">名所浮世絵風</option>
+            <option value="cover-ink">カバーInk</option>
+            <option value="map-ink">マップInk</option>
           </select>
           <button type="button" class="btn btn-primary" id="generateAnimeBtnViewer" title="選択したスタイルでアニメを生成">アニメ生成</button>
         </div>
@@ -408,24 +407,15 @@
   <div class="modal-overlay" id="createImageModal">
     <div class="modal">
       <div class="modal-header">
-        <h2>画像作成</h2>
+        <h2>生成画像</h2>
         <button type="button" class="modal-close" id="createImageModalClose">&times;</button>
       </div>
       <div class="modal-body">
-        <div id="createImageChoiceView">
-          <p class="modal-desc">E-Ink端末でもシンプルに表示できる画像を作成します。</p>
-          <div style="display:flex;gap:12px;">
-            <button type="button" class="btn btn-secondary" id="createImageMapBtn" style="flex:1;padding:1rem 0.5rem;font-size:1rem;line-height:1.6;">🗺️ マップ<br><span style="font-size:0.75rem;font-weight:normal;opacity:0.75;">ランドマーク番号入り地図</span></button>
-            <button type="button" class="btn btn-secondary" id="createImageCoverBtn" style="flex:1;padding:1rem 0.5rem;font-size:1rem;line-height:1.6;">🖼️ カバー<br><span style="font-size:0.75rem;font-weight:normal;opacity:0.75;">シャープな表紙画像</span></button>
-          </div>
-        </div>
-        <div id="createImageResultView" style="display:none;">
-          <p id="createImageStatus" class="modal-desc"></p>
-          <div id="createImagePreviewWrap" style="text-align:center;"></div>
-          <div class="modal-actions" style="display:flex;gap:8px;justify-content:center;">
-            <a href="#" id="createImageDownloadLink" class="btn btn-primary" download style="display:none;">ダウンロード</a>
-            <button type="button" class="btn btn-secondary" id="createImageBackBtn">戻る</button>
-          </div>
+        <p id="createImageStatus" class="modal-desc"></p>
+        <div id="createImagePreviewWrap" style="text-align:center;"></div>
+        <div class="modal-actions" style="display:flex;gap:8px;justify-content:center;">
+          <a href="#" id="createImageDownloadLink" class="btn btn-primary" download style="display:none;">ダウンロード</a>
+          <button type="button" class="btn btn-secondary" id="createImageBackBtn">閉じる</button>
         </div>
       </div>
     </div>

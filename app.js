@@ -8627,38 +8627,18 @@ const ANIME_STYLES = {
 // 写真的な諧調やグラデーションはE-Inkで潰れるため、白黒中心のシャープな線画を明示的に指示する。
 const EINK_COVER_PROMPT = 'Create a sharp, high-contrast cover illustration optimized for E-Ink e-paper displays (like a Kindle or reMarkable). Use a near black-and-white palette (avoid soft gradients and subtle gray tones that disappear on E-Ink). Bold, crisp linework, flat shapes, strong contrast, minimalist composition with few large elements rather than fine detail. Large, bold, clearly legible typography for the title. No photographic realism, no blur, no soft shadows, no fine textures. ';
 
-function showCreateImageModal() {
-  const modal = document.getElementById('createImageModal');
-  if (!modal) return;
-  resetCreateImageModal();
-  modal.classList.add('open');
+function openCreateImageModal() {
+  document.getElementById('createImageModal')?.classList.add('open');
 }
 
 function closeCreateImageModal() {
   document.getElementById('createImageModal')?.classList.remove('open');
 }
 
-function resetCreateImageModal() {
-  const choiceView = document.getElementById('createImageChoiceView');
-  const resultView = document.getElementById('createImageResultView');
-  const previewWrap = document.getElementById('createImagePreviewWrap');
-  const downloadLink = document.getElementById('createImageDownloadLink');
-  const statusEl = document.getElementById('createImageStatus');
-  if (choiceView) choiceView.style.display = '';
-  if (resultView) resultView.style.display = 'none';
-  if (previewWrap) previewWrap.innerHTML = '';
-  if (downloadLink) { downloadLink.style.display = 'none'; downloadLink.removeAttribute('href'); }
-  if (statusEl) statusEl.textContent = '';
-}
-
 function showCreateImageResult(statusText, dataUrl, filename) {
-  const choiceView = document.getElementById('createImageChoiceView');
-  const resultView = document.getElementById('createImageResultView');
   const previewWrap = document.getElementById('createImagePreviewWrap');
   const downloadLink = document.getElementById('createImageDownloadLink');
   const statusEl = document.getElementById('createImageStatus');
-  if (choiceView) choiceView.style.display = 'none';
-  if (resultView) resultView.style.display = '';
   if (statusEl) statusEl.textContent = statusText || '';
   if (previewWrap) {
     previewWrap.innerHTML = '';
@@ -8686,45 +8666,20 @@ function sanitizeFileNamePart(name) {
   return (name || 'trip').replace(/[\\/:*?"<>|]/g, '_').trim() || 'trip';
 }
 
-async function handleCreateImageMap() {
-  const trip = currentTrip;
-  if (!trip) { alert('トリップを選択してください'); return; }
-  if (trip.isParent && getChildTrips(trip.id).length === 0) {
-    showCreateImageResult('この親トリップには子トリップがありません。子トリップを作成し、写真やGPXを追加してください。', null, null);
-    return;
+// 海岸線データ（Natural Earth 110m、パブリックドメイン）。
+// [lat, lng]の折れ線配列を事前変換してassets/geo/に同梱し、実行時のネットワーク依存や
+// タイル画像のCORS問題（canvasが汚染されダウンロードできなくなる）を避ける。
+let coastlineDataPromise = null;
+async function loadCoastlineData() {
+  if (!coastlineDataPromise) {
+    coastlineDataPromise = fetch('assets/geo/coastline-110m.json')
+      .then(res => (res.ok ? res.json() : []))
+      .catch(err => {
+        console.warn('海岸線データの取得に失敗（スキップ）:', err);
+        return [];
+      });
   }
-  showCreateImageResult('マップ画像を生成中...', null, null);
-  try {
-    const dataUrl = await generateEinkMapDataUrl(trip);
-    if (!dataUrl) {
-      const msg = trip.isParent
-        ? 'この親トリップの子トリップに、ランドマーク番号を設定した写真、またはGPS付きの写真がありません。各子トリップの写真編集でランドマーク番号やGPS位置を設定してください。'
-        : 'ランドマーク番号を設定した写真、またはGPS付きの写真がありません。写真編集でランドマーク番号やGPS位置を設定してください。';
-      showCreateImageResult(msg, null, null);
-      return;
-    }
-    showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_map.png`);
-  } catch (err) {
-    console.error('マップ画像生成エラー:', err);
-    showCreateImageResult('マップ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
-  }
-}
-
-async function handleCreateImageCover() {
-  const trip = currentTrip;
-  if (!trip) { alert('トリップを選択してください'); return; }
-  showCreateImageResult('カバー画像を生成中...（数十秒かかります）', null, null);
-  try {
-    const dataUrl = await generateEinkCoverImage(trip);
-    if (!dataUrl) {
-      showCreateImageResult('カバー画像の生成に失敗しました。AI設定でAPIキーを確認してください。', null, null);
-      return;
-    }
-    showCreateImageResult('カバー画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_cover.png`);
-  } catch (err) {
-    console.error('カバー画像生成エラー:', err);
-    showCreateImageResult('カバー画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
-  }
+  return coastlineDataPromise;
 }
 
 /**
@@ -8774,6 +8729,7 @@ async function generateEinkMapDataUrl(trip) {
     { min: Infinity, max: -Infinity }
   );
   const latRange = minMaxOf(allCoords.map(c => c.lat));
+  const lngRange = minMaxOf(allCoords.map(c => c.lng));
   // 緯度によって経度1度あたりの距離が変わるため、平均緯度でcos補正して形の歪みを抑える
   const avgLatRad = ((latRange.min + latRange.max) / 2) * Math.PI / 180;
   const cosLat = Math.max(0.15, Math.cos(avgLatRad));
@@ -8822,6 +8778,41 @@ async function generateEinkMapDataUrl(trip) {
       y: TOP_MARGIN + (1 - ny) * drawHeight
     };
   };
+
+  // 海岸線（関係する陸地の輪郭）を背景として描画。トリップ範囲より少し広めの範囲を対象にする。
+  // ルート・ランドマークより細い線にして、主役（ルート・番号）を視覚的に優先させる。
+  try {
+    const coastlines = await loadCoastlineData();
+    if (coastlines.length > 0) {
+      const latPad = Math.max((latRange.max - latRange.min) * 0.3, 0.05);
+      const lngPad = Math.max((lngRange.max - lngRange.min) * 0.3, 0.05);
+      const boxLatMin = latRange.min - latPad, boxLatMax = latRange.max + latPad;
+      const boxLngMin = lngRange.min - lngPad, boxLngMax = lngRange.max + lngPad;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
+      ctx.clip();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1.5;
+      coastlines.forEach(line => {
+        // トリップ範囲（＋余白）にかすっている海岸線だけを描画対象にする（簡易バウンディングボックス判定）
+        const isRelevant = line.some(([lat, lng]) =>
+          lat >= boxLatMin && lat <= boxLatMax && lng >= boxLngMin && lng <= boxLngMax
+        );
+        if (!isRelevant) return;
+        ctx.beginPath();
+        line.forEach(([lat, lng], i) => {
+          const pt = toCanvas(lat, lng);
+          if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+        });
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+  } catch (err) {
+    console.warn('海岸線の描画に失敗（スキップ）:', err);
+  }
 
   // タイトル
   ctx.fillStyle = '#000000';
@@ -8900,14 +8891,16 @@ async function generateEinkMapDataUrl(trip) {
  * 既存の「アニメ生成」表紙系スタイルと同じ組み立て（情景ブリーフ＋参照写真）を使うが、
  * プロンプトはE-Ink向けの高コントラスト・線画指定に差し替える。
  */
-async function generateEinkCoverImage(trip) {
-  const cfg = cachedAiConfig ?? (await loadUserAiConfig());
-  const provider = cfg?.provider || 'gemini';
-  const apiKey = cfg?.apiKey?.trim();
-  if (!apiKey) throw new Error('AI画像生成にはAPIキーが必要です。AI設定でAPIキーを入力してください。');
-  if (provider === 'anthropic') throw new Error('Anthropicは画像生成に対応していません。AI設定でGeminiまたはOpenAIを選択してください。');
-
-  const animeCfg = { provider, apiKey, model: cfg?.model || null };
+async function generateEinkCoverImage(trip, preValidatedCfg = null) {
+  let animeCfg = preValidatedCfg;
+  if (!animeCfg) {
+    const cfg = cachedAiConfig ?? (await loadUserAiConfig());
+    const provider = cfg?.provider || 'gemini';
+    const apiKey = cfg?.apiKey?.trim();
+    if (!apiKey) throw new Error('AI画像生成にはAPIキーが必要です。AI設定でAPIキーを入力してください。');
+    if (provider === 'anthropic') throw new Error('Anthropicは画像生成に対応していません。AI設定でGeminiまたはOpenAIを選択してください。');
+    animeCfg = { provider, apiKey, model: cfg?.model || null };
+  }
   const tripName = trip.name || '旅行';
   const photos = trip.photos || [];
   const places = [...new Set(photos.filter(p => p.placeName).map(p => p.placeName))];
@@ -9380,6 +9373,41 @@ async function showAnimeModal() {
     return;
   }
 
+  const styleId = getSelectedAnimeStyle();
+  const btn = document.getElementById('generateAnimeBtnViewer');
+  const originalBtnText = btn?.textContent || 'アニメ生成';
+
+  // マップInk: AIを使わずcanvasで決定論的に生成するため、APIキー不要でここで完結させる
+  if (styleId === 'map-ink') {
+    try {
+      if (btn) btn.textContent = 'マップ生成中...';
+      setStatus('マップ画像を生成中...');
+      if (trip.isParent && getChildTrips(trip.id).length === 0) {
+        showCreateImageResult('この親トリップには子トリップがありません。子トリップを作成し、写真やGPXを追加してください。', null, null);
+        openCreateImageModal();
+        return;
+      }
+      const dataUrl = await generateEinkMapDataUrl(trip);
+      if (!dataUrl) {
+        const msg = trip.isParent
+          ? 'この親トリップの子トリップに、ランドマーク番号を設定した写真、またはGPS付きの写真がありません。各子トリップの写真編集でランドマーク番号やGPS位置を設定してください。'
+          : 'ランドマーク番号を設定した写真、またはGPS付きの写真がありません。写真編集でランドマーク番号やGPS位置を設定してください。';
+        showCreateImageResult(msg, null, null);
+      } else {
+        showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_map.png`);
+        setStatus('マップ画像を作成しました');
+      }
+      openCreateImageModal();
+    } catch (err) {
+      console.error('マップ画像生成エラー:', err);
+      showCreateImageResult('マップ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+      openCreateImageModal();
+    } finally {
+      if (btn) btn.textContent = originalBtnText;
+    }
+    return;
+  }
+
   const cfg = cachedAiConfig ?? (await loadUserAiConfig());
   const provider = cfg?.provider || 'gemini';
   const apiKey = cfg?.apiKey?.trim();
@@ -9401,18 +9429,37 @@ async function showAnimeModal() {
     model: cfg?.model || null
   };
 
-  const btn = document.getElementById('generateAnimeBtnViewer');
-  const originalBtnText = btn?.textContent || 'アニメ生成';
-
-  const styleId = getSelectedAnimeStyle();
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
   const isDetail4Pages = styleId === 'detail4pages';
   const isEventStory = styleId === 'event-story';
   const isMeishoUkiyoe = styleId === 'meisho-ukiyoe';
+  const isCoverInk = styleId === 'cover-ink';
 
   try {
     if (btn) btn.textContent = '画像生成中...';
     setStatus('アニメ画像を生成中...');
+
+    // カバーInk: 既存のアニメ表紙生成と同じ組み立てだが、E-Ink向けの白黒線画プロンプトを使う
+    if (isCoverInk) {
+      setStatus('E-ink向けカバー画像を生成中...');
+      if (btn) btn.textContent = 'カバー生成中...';
+      try {
+        const dataUrl = await generateEinkCoverImage(trip, animeCfg);
+        if (dataUrl) {
+          showCreateImageResult('カバー画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_cover.png`);
+          openCreateImageModal();
+          setStatus('カバー画像を作成しました');
+        } else {
+          showCreateImageResult('カバー画像の生成に失敗しました。APIキーと入力内容を確認してください。', null, null);
+          openCreateImageModal();
+        }
+      } catch (err) {
+        console.error('カバー画像生成エラー:', err);
+        showCreateImageResult('カバー画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+        openCreateImageModal();
+      }
+      return;
+    }
 
     const charImg = await getCharacterImageForGeneration();
 
@@ -11354,17 +11401,11 @@ function initEventListeners() {
   }
   if (aiSettingsModal) aiSettingsModal.onclick = (e) => { if (e.target === aiSettingsModal) closeAiSettingsModal(); };
 
-  const createImageBtn = document.getElementById('createImageBtn');
   const createImageModal = document.getElementById('createImageModal');
   const createImageModalClose = document.getElementById('createImageModalClose');
-  const createImageMapBtn = document.getElementById('createImageMapBtn');
-  const createImageCoverBtn = document.getElementById('createImageCoverBtn');
   const createImageBackBtn = document.getElementById('createImageBackBtn');
-  if (createImageBtn) createImageBtn.onclick = () => showCreateImageModal();
   if (createImageModalClose) createImageModalClose.onclick = () => closeCreateImageModal();
-  if (createImageMapBtn) createImageMapBtn.onclick = () => handleCreateImageMap();
-  if (createImageCoverBtn) createImageCoverBtn.onclick = () => handleCreateImageCover();
-  if (createImageBackBtn) createImageBackBtn.onclick = () => resetCreateImageModal();
+  if (createImageBackBtn) createImageBackBtn.onclick = () => closeCreateImageModal();
   if (createImageModal) createImageModal.onclick = (e) => { if (e.target === createImageModal) closeCreateImageModal(); };
 
   const travelogueModal = document.getElementById('travelogueModal');
