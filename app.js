@@ -244,6 +244,11 @@ function getChildTrips(parentId) {
   return getOrderedTrips().filter(t => t.parentId === parentId);
 }
 
+/** トリップ名が「Plan」で始まる場合は計画段階の旅として扱い、ルート線を点線で表示する */
+function isPlanTrip(trip) {
+  return /^plan/i.test((trip?.name || '').trim());
+}
+
 /** 写真ポップアップを安全に閉じる */
 function closePhotoPopup() {
   if (!photoPopup) return;
@@ -2806,19 +2811,21 @@ async function updateMapMarkers() {
       const isPlayback = document.body.classList.contains('app-playing');
       const routeWeight = isPlayback ? 7 : 4;
       const routeOpacity = isPlayback ? 1.0 : 0.8;
+      // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で表示する
+      const dashArray = isPlanTrip(trip) ? '12, 10' : null;
       if (isPlayback) {
         // 自動再生中: 外側グロー + 内側ルートの二重線で目立たせる
         const glowLayer = L.polyline(pts, {
-          color, weight: 18, opacity: 0.2, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+          color, weight: 18, opacity: 0.2, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round', dashArray
         }).addTo(map);
         gpxLayers.push(glowLayer);
         const shadowLayer = L.polyline(pts, {
-          color: '#ffffff', weight: 10, opacity: 0.5, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+          color: '#ffffff', weight: 10, opacity: 0.5, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round', dashArray
         }).addTo(map);
         gpxLayers.push(shadowLayer);
       }
       const layer = L.polyline(pts, {
-        color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round'
+        color, weight: routeWeight, opacity: routeOpacity, smoothFactor: 1.5, lineCap: 'round', lineJoin: 'round', dashArray
       }).addTo(map);
       gpxLayers.push(layer);
       // allLatLngsには追加しない（写真マーカーのみで範囲を決定）
@@ -8718,13 +8725,16 @@ async function generateEinkMapDataUrl(trip) {
   if (sourceTrips.length === 0) return null;
 
   const perTripData = await Promise.all(sourceTrips.map(t => getTripRouteAndLandmarks(t)));
-  // トリップをまたいで線をつながないよう、ルートはトリップごとに独立したセグメントとして保持する
-  const routeSegments = perTripData.map(d => d.routeCoords).filter(coords => coords.length > 0);
+  // トリップをまたいで線をつながないよう、ルートはトリップごとに独立したセグメントとして保持する。
+  // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描くため、由来トリップも保持する。
+  const routeSegments = perTripData
+    .map((d, i) => ({ coords: d.routeCoords, isPlan: isPlanTrip(sourceTrips[i]) }))
+    .filter(seg => seg.coords.length > 0);
   const landmarkPhotos = perTripData.flatMap(d => d.landmarkPhotos);
 
   if (landmarkPhotos.length === 0 && routeSegments.length === 0) return null;
 
-  const allCoords = [...routeSegments.flat(), ...landmarkPhotos.map(x => x.coord)];
+  const allCoords = [...routeSegments.flatMap(seg => seg.coords), ...landmarkPhotos.map(x => x.coord)];
   // GPXトラックは数千点になり得るため、スプレッド演算子でMath.min/maxに渡すと
   // 呼び出しスタック上限を超える（Maximum call stack size exceeded）。reduceで集計する。
   const minMaxOf = (values) => values.reduce(
@@ -8825,18 +8835,21 @@ async function generateEinkMapDataUrl(trip) {
   ctx.font = '24px sans-serif';
   ctx.fillText('ランドマークマップ', canvasW / 2, 105);
 
-  // ルート線（トリップごとに独立したセグメントとして描画し、トリップ間を線でつながない）
-  routeSegments.forEach(coords => {
-    if (coords.length <= 1) return;
+  // ルート線（トリップごとに独立したセグメントとして描画し、トリップ間を線でつながない）。
+  // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描く。
+  routeSegments.forEach(seg => {
+    if (seg.coords.length <= 1) return;
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 5;
+    ctx.setLineDash(seg.isPlan ? [16, 12] : []);
     ctx.beginPath();
-    coords.forEach((c, i) => {
+    seg.coords.forEach((c, i) => {
       const pt = toCanvas(c.lat, c.lng);
       if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
     });
     ctx.stroke();
   });
+  ctx.setLineDash([]); // 以降の描画（ランドマーク円・方位マークなど）に点線が影響しないようリセット
 
   // ランドマーク番号（番号の昇順で描画。番号は既存のスタンプラリー機能のlandmarkNoをそのまま使う）
   const sortedLandmarks = [...landmarkPhotos].sort((a, b) => {
