@@ -8886,6 +8886,104 @@ async function generateEinkMapDataUrl(trip) {
   return canvas.toDataURL('image/png');
 }
 
+/** canvas上のテキストがmaxWidthに収まるよう、必要なら末尾を「…」で省略する */
+function truncateTextToWidth(ctx, text, maxWidth) {
+  if (!text) return '';
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let truncated = text;
+  while (truncated.length > 1 && ctx.measureText(truncated + '…').width > maxWidth) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated + '…';
+}
+
+/**
+ * E-Ink端末向けの、スタンプ（isStamp写真）を判子風のシンプルな図案にして並べたシート画像を
+ * canvasで直接描画する。親トリップの場合はgetStampListForTripが全子トリップのスタンプを
+ * 番号順に集約して返すため、既存のスタンプラリー機能と同じ集約結果をそのまま使う。
+ */
+function generateEinkStampSheetDataUrl(trip) {
+  const stamps = getStampListForTrip(trip);
+  if (stamps.length === 0) return null;
+
+  // スタンプ数に応じて列数を決め、なるべく正方形に近いグリッドにする
+  const COLS = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(stamps.length * 1.4))));
+  const rows = Math.ceil(stamps.length / COLS);
+
+  const CELL = 220, PAD = 30, TOP_MARGIN = 130, BOTTOM_MARGIN = 60;
+  const canvasW = COLS * CELL + PAD * 2;
+  const canvasH = rows * CELL + TOP_MARGIN + BOTTOM_MARGIN;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext('2d');
+
+  // E-Inkは白地に黒がもっともくっきり表示されるため、白背景+黒線のみで構成する
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvasW, canvasH);
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, canvasW - 4, canvasH - 4);
+
+  // タイトル
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 46px sans-serif';
+  ctx.fillText(trip.name || '旅行', canvasW / 2, 68);
+  ctx.font = '24px sans-serif';
+  ctx.fillText('スタンプ一覧', canvasW / 2, 105);
+
+  // 親トリップ集約時は番号が子トリップ間で重複し得るため、由来トリップ名を添えて区別する
+  const showSourceTripName = !!trip.isParent;
+
+  stamps.forEach((stamp, i) => {
+    const col = i % COLS, row = Math.floor(i / COLS);
+    const cx = PAD + col * CELL + CELL / 2;
+    const cy = TOP_MARGIN + row * CELL + CELL / 2;
+    const outerR = CELL * 0.38;
+    const innerR = outerR - 10;
+
+    // 判子（はんこ）風の二重丸
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = '#000000';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const label = String(stamp.landmarkNo || (i + 1));
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${label.length >= 3 ? 40 : 52}px sans-serif`;
+    ctx.fillText(label, cx, cy - (stamp.name ? 12 : 0));
+
+    if (stamp.name) {
+      ctx.font = '16px sans-serif';
+      ctx.fillText(truncateTextToWidth(ctx, stamp.name, outerR * 1.6), cx, cy + outerR * 0.55);
+    }
+
+    if (showSourceTripName && stamp._tripName) {
+      ctx.textBaseline = 'alphabetic';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(truncateTextToWidth(ctx, stamp._tripName, CELL - 16), cx, TOP_MARGIN + row * CELL + CELL - 14);
+      ctx.textBaseline = 'middle';
+    }
+  });
+  ctx.textBaseline = 'alphabetic';
+
+  // フッター
+  ctx.font = '18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`全${stamps.length}スタンプ`, canvasW / 2, canvasH - 20);
+
+  return canvas.toDataURL('image/png');
+}
+
 /**
  * E-Ink端末向けの、白黒中心でシャープな線画スタイルのカバー画像をAIで生成する。
  * 既存の「アニメ生成」表紙系スタイルと同じ組み立て（情景ブリーフ＋参照写真）を使うが、
@@ -9401,6 +9499,37 @@ async function showAnimeModal() {
     } catch (err) {
       console.error('マップ画像生成エラー:', err);
       showCreateImageResult('マップ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+      openCreateImageModal();
+    } finally {
+      if (btn) btn.textContent = originalBtnText;
+    }
+    return;
+  }
+
+  // スタンプInk: AIを使わずcanvasで決定論的に生成するため、APIキー不要でここで完結させる
+  if (styleId === 'stamp-ink') {
+    try {
+      if (btn) btn.textContent = 'スタンプ生成中...';
+      setStatus('スタンプ画像を生成中...');
+      if (trip.isParent && getChildTrips(trip.id).length === 0) {
+        showCreateImageResult('この親トリップには子トリップがありません。子トリップを作成し、スタンプを追加してください。', null, null);
+        openCreateImageModal();
+        return;
+      }
+      const dataUrl = generateEinkStampSheetDataUrl(trip);
+      if (!dataUrl) {
+        const msg = trip.isParent
+          ? 'この親トリップの子トリップに、スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。'
+          : 'スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。';
+        showCreateImageResult(msg, null, null);
+      } else {
+        showCreateImageResult('スタンプ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_stamps.png`);
+        setStatus('スタンプ画像を作成しました');
+      }
+      openCreateImageModal();
+    } catch (err) {
+      console.error('スタンプ画像生成エラー:', err);
+      showCreateImageResult('スタンプ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
       openCreateImageModal();
     } finally {
       if (btn) btn.textContent = originalBtnText;
