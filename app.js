@@ -8767,20 +8767,23 @@ async function generateEinkMapDataUrl(trip) {
   if (landmarkPhotos.length === 0 && routeSegments.length === 0) return null;
 
   const allCoords = [...routeSegments.flat(), ...landmarkPhotos.map(x => x.coord)];
-  const lats = allCoords.map(c => c.lat);
-  const lngs = allCoords.map(c => c.lng);
-  const latMin = Math.min(...lats), latMax = Math.max(...lats);
-  const lngMin = Math.min(...lngs), lngMax = Math.max(...lngs);
+  // GPXトラックは数千点になり得るため、スプレッド演算子でMath.min/maxに渡すと
+  // 呼び出しスタック上限を超える（Maximum call stack size exceeded）。reduceで集計する。
+  const minMaxOf = (values) => values.reduce(
+    (acc, v) => ({ min: Math.min(acc.min, v), max: Math.max(acc.max, v) }),
+    { min: Infinity, max: -Infinity }
+  );
+  const latRange = minMaxOf(allCoords.map(c => c.lat));
   // 緯度によって経度1度あたりの距離が変わるため、平均緯度でcos補正して形の歪みを抑える
-  const avgLatRad = ((latMin + latMax) / 2) * Math.PI / 180;
+  const avgLatRad = ((latRange.min + latRange.max) / 2) * Math.PI / 180;
   const cosLat = Math.max(0.15, Math.cos(avgLatRad));
   const project = (lat, lng) => ({ x: lng * cosLat, y: lat });
 
   const projected = allCoords.map(c => project(c.lat, c.lng));
-  const minX = Math.min(...projected.map(p => p.x));
-  const maxX = Math.max(...projected.map(p => p.x));
-  const minY = Math.min(...projected.map(p => p.y));
-  const maxY = Math.max(...projected.map(p => p.y));
+  const xRange = minMaxOf(projected.map(p => p.x));
+  const yRange = minMaxOf(projected.map(p => p.y));
+  const minX = xRange.min, maxX = xRange.max;
+  const minY = yRange.min, maxY = yRange.max;
   // 単一地点や直線的なルートで幅/高さが0になるのを防ぐ
   const spanX = Math.max(maxX - minX, 0.0005);
   const spanY = Math.max(maxY - minY, 0.0005);
