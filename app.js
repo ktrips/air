@@ -6192,12 +6192,15 @@ function escapeHtml(s) {
  * スタイル（地球の歩き方風・少年ジャンプ風・旅行雑誌風・出来事生成）を優先する。
  * 旅行記ページの表紙選定ロジックと同じ基準。
  */
+// マップInk/スタンプInkは表紙として使う絵ではなく参照用の図なので、トリップの代表画像には選ばない
+const NON_COVER_ANIME_STYLES = new Set(['meisho-ukiyoe', 'map-ink', 'stamp-ink']);
+
 function getAnimeCoverForTrip(trip) {
   const animes = trip?.generatedAnimes || trip?.animes || [];
   if (animes.length === 0) return null;
-  const coverAnimes = animes.filter(a => a.style && !String(a.style).startsWith('detail') && a.style !== 'meisho-ukiyoe');
+  const coverAnimes = animes.filter(a => a.style && !String(a.style).startsWith('detail') && !NON_COVER_ANIME_STYLES.has(a.style));
   if (coverAnimes.length > 0) return coverAnimes[0];
-  if (animes[0].style !== 'meisho-ukiyoe') return animes[0];
+  if (!NON_COVER_ANIME_STYLES.has(animes[0].style)) return animes[0];
   return null;
 }
 
@@ -9464,6 +9467,21 @@ async function generateImageWithAI(prompt, imageUrl, cfg) {
   }
 }
 
+/**
+ * Ink系（カバーInk/マップInk/スタンプInk）の生成結果をStorageに保存し、
+ * 既存の生成アニメ一覧（generatedAnimes/renderGeneratedAnimesList）に追加する。
+ * 一覧に表示されれば、生成アニメと同じ並び替え（← →）・削除（✕）がそのまま使える。
+ * ダウンロード用モーダルには引き続き元のdataUrlを使う（Storage URLは別オリジンのため
+ * <a download>で確実にダウンロードできるとは限らない）。
+ */
+async function persistInkImageToGallery(trip, dataUrl, style, filePrefix) {
+  const storageUrl = await uploadAnimeImageToStorage(trip.id, dataUrl, filePrefix);
+  if (!trip.generatedAnimes) trip.generatedAnimes = [];
+  trip.generatedAnimes.push({ url: storageUrl, timestamp: Date.now(), style });
+  await saveTrip({ silent: true });
+  renderGeneratedAnimesList();
+}
+
 async function showAnimeModal() {
   const trip = currentTrip;
   if (!trip) {
@@ -9473,7 +9491,7 @@ async function showAnimeModal() {
 
   const styleId = getSelectedAnimeStyle();
   const btn = document.getElementById('generateAnimeBtnViewer');
-  const originalBtnText = btn?.textContent || 'アニメ生成';
+  const originalBtnText = btn?.textContent || '画像生成';
 
   // マップInk: AIを使わずcanvasで決定論的に生成するため、APIキー不要でここで完結させる
   if (styleId === 'map-ink') {
@@ -9494,6 +9512,11 @@ async function showAnimeModal() {
       } else {
         showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_map.png`);
         setStatus('マップ画像を作成しました');
+        try {
+          await persistInkImageToGallery(trip, dataUrl, 'map-ink', 'mapink');
+        } catch (saveErr) {
+          console.error('マップ画像の保存エラー:', saveErr);
+        }
       }
       openCreateImageModal();
     } catch (err) {
@@ -9525,6 +9548,11 @@ async function showAnimeModal() {
       } else {
         showCreateImageResult('スタンプ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_stamps.png`);
         setStatus('スタンプ画像を作成しました');
+        try {
+          await persistInkImageToGallery(trip, dataUrl, 'stamp-ink', 'stampink');
+        } catch (saveErr) {
+          console.error('スタンプ画像の保存エラー:', saveErr);
+        }
       }
       openCreateImageModal();
     } catch (err) {
@@ -9578,6 +9606,11 @@ async function showAnimeModal() {
           showCreateImageResult('カバー画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_cover.png`);
           openCreateImageModal();
           setStatus('カバー画像を作成しました');
+          try {
+            await persistInkImageToGallery(trip, dataUrl, 'cover-ink', 'coverink');
+          } catch (saveErr) {
+            console.error('カバー画像の保存エラー:', saveErr);
+          }
         } else {
           showCreateImageResult('カバー画像の生成に失敗しました。APIキーと入力内容を確認してください。', null, null);
           openCreateImageModal();
