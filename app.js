@@ -244,9 +244,9 @@ function getChildTrips(parentId) {
   return getOrderedTrips().filter(t => t.parentId === parentId);
 }
 
-/** トリップ名が「Plan」で始まる場合は計画段階の旅として扱い、ルート線を点線で表示する */
+/** トリップ名が「Plan」または「P」で始まる場合は計画段階の旅として扱い、ルート線を点線で表示する */
 function isPlanTrip(trip) {
-  return /^plan/i.test((trip?.name || '').trim());
+  return /^p/i.test((trip?.name || '').trim());
 }
 
 /** そのトリップをアプリ内で開き直せる共有URLを組み立てる（QRコード埋め込み用） */
