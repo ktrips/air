@@ -8689,11 +8689,18 @@ function sanitizeFileNamePart(name) {
 async function handleCreateImageMap() {
   const trip = currentTrip;
   if (!trip) { alert('トリップを選択してください'); return; }
+  if (trip.isParent && getChildTrips(trip.id).length === 0) {
+    showCreateImageResult('この親トリップには子トリップがありません。子トリップを作成し、写真やGPXを追加してください。', null, null);
+    return;
+  }
   showCreateImageResult('マップ画像を生成中...', null, null);
   try {
     const dataUrl = await generateEinkMapDataUrl(trip);
     if (!dataUrl) {
-      showCreateImageResult('ランドマーク番号を設定した写真、またはGPS付きの写真がありません。写真編集でランドマーク番号やGPS位置を設定してください。', null, null);
+      const msg = trip.isParent
+        ? 'この親トリップの子トリップに、ランドマーク番号を設定した写真、またはGPS付きの写真がありません。各子トリップの写真編集でランドマーク番号やGPS位置を設定してください。'
+        : 'ランドマーク番号を設定した写真、またはGPS付きの写真がありません。写真編集でランドマーク番号やGPS位置を設定してください。';
+      showCreateImageResult(msg, null, null);
       return;
     }
     showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_map.png`);
@@ -8721,11 +8728,10 @@ async function handleCreateImageCover() {
 }
 
 /**
- * E-Ink端末向けの、ランドマーク番号を示すシンプルな地図画像をcanvasで直接描画する。
- * AI生成だと番号や位置が不正確になりがちなため、既存のlandmarkNo/GPSデータから
- * 決定論的に（AIを使わず）描画する。
+ * 単一トリップ分のGPXルート座標とランドマーク写真を取得する。
+ * 親トリップのマップ生成では子トリップごとにこれを呼び出して集約する。
  */
-async function generateEinkMapDataUrl(trip) {
+async function getTripRouteAndLandmarks(trip) {
   const photos = trip.photos || [];
   const landmarkPhotos = photos
     .map(p => ({ photo: p, coord: ensureLatLng(p.lat, p.lng) }))
@@ -8739,10 +8745,28 @@ async function generateEinkMapDataUrl(trip) {
   if (routeCoords.length <= 1) {
     routeCoords = photos.map(p => ensureLatLng(p.lat, p.lng)).filter(Boolean);
   }
+  return { routeCoords, landmarkPhotos };
+}
 
-  if (landmarkPhotos.length === 0 && routeCoords.length === 0) return null;
+/**
+ * E-Ink端末向けの、ランドマーク番号を示すシンプルな地図画像をcanvasで直接描画する。
+ * AI生成だと番号や位置が不正確になりがちなため、既存のlandmarkNo/GPSデータから
+ * 決定論的に（AIを使わず）描画する。
+ * 親トリップが選択された場合は、写真・GPSを持たない親トリップ自身の代わりに
+ * 全ての子トリップ（getChildTrips）のランドマーク・ルートを集約して描画する。
+ */
+async function generateEinkMapDataUrl(trip) {
+  const sourceTrips = trip.isParent ? getChildTrips(trip.id) : [trip];
+  if (sourceTrips.length === 0) return null;
 
-  const allCoords = [...routeCoords, ...landmarkPhotos.map(x => x.coord)];
+  const perTripData = await Promise.all(sourceTrips.map(t => getTripRouteAndLandmarks(t)));
+  // トリップをまたいで線をつながないよう、ルートはトリップごとに独立したセグメントとして保持する
+  const routeSegments = perTripData.map(d => d.routeCoords).filter(coords => coords.length > 0);
+  const landmarkPhotos = perTripData.flatMap(d => d.landmarkPhotos);
+
+  if (landmarkPhotos.length === 0 && routeSegments.length === 0) return null;
+
+  const allCoords = [...routeSegments.flat(), ...landmarkPhotos.map(x => x.coord)];
   const lats = allCoords.map(c => c.lat);
   const lngs = allCoords.map(c => c.lng);
   const latMin = Math.min(...lats), latMax = Math.max(...lats);
@@ -8804,17 +8828,18 @@ async function generateEinkMapDataUrl(trip) {
   ctx.font = '24px sans-serif';
   ctx.fillText('ランドマークマップ', canvasW / 2, 105);
 
-  // ルート線
-  if (routeCoords.length > 1) {
+  // ルート線（トリップごとに独立したセグメントとして描画し、トリップ間を線でつながない）
+  routeSegments.forEach(coords => {
+    if (coords.length <= 1) return;
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 5;
     ctx.beginPath();
-    routeCoords.forEach((c, i) => {
+    coords.forEach((c, i) => {
       const pt = toCanvas(c.lat, c.lng);
       if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
     });
     ctx.stroke();
-  }
+  });
 
   // ランドマーク番号（番号の昇順で描画。番号は既存のスタンプラリー機能のlandmarkNoをそのまま使う）
   const sortedLandmarks = [...landmarkPhotos].sort((a, b) => {
