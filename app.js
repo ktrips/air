@@ -8623,6 +8623,307 @@ const ANIME_STYLES = {
   }
 };
 
+// E-Ink端末（電子ペーパー）向けカバー画像生成のプロンプト前置き。
+// 写真的な諧調やグラデーションはE-Inkで潰れるため、白黒中心のシャープな線画を明示的に指示する。
+const EINK_COVER_PROMPT = 'Create a sharp, high-contrast cover illustration optimized for E-Ink e-paper displays (like a Kindle or reMarkable). Use a near black-and-white palette (avoid soft gradients and subtle gray tones that disappear on E-Ink). Bold, crisp linework, flat shapes, strong contrast, minimalist composition with few large elements rather than fine detail. Large, bold, clearly legible typography for the title. No photographic realism, no blur, no soft shadows, no fine textures. ';
+
+function showCreateImageModal() {
+  const modal = document.getElementById('createImageModal');
+  if (!modal) return;
+  resetCreateImageModal();
+  modal.classList.add('open');
+}
+
+function closeCreateImageModal() {
+  document.getElementById('createImageModal')?.classList.remove('open');
+}
+
+function resetCreateImageModal() {
+  const choiceView = document.getElementById('createImageChoiceView');
+  const resultView = document.getElementById('createImageResultView');
+  const previewWrap = document.getElementById('createImagePreviewWrap');
+  const downloadLink = document.getElementById('createImageDownloadLink');
+  const statusEl = document.getElementById('createImageStatus');
+  if (choiceView) choiceView.style.display = '';
+  if (resultView) resultView.style.display = 'none';
+  if (previewWrap) previewWrap.innerHTML = '';
+  if (downloadLink) { downloadLink.style.display = 'none'; downloadLink.removeAttribute('href'); }
+  if (statusEl) statusEl.textContent = '';
+}
+
+function showCreateImageResult(statusText, dataUrl, filename) {
+  const choiceView = document.getElementById('createImageChoiceView');
+  const resultView = document.getElementById('createImageResultView');
+  const previewWrap = document.getElementById('createImagePreviewWrap');
+  const downloadLink = document.getElementById('createImageDownloadLink');
+  const statusEl = document.getElementById('createImageStatus');
+  if (choiceView) choiceView.style.display = 'none';
+  if (resultView) resultView.style.display = '';
+  if (statusEl) statusEl.textContent = statusText || '';
+  if (previewWrap) {
+    previewWrap.innerHTML = '';
+    if (dataUrl) {
+      const img = document.createElement('img');
+      img.src = dataUrl;
+      img.alt = filename || '生成画像';
+      img.style.cssText = 'max-width:100%;max-height:50vh;border:1px solid var(--border);border-radius:4px;';
+      previewWrap.appendChild(img);
+    }
+  }
+  if (downloadLink) {
+    if (dataUrl) {
+      downloadLink.href = dataUrl;
+      downloadLink.download = filename || 'image.png';
+      downloadLink.style.display = '';
+    } else {
+      downloadLink.style.display = 'none';
+      downloadLink.removeAttribute('href');
+    }
+  }
+}
+
+function sanitizeFileNamePart(name) {
+  return (name || 'trip').replace(/[\\/:*?"<>|]/g, '_').trim() || 'trip';
+}
+
+async function handleCreateImageMap() {
+  const trip = currentTrip;
+  if (!trip) { alert('トリップを選択してください'); return; }
+  showCreateImageResult('マップ画像を生成中...', null, null);
+  try {
+    const dataUrl = await generateEinkMapDataUrl(trip);
+    if (!dataUrl) {
+      showCreateImageResult('ランドマーク番号を設定した写真、またはGPS付きの写真がありません。写真編集でランドマーク番号やGPS位置を設定してください。', null, null);
+      return;
+    }
+    showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_map.png`);
+  } catch (err) {
+    console.error('マップ画像生成エラー:', err);
+    showCreateImageResult('マップ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+  }
+}
+
+async function handleCreateImageCover() {
+  const trip = currentTrip;
+  if (!trip) { alert('トリップを選択してください'); return; }
+  showCreateImageResult('カバー画像を生成中...（数十秒かかります）', null, null);
+  try {
+    const dataUrl = await generateEinkCoverImage(trip);
+    if (!dataUrl) {
+      showCreateImageResult('カバー画像の生成に失敗しました。AI設定でAPIキーを確認してください。', null, null);
+      return;
+    }
+    showCreateImageResult('カバー画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_cover.png`);
+  } catch (err) {
+    console.error('カバー画像生成エラー:', err);
+    showCreateImageResult('カバー画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+  }
+}
+
+/**
+ * E-Ink端末向けの、ランドマーク番号を示すシンプルな地図画像をcanvasで直接描画する。
+ * AI生成だと番号や位置が不正確になりがちなため、既存のlandmarkNo/GPSデータから
+ * 決定論的に（AIを使わず）描画する。
+ */
+async function generateEinkMapDataUrl(trip) {
+  const photos = trip.photos || [];
+  const landmarkPhotos = photos
+    .map(p => ({ photo: p, coord: ensureLatLng(p.lat, p.lng) }))
+    .filter(x => x.coord && x.photo.landmarkNo != null && String(x.photo.landmarkNo).trim() !== '');
+
+  let routeCoords = [];
+  try {
+    const gpxText = await getGpxContent(trip);
+    if (gpxText) routeCoords = parseGpxPoints(gpxText).map(([lat, lng]) => ({ lat, lng }));
+  } catch (_) {}
+  if (routeCoords.length <= 1) {
+    routeCoords = photos.map(p => ensureLatLng(p.lat, p.lng)).filter(Boolean);
+  }
+
+  if (landmarkPhotos.length === 0 && routeCoords.length === 0) return null;
+
+  const allCoords = [...routeCoords, ...landmarkPhotos.map(x => x.coord)];
+  const lats = allCoords.map(c => c.lat);
+  const lngs = allCoords.map(c => c.lng);
+  const latMin = Math.min(...lats), latMax = Math.max(...lats);
+  const lngMin = Math.min(...lngs), lngMax = Math.max(...lngs);
+  // 緯度によって経度1度あたりの距離が変わるため、平均緯度でcos補正して形の歪みを抑える
+  const avgLatRad = ((latMin + latMax) / 2) * Math.PI / 180;
+  const cosLat = Math.max(0.15, Math.cos(avgLatRad));
+  const project = (lat, lng) => ({ x: lng * cosLat, y: lat });
+
+  const projected = allCoords.map(c => project(c.lat, c.lng));
+  const minX = Math.min(...projected.map(p => p.x));
+  const maxX = Math.max(...projected.map(p => p.x));
+  const minY = Math.min(...projected.map(p => p.y));
+  const maxY = Math.max(...projected.map(p => p.y));
+  // 単一地点や直線的なルートで幅/高さが0になるのを防ぐ
+  const spanX = Math.max(maxX - minX, 0.0005);
+  const spanY = Math.max(maxY - minY, 0.0005);
+
+  const TOP_MARGIN = 130, BOTTOM_MARGIN = 90, SIDE_MARGIN = 70, MAX_SIDE = 1300;
+  const aspect = spanX / spanY;
+  let drawWidth, drawHeight;
+  if (aspect >= 1) {
+    drawWidth = MAX_SIDE;
+    drawHeight = Math.max(500, Math.round(MAX_SIDE / aspect));
+  } else {
+    drawHeight = MAX_SIDE;
+    drawWidth = Math.max(500, Math.round(MAX_SIDE * aspect));
+  }
+  const canvasW = drawWidth + SIDE_MARGIN * 2;
+  const canvasH = drawHeight + TOP_MARGIN + BOTTOM_MARGIN;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext('2d');
+
+  // E-Inkは白地に黒がもっともくっきり表示されるため、白背景+黒線のみで構成する
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvasW, canvasH);
+  ctx.strokeStyle = '#000000';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, canvasW - 4, canvasH - 4);
+
+  const toCanvas = (lat, lng) => {
+    const p = project(lat, lng);
+    const nx = (p.x - minX) / spanX;
+    const ny = (p.y - minY) / spanY;
+    return {
+      x: SIDE_MARGIN + nx * drawWidth,
+      y: TOP_MARGIN + (1 - ny) * drawHeight
+    };
+  };
+
+  // タイトル
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 46px sans-serif';
+  ctx.fillText(trip.name || '旅行マップ', canvasW / 2, 68);
+  ctx.font = '24px sans-serif';
+  ctx.fillText('ランドマークマップ', canvasW / 2, 105);
+
+  // ルート線
+  if (routeCoords.length > 1) {
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    routeCoords.forEach((c, i) => {
+      const pt = toCanvas(c.lat, c.lng);
+      if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.stroke();
+  }
+
+  // ランドマーク番号（番号の昇順で描画。番号は既存のスタンプラリー機能のlandmarkNoをそのまま使う）
+  const sortedLandmarks = [...landmarkPhotos].sort((a, b) => {
+    const na = parseFloat(a.photo.landmarkNo), nb = parseFloat(b.photo.landmarkNo);
+    if (Number.isNaN(na) || Number.isNaN(nb)) return 0;
+    return na - nb;
+  });
+
+  sortedLandmarks.forEach(({ photo, coord }) => {
+    const pt = toCanvas(coord.lat, coord.lng);
+    const label = String(photo.landmarkNo);
+    const radius = label.length >= 3 ? 34 : label.length === 2 ? 30 : 26;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#000000';
+    ctx.stroke();
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${label.length >= 3 ? 22 : 26}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, pt.x, pt.y + 1);
+  });
+  ctx.textBaseline = 'alphabetic';
+
+  // 方位マーク（N）: ヘッダー領域内に置き、地図の描画エリア（ランドマーク）と重ならないようにする
+  const compassX = canvasW - SIDE_MARGIN - 10, compassY = 30;
+  ctx.beginPath();
+  ctx.moveTo(compassX, compassY + 20);
+  ctx.lineTo(compassX - 8, compassY + 20);
+  ctx.lineTo(compassX, compassY);
+  ctx.lineTo(compassX + 8, compassY + 20);
+  ctx.closePath();
+  ctx.fillStyle = '#000000';
+  ctx.fill();
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', compassX, compassY + 36);
+
+  // フッター
+  if (sortedLandmarks.length > 0) {
+    ctx.font = '18px sans-serif';
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.fillText(`全${sortedLandmarks.length}ランドマーク`, canvasW / 2, canvasH - 30);
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+/**
+ * E-Ink端末向けの、白黒中心でシャープな線画スタイルのカバー画像をAIで生成する。
+ * 既存の「アニメ生成」表紙系スタイルと同じ組み立て（情景ブリーフ＋参照写真）を使うが、
+ * プロンプトはE-Ink向けの高コントラスト・線画指定に差し替える。
+ */
+async function generateEinkCoverImage(trip) {
+  const cfg = cachedAiConfig ?? (await loadUserAiConfig());
+  const provider = cfg?.provider || 'gemini';
+  const apiKey = cfg?.apiKey?.trim();
+  if (!apiKey) throw new Error('AI画像生成にはAPIキーが必要です。AI設定でAPIキーを入力してください。');
+  if (provider === 'anthropic') throw new Error('Anthropicは画像生成に対応していません。AI設定でGeminiまたはOpenAIを選択してください。');
+
+  const animeCfg = { provider, apiKey, model: cfg?.model || null };
+  const tripName = trip.name || '旅行';
+  const photos = trip.photos || [];
+  const places = [...new Set(photos.filter(p => p.placeName).map(p => p.placeName))];
+  const landmarks = photos.filter(p => p.landmarkNo);
+
+  const promptParts = [
+    EINK_COVER_PROMPT,
+    `画像内に「${tripName}」というタイトルを大きく太字で、はっきり読みやすく配置してください。`,
+    '',
+    `【表紙タイトル】${tripName}`
+  ];
+  if (places.length > 0) promptParts.push(`【訪問地】${places.slice(0, 8).join('、')}`);
+  if (landmarks.length > 0) {
+    const landmarkNames = landmarks.map(p => `${p.landmarkNo}: ${p.name || '名所'}`).slice(0, 5).join('、');
+    promptParts.push(`【主な立ち寄り先】${landmarkNames}`);
+  }
+
+  setStatus('カバー画像の雰囲気を要約中...');
+  const highlightDescriptions = [...new Set(photos.filter(p => p.description).map(p => p.description))].slice(0, 5);
+  const travelogueRaw = await getTravelogueTextForTrip(trip, 1000);
+  const briefSource = [trip.description, highlightDescriptions.join('。'), travelogueRaw].filter(Boolean).join('\n');
+  const sceneBrief = briefSource ? await buildSceneBrief(briefSource, animeCfg) : null;
+  if (sceneBrief) {
+    promptParts.push(`【旅の雰囲気】${sceneBrief}`);
+  } else if (trip.description) {
+    promptParts.push(`【旅行の説明】${trip.description}`);
+  }
+
+  promptParts.push('');
+  promptParts.push('【最重要】E-Ink端末での表示を前提に、白黒（またはごく少ないグレー階調）のみのシャープでくっきりした線画・フラットイラストにしてください。写真的なリアリズム、繊細なグラデーション、ぼかし、細かすぎるテクスチャは避けてください。');
+
+  setStatus('参照写真を準備中...');
+  const refImages = await buildAnimeReferenceImages(null, photos, 2);
+  const refPhotos = refImages.filter(r => r.kind === 'photo');
+  if (refPhotos.length > 0) {
+    promptParts.push('');
+    promptParts.push('【添付の参照写真】実際にこの旅で撮影した風景です。建物・自然の特徴だけを参考にし、シャープな線画イラストとして描き起こしてください。');
+  }
+
+  setStatus('E-ink向けカバー画像を生成中...');
+  const prompt = promptParts.join('\n');
+  return await generateImageWithAI(prompt, refImages.map(r => r.dataUrl), animeCfg);
+}
+
 /**
  * トリップの旅行記本文を取得する。
  * travelogueHtml はFirestore保存時に削除されるため通常は空で、
@@ -11024,6 +11325,19 @@ function initEventListeners() {
     aiProviderSelect.onchange = () => updateAiModelFieldVisibility(aiProviderSelect.value, null);
   }
   if (aiSettingsModal) aiSettingsModal.onclick = (e) => { if (e.target === aiSettingsModal) closeAiSettingsModal(); };
+
+  const createImageBtn = document.getElementById('createImageBtn');
+  const createImageModal = document.getElementById('createImageModal');
+  const createImageModalClose = document.getElementById('createImageModalClose');
+  const createImageMapBtn = document.getElementById('createImageMapBtn');
+  const createImageCoverBtn = document.getElementById('createImageCoverBtn');
+  const createImageBackBtn = document.getElementById('createImageBackBtn');
+  if (createImageBtn) createImageBtn.onclick = () => showCreateImageModal();
+  if (createImageModalClose) createImageModalClose.onclick = () => closeCreateImageModal();
+  if (createImageMapBtn) createImageMapBtn.onclick = () => handleCreateImageMap();
+  if (createImageCoverBtn) createImageCoverBtn.onclick = () => handleCreateImageCover();
+  if (createImageBackBtn) createImageBackBtn.onclick = () => resetCreateImageModal();
+  if (createImageModal) createImageModal.onclick = (e) => { if (e.target === createImageModal) closeCreateImageModal(); };
 
   const travelogueModal = document.getElementById('travelogueModal');
   const travelogueModalClose = document.getElementById('travelogueModalClose');
