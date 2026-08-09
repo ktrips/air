@@ -8893,7 +8893,7 @@ async function generateEinkMapDataUrl(trip) {
       ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
       ctx.clip();
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 2.2;
       coastlines.forEach(line => {
         // トリップ範囲（＋余白）にかすっている海岸線だけを描画対象にする（簡易バウンディングボックス判定）
         const isRelevant = line.some(([lat, lng]) =>
@@ -8913,20 +8913,57 @@ async function generateEinkMapDataUrl(trip) {
     console.warn('海岸線の描画に失敗（スキップ）:', err);
   }
 
-  // タイトル
-  ctx.fillStyle = '#000000';
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 46px sans-serif';
-  ctx.fillText(trip.name || '旅行マップ', canvasW / 2, 68);
-  ctx.font = '24px sans-serif';
-  ctx.fillText(`全${sortedLandmarks.length}ランドマーク`, canvasW / 2, 105);
+  // タイトル配置の判定: 下部中央のエリアにルート・ランドマークが何もかかっていなければ、
+  // 複数の子トリップを集約した広域マップなどで生まれる空白にタイトルを大きく収めて
+  // スペースを有効に使う。何かあれば従来通り上部の固定ヘッダーに表示する。
+  const bottomBoxHeight = Math.max(160, Math.round(drawHeight * 0.22));
+  const bottomBoxWidth = Math.round(drawWidth * 0.6);
+  const bottomBoxY0 = TOP_MARGIN + drawHeight - bottomBoxHeight;
+  const bottomBoxY1 = TOP_MARGIN + drawHeight;
+  const bottomBoxX0 = SIDE_MARGIN + (drawWidth - bottomBoxWidth) / 2;
+  const bottomBoxX1 = bottomBoxX0 + bottomBoxWidth;
+
+  let bottomBoxOccupied = false;
+  for (const c of allCoords) {
+    const pt = toCanvas(c.lat, c.lng);
+    if (pt.x >= bottomBoxX0 - 20 && pt.x <= bottomBoxX1 + 20 && pt.y >= bottomBoxY0 - 20 && pt.y <= bottomBoxY1) {
+      bottomBoxOccupied = true;
+      break;
+    }
+  }
+
+  if (!bottomBoxOccupied) {
+    // 下部の空白にタイトルを大きく表示
+    const centerX = (bottomBoxX0 + bottomBoxX1) / 2;
+    const centerY = (bottomBoxY0 + bottomBoxY1) / 2;
+    const availableWidth = bottomBoxWidth * 0.92;
+    const titleText = trip.name || '旅行マップ';
+    const titleFont = fitTextFontSize(ctx, titleText, availableWidth, Math.min(84, Math.round(bottomBoxHeight * 0.38)), 22);
+    const subtitleSize = Math.max(18, Math.round(titleFont * 0.42));
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${titleFont}px sans-serif`;
+    ctx.fillText(titleText, centerX, centerY - subtitleSize * 0.7);
+    ctx.font = `${subtitleSize}px sans-serif`;
+    ctx.fillText(`全${sortedLandmarks.length}ランドマーク`, centerX, centerY + titleFont * 0.55);
+    ctx.textBaseline = 'alphabetic';
+  } else {
+    // タイトル（上部の固定ヘッダー）
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 46px sans-serif';
+    ctx.fillText(trip.name || '旅行マップ', canvasW / 2, 68);
+    ctx.font = '24px sans-serif';
+    ctx.fillText(`全${sortedLandmarks.length}ランドマーク`, canvasW / 2, 105);
+  }
 
   // ルート線（トリップごとに独立したセグメントとして描画し、トリップ間を線でつながない）。
   // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描く。
   routeSegments.forEach(seg => {
     if (seg.coords.length <= 1) return;
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 6;
     ctx.setLineDash(seg.isPlan ? [16, 12] : []);
     ctx.beginPath();
     seg.coords.forEach((c, i) => {
@@ -8986,6 +9023,17 @@ function truncateTextToWidth(ctx, text, maxWidth) {
     truncated = truncated.slice(0, -1);
   }
   return truncated + '…';
+}
+
+/** テキストがmaxWidthに収まる最大のフォントサイズ（maxFontSize以下）を探す。省略はしない */
+function fitTextFontSize(ctx, text, maxWidth, maxFontSize, minFontSize = 16, weight = 'bold') {
+  let size = maxFontSize;
+  while (size > minFontSize) {
+    ctx.font = `${weight} ${size}px sans-serif`;
+    if (ctx.measureText(text).width <= maxWidth) break;
+    size -= 2;
+  }
+  return size;
 }
 
 /**
