@@ -8734,6 +8734,14 @@ async function generateEinkMapDataUrl(trip) {
 
   if (landmarkPhotos.length === 0 && routeSegments.length === 0) return null;
 
+  // 番号の昇順に並べる（番号は既存のスタンプラリー機能のlandmarkNoをそのまま使う）。
+  // 件数はタイトル下のサブタイトルに使うため、描画より前に確定させておく。
+  const sortedLandmarks = [...landmarkPhotos].sort((a, b) => {
+    const na = parseFloat(a.photo.landmarkNo), nb = parseFloat(b.photo.landmarkNo);
+    if (Number.isNaN(na) || Number.isNaN(nb)) return 0;
+    return na - nb;
+  });
+
   const allCoords = [...routeSegments.flatMap(seg => seg.coords), ...landmarkPhotos.map(x => x.coord)];
   // GPXトラックは数千点になり得るため、スプレッド演算子でMath.min/maxに渡すと
   // 呼び出しスタック上限を超える（Maximum call stack size exceeded）。reduceで集計する。
@@ -8757,7 +8765,8 @@ async function generateEinkMapDataUrl(trip) {
   const spanX = Math.max(maxX - minX, 0.0005);
   const spanY = Math.max(maxY - minY, 0.0005);
 
-  const TOP_MARGIN = 130, BOTTOM_MARGIN = 90, SIDE_MARGIN = 70, MAX_SIDE = 1300;
+  // フッターの文言は廃止したため、下マージンはボーダーの余白分だけで良い
+  const TOP_MARGIN = 130, BOTTOM_MARGIN = 40, SIDE_MARGIN = 70, MAX_SIDE = 1300;
   const aspect = spanX / spanY;
   let drawWidth, drawHeight;
   if (aspect >= 1) {
@@ -8833,7 +8842,7 @@ async function generateEinkMapDataUrl(trip) {
   ctx.font = 'bold 46px sans-serif';
   ctx.fillText(trip.name || '旅行マップ', canvasW / 2, 68);
   ctx.font = '24px sans-serif';
-  ctx.fillText('ランドマークマップ', canvasW / 2, 105);
+  ctx.fillText(`全${sortedLandmarks.length}ランドマーク`, canvasW / 2, 105);
 
   // ルート線（トリップごとに独立したセグメントとして描画し、トリップ間を線でつながない）。
   // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描く。
@@ -8851,13 +8860,7 @@ async function generateEinkMapDataUrl(trip) {
   });
   ctx.setLineDash([]); // 以降の描画（ランドマーク円・方位マークなど）に点線が影響しないようリセット
 
-  // ランドマーク番号（番号の昇順で描画。番号は既存のスタンプラリー機能のlandmarkNoをそのまま使う）
-  const sortedLandmarks = [...landmarkPhotos].sort((a, b) => {
-    const na = parseFloat(a.photo.landmarkNo), nb = parseFloat(b.photo.landmarkNo);
-    if (Number.isNaN(na) || Number.isNaN(nb)) return 0;
-    return na - nb;
-  });
-
+  // ランドマーク番号を描画（並び順・件数は冒頭で確定済みのsortedLandmarksを使う）
   sortedLandmarks.forEach(({ photo, coord }) => {
     const pt = toCanvas(coord.lat, coord.lng);
     const label = String(photo.landmarkNo);
@@ -8890,14 +8893,6 @@ async function generateEinkMapDataUrl(trip) {
   ctx.font = 'bold 14px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('N', compassX, compassY + 36);
-
-  // フッター
-  if (sortedLandmarks.length > 0) {
-    ctx.font = '18px sans-serif';
-    ctx.fillStyle = '#000000';
-    ctx.textAlign = 'center';
-    ctx.fillText(`全${sortedLandmarks.length}ランドマーク`, canvasW / 2, canvasH - 30);
-  }
 
   return canvas.toDataURL('image/png');
 }
