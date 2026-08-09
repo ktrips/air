@@ -249,6 +249,83 @@ function isPlanTrip(trip) {
   return /^plan/i.test((trip?.name || '').trim());
 }
 
+/** そのトリップをアプリ内で開き直せる共有URLを組み立てる（QRコード埋め込み用） */
+function buildTripShareUrl(trip) {
+  const base = window.location.origin + window.location.pathname;
+  if (!trip?.id) return base;
+  return `${base}?t=${encodeURIComponent(trip.id)}`;
+}
+
+/**
+ * canvasの右下に、指定URLのQRコードを白い余白（クワイエットゾーン）付きで描画する。
+ * assets/js/qrcode.js（kazuhikoarase/qrcode-generator、MIT）が提供するグローバルqrcodeを使う。
+ * 下に何が描かれていても確実にスキャンできるよう、QR本体の前に白背景を敷く。
+ */
+function drawQrCodeCorner(ctx, url, canvasW, canvasH, opts = {}) {
+  if (!window.qrcode || !url) return;
+  try {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    const count = qr.getModuleCount();
+
+    const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.12);
+    const margin = opts.margin ?? 16; // クワイエットゾーン
+    const edgeMargin = opts.edgeMargin ?? 22; // キャンバス端からの余白
+    const boxSize = qrSize + margin * 2;
+    const x = canvasW - boxSize - edgeMargin;
+    const y = canvasH - boxSize - edgeMargin;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x, y, boxSize, boxSize);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, boxSize, boxSize);
+
+    // セル境界をピクセル単位に丸めて隙間（アンチエイリアスによる白い筋）が出ないようにする
+    const cell = qrSize / count;
+    ctx.fillStyle = '#000000';
+    for (let r = 0; r < count; r++) {
+      const py0 = Math.round(y + margin + r * cell);
+      const py1 = Math.round(y + margin + (r + 1) * cell);
+      for (let c = 0; c < count; c++) {
+        if (!qr.isDark(r, c)) continue;
+        const px0 = Math.round(x + margin + c * cell);
+        const px1 = Math.round(x + margin + (c + 1) * cell);
+        ctx.fillRect(px0, py0, px1 - px0, py1 - py0);
+      }
+    }
+  } catch (err) {
+    console.warn('QRコードの描画に失敗（スキップ）:', err);
+  }
+}
+
+/**
+ * AI生成済みの画像（dataURL）にQRコードを合成する。data:URLはCORSタイントの
+ * 対象にならないため、Canvasへの読み込み・再書き出しは安全に行える。
+ */
+async function overlayQrCodeOnDataUrl(dataUrl, url) {
+  if (!dataUrl) return dataUrl;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = dataUrl;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    drawQrCodeCorner(ctx, url, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  } catch (err) {
+    console.warn('QRコードの合成に失敗（元画像をそのまま使用）:', err);
+    return dataUrl;
+  }
+}
+
 /** 写真ポップアップを安全に閉じる */
 function closePhotoPopup() {
   if (!photoPopup) return;
@@ -8894,6 +8971,9 @@ async function generateEinkMapDataUrl(trip) {
   ctx.textAlign = 'center';
   ctx.fillText('N', compassX, compassY + 36);
 
+  // 右下にこのトリップを開けるQRコードを表示する
+  drawQrCodeCorner(ctx, buildTripShareUrl(trip), canvasW, canvasH);
+
   return canvas.toDataURL('image/png');
 }
 
@@ -8991,6 +9071,9 @@ function generateEinkStampSheetDataUrl(trip) {
   ctx.font = '18px sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(`全${stamps.length}スタンプ`, canvasW / 2, canvasH - 20);
+
+  // 右下にこのトリップを開けるQRコードを表示する
+  drawQrCodeCorner(ctx, buildTripShareUrl(trip), canvasW, canvasH);
 
   return canvas.toDataURL('image/png');
 }
@@ -9609,7 +9692,9 @@ async function showAnimeModal() {
       setStatus('E-ink向けカバー画像を生成中...');
       if (btn) btn.textContent = 'カバー生成中...';
       try {
-        const dataUrl = await generateEinkCoverImage(trip, animeCfg);
+        const rawDataUrl = await generateEinkCoverImage(trip, animeCfg);
+        // AI生成画像にはQRコードが含まれないため、右下に合成する
+        const dataUrl = rawDataUrl ? await overlayQrCodeOnDataUrl(rawDataUrl, buildTripShareUrl(trip)) : null;
         if (dataUrl) {
           showCreateImageResult('カバー画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_cover.png`);
           openCreateImageModal();
