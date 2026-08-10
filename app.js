@@ -8753,20 +8753,21 @@ function sanitizeFileNamePart(name) {
   return (name || 'trip').replace(/[\\/:*?"<>|]/g, '_').trim() || 'trip';
 }
 
-// 海岸線データ（Natural Earth 110m、パブリックドメイン）。
-// [lat, lng]の折れ線配列を事前変換してassets/geo/に同梱し、実行時のネットワーク依存や
+// 陸地ポリゴンデータ（Natural Earth 110m land、パブリックドメイン）。
+// 各要素は1つの陸地（島・大陸）を表す輪の配列＝[外輪, 穴1, 穴2, ...]、
+// 各輪は[lat, lng]の配列。事前変換してassets/geo/に同梱し、実行時のネットワーク依存や
 // タイル画像のCORS問題（canvasが汚染されダウンロードできなくなる）を避ける。
-let coastlineDataPromise = null;
-async function loadCoastlineData() {
-  if (!coastlineDataPromise) {
-    coastlineDataPromise = fetch('assets/geo/coastline-110m.json')
+let landPolygonDataPromise = null;
+async function loadLandPolygonData() {
+  if (!landPolygonDataPromise) {
+    landPolygonDataPromise = fetch('assets/geo/land-110m.json')
       .then(res => (res.ok ? res.json() : []))
       .catch(err => {
-        console.warn('海岸線データの取得に失敗（スキップ）:', err);
+        console.warn('陸地データの取得に失敗（スキップ）:', err);
         return [];
       });
   }
-  return coastlineDataPromise;
+  return landPolygonDataPromise;
 }
 
 /**
@@ -8882,39 +8883,54 @@ async function generateEinkMapDataUrl(trip) {
     };
   };
 
-  // 海岸線（関係する陸地の輪郭）を背景として描画。トリップ範囲より少し広めの範囲を対象にする。
-  // ルート・ランドマークより細い線にして、主役（ルート・番号）を視覚的に優先させる。
-  try {
-    const coastlines = await loadCoastlineData();
-    if (coastlines.length > 0) {
-      const latPad = Math.max((latRange.max - latRange.min) * 0.3, 0.05);
-      const lngPad = Math.max((lngRange.max - lngRange.min) * 0.3, 0.05);
-      const boxLatMin = latRange.min - latPad, boxLatMax = latRange.max + latPad;
-      const boxLngMin = lngRange.min - lngPad, boxLngMax = lngRange.max + lngPad;
-
+  // 海（水域）を背景として黒で塗りつぶし、陸地だけをNatural Earth 110m land polygonsで
+  // 白抜きにする。トリップ範囲より少し広めの範囲を対象にする。
+  // 110m解像度は都市規模のズームには粗すぎて誤った形になるため、範囲が十分広い
+  // （複数の子トリップを集約した広域マップなど）場合にのみ適用する。
+  const SEA_FILL_MIN_SPAN_DEG = 1.0;
+  const geoSpanDeg = Math.max(latRange.max - latRange.min, lngRange.max - lngRange.min);
+  if (geoSpanDeg >= SEA_FILL_MIN_SPAN_DEG) {
+    try {
       ctx.save();
       ctx.beginPath();
       ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
       ctx.clip();
-      ctx.strokeStyle = '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する
-      ctx.lineWidth = 2.2;
-      coastlines.forEach(line => {
-        // トリップ範囲（＋余白）にかすっている海岸線だけを描画対象にする（簡易バウンディングボックス判定）
-        const isRelevant = line.some(([lat, lng]) =>
-          lat >= boxLatMin && lat <= boxLatMax && lng >= boxLngMin && lng <= boxLngMax
-        );
-        if (!isRelevant) return;
-        ctx.beginPath();
-        line.forEach(([lat, lng], i) => {
-          const pt = toCanvas(lat, lng);
-          if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+
+      // まず描画エリア全体を「海」として黒で塗る
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
+
+      const landPolygons = await loadLandPolygonData();
+      if (landPolygons.length > 0) {
+        const latPad = Math.max((latRange.max - latRange.min) * 0.3, 0.05);
+        const lngPad = Math.max((lngRange.max - lngRange.min) * 0.3, 0.05);
+        const boxLatMin = latRange.min - latPad, boxLatMax = latRange.max + latPad;
+        const boxLngMin = lngRange.min - lngPad, boxLngMax = lngRange.max + lngPad;
+
+        landPolygons.forEach(rings => {
+          // トリップ範囲（＋余白）にかすっている陸地だけを描画対象にする（外輪郭で簡易判定）
+          const exterior = rings[0] || [];
+          const isRelevant = exterior.some(([lat, lng]) =>
+            lat >= boxLatMin && lat <= boxLatMax && lng >= boxLngMin && lng <= boxLngMax
+          );
+          if (!isRelevant) return;
+          // 外輪郭は白（陸地）、2つ目以降の輪（湖などの穴）は黒（水域）に塗り戻す
+          rings.forEach((ring, idx) => {
+            ctx.beginPath();
+            ring.forEach(([lat, lng], i) => {
+              const pt = toCanvas(lat, lng);
+              if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+            });
+            ctx.closePath();
+            ctx.fillStyle = idx === 0 ? '#ffffff' : '#000000';
+            ctx.fill();
+          });
         });
-        ctx.stroke();
-      });
+      }
       ctx.restore();
+    } catch (err) {
+      console.warn('海・陸地の塗り分けに失敗（スキップ）:', err);
     }
-  } catch (err) {
-    console.warn('海岸線の描画に失敗（スキップ）:', err);
   }
 
   // タイトル配置の判定: 下部中央のエリアにルート・ランドマークが何もかかっていなければ、
@@ -8937,13 +8953,16 @@ async function generateEinkMapDataUrl(trip) {
   }
 
   if (!bottomBoxOccupied) {
-    // 下部の空白にタイトルを大きく表示
+    // 下部の空白にタイトルを大きく表示。海（黒塗り）の上に乗る場合でも読めるよう、
+    // QRコードと同様に白い背景を先に敷いてから黒文字を乗せる。
     const centerX = (bottomBoxX0 + bottomBoxX1) / 2;
     const centerY = (bottomBoxY0 + bottomBoxY1) / 2;
     const availableWidth = bottomBoxWidth * 0.92;
     const titleText = trip.name || '旅行マップ';
     const titleFont = fitTextFontSize(ctx, titleText, availableWidth, Math.min(84, Math.round(bottomBoxHeight * 0.38)), 22);
     const subtitleSize = Math.max(18, Math.round(titleFont * 0.42));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bottomBoxX0, bottomBoxY0, bottomBoxWidth, bottomBoxHeight);
     ctx.fillStyle = '#000000';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -8968,10 +8987,10 @@ async function generateEinkMapDataUrl(trip) {
   routeSegments.forEach(seg => {
     if (seg.coords.length <= 1) return;
     ctx.strokeStyle = seg.color;
-    ctx.lineWidth = 10;
+    ctx.lineWidth = 15;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.setLineDash(seg.isPlan ? [22, 16] : []);
+    ctx.setLineDash(seg.isPlan ? [28, 20] : []);
     ctx.beginPath();
     seg.coords.forEach((c, i) => {
       const pt = toCanvas(c.lat, c.lng);
@@ -8986,16 +9005,16 @@ async function generateEinkMapDataUrl(trip) {
   sortedLandmarks.forEach(({ photo, coord, color }) => {
     const pt = toCanvas(coord.lat, coord.lng);
     const label = String(photo.landmarkNo);
-    const radius = label.length >= 3 ? 34 : label.length === 2 ? 30 : 26;
+    const radius = label.length >= 3 ? 40 : label.length === 2 ? 36 : 32;
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 9;
     ctx.strokeStyle = color;
     ctx.stroke();
     ctx.fillStyle = '#000000';
-    ctx.font = `bold ${label.length >= 3 ? 22 : 26}px sans-serif`;
+    ctx.font = `bold ${label.length >= 3 ? 26 : 30}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, pt.x, pt.y + 1);
