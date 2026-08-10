@@ -8864,7 +8864,10 @@ function getStampListForTrip(trip) {
   return allPhotos;
 }
 
+let stampRallyModalTrip = null; // E-Ink画像生成ボタンが対象にするトリップ（モーダルを開いた時点のもの）
+
 function showStampRallyModal(trip) {
+  stampRallyModalTrip = trip || currentTrip || null;
   const modal = document.getElementById('stampRallyModal');
   const titleEl = document.getElementById('stampRallyTitle');
   const countEl = document.getElementById('stampRallyCount');
@@ -8916,6 +8919,33 @@ function showStampRallyModal(trip) {
 
 function closeStampRallyModal() {
   document.getElementById('stampRallyModal')?.classList.remove('open');
+}
+
+/**
+ * スタンプ一覧モーダルの「🖼️ E-Ink画像」ボタン用ハンドラ。
+ * そのページで表示中のスタンプ（generateEinkStampSheetDataUrlと同じくAIを使わない
+ * canvas描画）をE-Ink画像として生成し、既存のInk系プレビュー・ダウンロードUIで表示する。
+ */
+function handleStampRallyEinkGeneration() {
+  const trip = stampRallyModalTrip || currentTrip;
+  if (!trip) {
+    alert('トリップを選択してください');
+    return;
+  }
+  closeStampRallyModal();
+  showCreateImageResult('スタンプ画像を生成中...', null, null);
+  openCreateImageModal();
+  try {
+    const dataUrl = generateEinkStampSheetDataUrl(trip);
+    if (!dataUrl) {
+      showCreateImageResult('スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。', null, null);
+      return;
+    }
+    showCreateImageResult('スタンプ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_stamps.png`);
+  } catch (err) {
+    console.error('スタンプ画像生成エラー:', err);
+    showCreateImageResult('スタンプ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+  }
 }
 
 const ANIME_COVER_PREFIX = 'Create a cover image that reflects and illustrates the following travelogue content. Use the travelogue as the main reference for the image. ';
@@ -12127,7 +12157,9 @@ function initEventListeners() {
   if (travelogueModal) travelogueModal.onclick = (e) => { if (e.target === travelogueModal) closeTravelogueModal(); };
   const stampRallyModal = document.getElementById('stampRallyModal');
   const stampRallyModalClose = document.getElementById('stampRallyModalClose');
+  const stampRallyEinkBtn = document.getElementById('stampRallyEinkBtn');
   if (stampRallyModalClose) stampRallyModalClose.onclick = () => closeStampRallyModal();
+  if (stampRallyEinkBtn) stampRallyEinkBtn.onclick = () => handleStampRallyEinkGeneration();
   if (stampRallyModal) stampRallyModal.onclick = (e) => { if (e.target === stampRallyModal) closeStampRallyModal(); };
 
   // GPSポイント追加ボタン
