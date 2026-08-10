@@ -8926,7 +8926,7 @@ function closeStampRallyModal() {
  * そのページで表示中のスタンプ（generateEinkStampSheetDataUrlと同じくAIを使わない
  * canvas描画）をE-Ink画像として生成し、既存のInk系プレビュー・ダウンロードUIで表示する。
  */
-function handleStampRallyEinkGeneration() {
+async function handleStampRallyEinkGeneration() {
   const trip = stampRallyModalTrip || currentTrip;
   if (!trip) {
     alert('トリップを選択してください');
@@ -8936,7 +8936,7 @@ function handleStampRallyEinkGeneration() {
   showCreateImageResult('スタンプ画像を生成中...', null, null);
   openCreateImageModal();
   try {
-    const dataUrl = generateEinkStampSheetDataUrl(trip);
+    const dataUrl = await generateEinkStampSheetDataUrl(trip);
     if (!dataUrl) {
       showCreateImageResult('スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。', null, null);
       return;
@@ -9368,13 +9368,40 @@ function fitTextFontSize(ctx, text, maxWidth, maxFontSize, minFontSize = 16, wei
 }
 
 /**
- * E-Ink端末向けの、スタンプ（isStamp写真）を判子風のシンプルな図案にして並べたシート画像を
- * canvasで直接描画する。親トリップの場合はgetStampListForTripが全子トリップのスタンプを
- * 番号順に集約して返すため、既存のスタンプラリー機能と同じ集約結果をそのまま使う。
+ * 写真URLを、E-Ink向けに白黒（グレースケール＋コントラスト強調）化した
+ * <img>要素として読み込む。Storageへの直接描画はCORSでcanvasが汚染される
+ * 可能性があるため、fetchImageAsResizedDataUrlで一度data URL化してから読み込む
+ * （AI参照画像で使っているのと同じ安全策）。
  */
-function generateEinkStampSheetDataUrl(trip) {
+async function loadStampPhotoImage(url) {
+  if (!url) return null;
+  try {
+    const dataUrl = await fetchImageAsResizedDataUrl(url, 400);
+    if (!dataUrl) return null;
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  } catch (err) {
+    console.warn('スタンプ写真の読み込みに失敗（スキップ）:', url, err);
+    return null;
+  }
+}
+
+/**
+ * E-Ink端末向けの、スタンプ（isStamp写真）投稿の実際の写真を白黒化して
+ * 判子風の丸型に収めたシート画像をcanvasで直接描画する。親トリップの場合は
+ * getStampListForTripが全子トリップのスタンプを番号順に集約して返すため、
+ * 既存のスタンプラリー機能と同じ集約結果をそのまま使う。
+ */
+async function generateEinkStampSheetDataUrl(trip) {
   const stamps = getStampListForTrip(trip);
   if (stamps.length === 0) return null;
+
+  // 各スタンプの写真を先に読み込んでおく（写真がない/失敗したものはnull）
+  const stampPhotoImages = await Promise.all(stamps.map(s => loadStampPhotoImage(s.url)));
 
   // スタンプ数に応じて列数を決め、なるべく正方形に近いグリッドにする
   const COLS = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(stamps.length * 1.4))));
@@ -9413,8 +9440,43 @@ function generateEinkStampSheetDataUrl(trip) {
     const cy = TOP_MARGIN + row * CELL + CELL / 2;
     const outerR = CELL * 0.38;
     const innerR = outerR - 10;
+    const photoImg = stampPhotoImages[i];
 
-    // 判子（はんこ）風の二重丸
+    if (photoImg) {
+      // 実際にアップロードされた写真を円形に切り抜き、白黒（グレースケール＋コントラスト強調）で描画する
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.filter = 'grayscale(100%) contrast(1.25)';
+      const scale = Math.max((innerR * 2) / photoImg.width, (innerR * 2) / photoImg.height);
+      const dw = photoImg.width * scale, dh = photoImg.height * scale;
+      ctx.drawImage(photoImg, cx - dw / 2, cy - dh / 2, dw, dh);
+      ctx.filter = 'none';
+      ctx.restore();
+
+      // 写真の下側に名前キャプションを敷く（半透明の黒帯＋白文字で、写真の濃淡によらず読めるようにする）
+      if (stamp.name) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+        ctx.clip();
+        const capH = innerR * 0.56;
+        const grad = ctx.createLinearGradient(0, cy + innerR - capH, 0, cy + innerR);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, 'rgba(0,0,0,0.72)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(cx - innerR, cy + innerR - capH, innerR * 2, capH);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = '15px sans-serif';
+        ctx.fillText(truncateTextToWidth(ctx, stamp.name, innerR * 1.7), cx, cy + innerR - 10);
+        ctx.restore();
+      }
+    }
+
+    // 判子（はんこ）風の二重丸（写真の有無に関わらず縁取りとして描画）
     ctx.beginPath();
     ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
     ctx.lineWidth = 5;
@@ -9426,22 +9488,42 @@ function generateEinkStampSheetDataUrl(trip) {
     ctx.stroke();
 
     const label = String(stamp.landmarkNo || (i + 1));
-    ctx.fillStyle = '#000000';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = `bold ${label.length >= 3 ? 40 : 52}px sans-serif`;
-    ctx.fillText(label, cx, cy - (stamp.name ? 12 : 0));
+    if (photoImg) {
+      // 写真がある場合は左上に白丸バッジで番号を表示（写真の濃淡によらず読めるように）
+      const badgeR = label.length >= 3 ? 22 : 18;
+      const badgeX = cx - innerR * 0.62, badgeY = cy - innerR * 0.62;
+      ctx.beginPath();
+      ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#000000';
+      ctx.stroke();
+      ctx.fillStyle = '#000000';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold ${label.length >= 3 ? 16 : 20}px sans-serif`;
+      ctx.fillText(label, badgeX, badgeY + 1);
+    } else {
+      // 写真がない場合は従来通り中央に大きく番号・名前を表示
+      ctx.fillStyle = '#000000';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `bold ${label.length >= 3 ? 40 : 52}px sans-serif`;
+      ctx.fillText(label, cx, cy - (stamp.name ? 12 : 0));
 
-    if (stamp.name) {
-      ctx.font = '16px sans-serif';
-      ctx.fillText(truncateTextToWidth(ctx, stamp.name, outerR * 1.6), cx, cy + outerR * 0.55);
+      if (stamp.name) {
+        ctx.font = '16px sans-serif';
+        ctx.fillText(truncateTextToWidth(ctx, stamp.name, outerR * 1.6), cx, cy + outerR * 0.55);
+      }
     }
 
     if (showSourceTripName && stamp._tripName) {
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'alphabetic';
       ctx.font = '13px sans-serif';
+      ctx.fillStyle = '#000000';
       ctx.fillText(truncateTextToWidth(ctx, stamp._tripName, CELL - 16), cx, TOP_MARGIN + row * CELL + CELL - 14);
-      ctx.textBaseline = 'middle';
     }
   });
   ctx.textBaseline = 'alphabetic';
@@ -9449,6 +9531,7 @@ function generateEinkStampSheetDataUrl(trip) {
   // フッター
   ctx.font = '18px sans-serif';
   ctx.textAlign = 'center';
+  ctx.fillStyle = '#000000';
   ctx.fillText(`全${stamps.length}スタンプ`, canvasW / 2, canvasH - 20);
 
   // 右下にこのトリップを開けるQRコードを表示する
@@ -10012,7 +10095,7 @@ async function showAnimeModal() {
         openCreateImageModal();
         return;
       }
-      const dataUrl = generateEinkStampSheetDataUrl(trip);
+      const dataUrl = await generateEinkStampSheetDataUrl(trip);
       if (!dataUrl) {
         const msg = trip.isParent
           ? 'この親トリップの子トリップに、スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。'
