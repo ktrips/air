@@ -6823,7 +6823,7 @@ const AI_MODEL_OPTIONS = {
   openai: [
     { value: 'gpt-image-1-mini', label: 'gpt-image-1-mini（リーズナブル）' },
     { value: 'gpt-image-1',      label: 'gpt-image-1（標準）' },
-    { value: 'dall-e-3',         label: 'DALL-E 3（旧世代）' }
+    { value: 'gpt-image-2',      label: 'gpt-image-2（ハイスペック）' }
   ],
   gemini: [
     { value: 'gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image（リーズナブル）' },
