@@ -6277,7 +6277,7 @@ function escapeHtml(s) {
  * 旅行記ページの表紙選定ロジックと同じ基準。
  */
 // マップInk/スタンプInkは表紙として使う絵ではなく参照用の図なので、トリップの代表画像には選ばない
-const NON_COVER_ANIME_STYLES = new Set(['meisho-ukiyoe', 'map-ink', 'stamp-ink']);
+const NON_COVER_ANIME_STYLES = new Set(['meisho-ukiyoe', 'map-ink', 'map-bw', 'stamp-ink']);
 
 function getAnimeCoverForTrip(trip) {
   const animes = trip?.generatedAnimes || trip?.animes || [];
@@ -8798,15 +8798,17 @@ async function getTripRouteAndLandmarks(trip) {
  * 親トリップが選択された場合は、写真・GPSを持たない親トリップ自身の代わりに
  * 全ての子トリップ（getChildTrips）のランドマーク・ルートを集約して描画する。
  */
-async function generateEinkMapDataUrl(trip) {
+async function generateEinkMapDataUrl(trip, options = {}) {
+  const monochrome = !!options.monochrome;
   const sourceTrips = trip.isParent ? getChildTrips(trip.id) : [trip];
   if (sourceTrips.length === 0) return null;
 
   const perTripData = await Promise.all(sourceTrips.map(t => getTripRouteAndLandmarks(t)));
   // トリップをまたいで線をつながないよう、ルートはトリップごとに独立したセグメントとして保持する。
   // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描くため、由来トリップも保持する。
-  // 色はメインの地図と同じくtrip.color（未設定ならTRIP_COLORSの順送り）を使う。
-  const tripColorOf = (i) => sourceTrips[i].color || TRIP_COLORS[i % TRIP_COLORS.length];
+  // 色はメインの地図と同じくtrip.color（未設定ならTRIP_COLORSの順送り）を使う。マップBWでは
+  // 色分けせず全て黒にする。
+  const tripColorOf = (i) => monochrome ? '#000000' : (sourceTrips[i].color || TRIP_COLORS[i % TRIP_COLORS.length]);
   const routeSegments = perTripData
     .map((d, i) => ({ coords: d.routeCoords, isPlan: isPlanTrip(sourceTrips[i]), color: tripColorOf(i) }))
     .filter(seg => seg.coords.length > 0);
@@ -8897,7 +8899,7 @@ async function generateEinkMapDataUrl(trip) {
       ctx.beginPath();
       ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
       ctx.clip();
-      ctx.strokeStyle = '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する
+      ctx.strokeStyle = monochrome ? '#000000' : '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する（マップBWでは黒）
       ctx.lineWidth = 4.5;
       landPolygons.forEach(rings => {
         // トリップ範囲（＋余白）にかすっている陸地だけを描画対象にする（外輪郭で簡易判定）
@@ -9649,7 +9651,10 @@ async function showAnimeModal() {
   const originalBtnText = btn?.textContent || '画像生成';
 
   // マップInk: AIを使わずcanvasで決定論的に生成するため、APIキー不要でここで完結させる
-  if (styleId === 'map-ink') {
+  if (styleId === 'map-ink' || styleId === 'map-bw') {
+    const isMonochrome = styleId === 'map-bw';
+    const filePrefix = isMonochrome ? 'mapbw' : 'mapink';
+    const fileSuffix = isMonochrome ? '_map_bw.png' : '_map.png';
     try {
       if (btn) btn.textContent = 'マップ生成中...';
       setStatus('マップ画像を生成中...');
@@ -9658,17 +9663,17 @@ async function showAnimeModal() {
         openCreateImageModal();
         return;
       }
-      const dataUrl = await generateEinkMapDataUrl(trip);
+      const dataUrl = await generateEinkMapDataUrl(trip, { monochrome: isMonochrome });
       if (!dataUrl) {
         const msg = trip.isParent
           ? 'この親トリップの子トリップに、ランドマーク番号を設定した写真、またはGPS付きの写真がありません。各子トリップの写真編集でランドマーク番号やGPS位置を設定してください。'
           : 'ランドマーク番号を設定した写真、またはGPS付きの写真がありません。写真編集でランドマーク番号やGPS位置を設定してください。';
         showCreateImageResult(msg, null, null);
       } else {
-        showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_map.png`);
+        showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}${fileSuffix}`);
         setStatus('マップ画像を作成しました');
         try {
-          await persistInkImageToGallery(trip, dataUrl, 'map-ink', 'mapink');
+          await persistInkImageToGallery(trip, dataUrl, styleId, filePrefix);
         } catch (saveErr) {
           console.error('マップ画像の保存エラー:', saveErr);
         }
