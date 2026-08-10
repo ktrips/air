@@ -5517,9 +5517,6 @@ function renderTripList() {
         if (hasStamps) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">🎫 スタンプ</button>`;
         html += '</div>';
       }
-      if (t.isParent && children.length > 0) {
-        html += `<p class="trip-detail-meta">子トリップ ${children.length} 件</p>`;
-      }
       detail.innerHTML = html;
       list.appendChild(detail);
 
@@ -5555,22 +5552,19 @@ function renderTripList() {
       detail.querySelectorAll('.trip-photo-count-toggle').forEach(btn => {
         btn.onclick = (e) => { e.stopPropagation(); toggleThumbnails(); };
       });
-      // アニメ一覧: 親トリップは各子トリップの表紙画像のみを1枚ずつ表示する
+      // アニメ一覧: 親トリップは自身に生成したアニメ画像＋各子トリップの表紙画像を1枚ずつ表示する
       const animes = t.isParent
-        ? children
-            .map(c => {
-              const cover = getAnimeCoverForTrip(c);
-              return cover ? { ...cover, _tripName: c.name } : null;
-            })
-            .filter(Boolean)
+        ? [
+            ...(t.generatedAnimes || t.animes || []).map(a => ({ ...a, _tripName: t.name })),
+            ...children
+              .map(c => {
+                const cover = getAnimeCoverForTrip(c);
+                return cover ? { ...cover, _tripName: c.name } : null;
+              })
+              .filter(Boolean)
+          ]
         : (t.generatedAnimes || t.animes || []);
       if (animes.length > 0) {
-        if (t.isParent) {
-          const label = document.createElement('div');
-          label.className = 'trip-detail-child-list-label';
-          label.textContent = 'アニメ一覧';
-          detail.appendChild(label);
-        }
         const thumbsWrap = document.createElement('div');
         thumbsWrap.className = 'trip-detail-anime-thumbs';
         animes.forEach((anime, idx) => {
@@ -7074,6 +7068,111 @@ async function streamTravelogueFromAI(provider, cfg, systemPrompt, userPrompt, o
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 旅行記生成のテキストAI呼び出し共通処理（プロバイダー振り分け＋Markdown除去）。
+ * generateTravelogueWithAI（通常トリップ）とgenerateParentSummaryTravelogueWithAI
+ * （親トリップの要約旅行記）の両方から呼ばれる。
+ */
+async function callTravelogueTextAI(systemPrompt, userPrompt, cfg, timeoutMs = 180000) {
+  const provider = cfg.provider || 'gemini';
+
+  const fetchWithTimeout = async (url, options, timeout = timeoutMs) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      console.log(`🔗 API呼び出し: ${url.split('?')[0]}...`);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+      console.log(`✅ API応答ステータス: ${response.status}`);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      console.error('📡 ネットワークエラー:', error.name, error.message);
+      if (error.name === 'AbortError') {
+        throw new Error(`API呼び出しがタイムアウトしました（${timeout / 1000}秒）。写真が多い場合は数を減らしてみてください。`);
+      }
+      throw error;
+    }
+  };
+
+  let content = '';
+  if (provider === 'gemini') {
+    const res = await fetchWithTimeout(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
+          generationConfig: { temperature: 0.7 }
+        })
+      }
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(`Gemini API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+    if (!data.candidates || !data.candidates[0]) throw new Error('Gemini APIからの応答が不正です。candidatesが空です。');
+    content = data.candidates[0]?.content?.parts?.[0]?.text || '';
+  } else if (provider === 'openai') {
+    const res = await fetchWithTimeout(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${cfg.apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.7
+        })
+      }
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(`OpenAI API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+    if (!data.choices || !data.choices[0]) throw new Error('OpenAI APIからの応答が不正です。choicesが空です。');
+    content = data.choices[0]?.message?.content || '';
+  } else if (provider === 'anthropic') {
+    const res = await fetchWithTimeout(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cfg.apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      }
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(`Anthropic API エラー: ${data.error.message || JSON.stringify(data.error)}`);
+    if (!data.content || !data.content[0]) throw new Error('Anthropic APIからの応答が不正です。contentが空です。');
+    content = data.content[0]?.text || '';
+  } else {
+    throw new Error('未対応のプロバイダーです: ' + provider);
+  }
+  if (!content.trim()) {
+    throw new Error('AIからの応答が空です。APIキーが正しいか、プロバイダーの設定を確認してください。');
+  }
+
+  let finalHtml = content.trim();
+  finalHtml = finalHtml.replace(/```html\s*/gi, '').replace(/```\s*$/g, '');
+  const htmlTagMatch = finalHtml.match(/(<h2\s|<div\s)/i);
+  if (htmlTagMatch && htmlTagMatch.index > 0) {
+    finalHtml = finalHtml.substring(htmlTagMatch.index);
+  }
+  return finalHtml.trim();
+}
+
 async function generateTravelogueWithAI() {
   const startTime = Date.now();
   const trip = currentTrip;
@@ -7093,6 +7192,13 @@ async function generateTravelogueWithAI() {
   if (!trip.id) {
     alert('トリップIDが不正です。トリップを再度選択してください。');
     console.error('トリップIDが不正:', trip);
+    return;
+  }
+
+  // 親トリップは全ての子トリップの写真を1枚ずつ解説する旅行記ではなく、
+  // アニメ・動画・旅行記リンク・スタンプなどのサマリー情報から総合情報ページを作る
+  if (trip.isParent) {
+    await generateParentSummaryTravelogueWithAI(trip);
     return;
   }
 
@@ -7364,11 +7470,6 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     setStatus(`旅行記を生成中... [${travelogueModel}]`);
     if (btn) btn.textContent = '旅行記生成中...';
 
-    // 不要なsetIntervalを削除（パフォーマンス最適化）
-    // progressInterval = setInterval(...) は削除
-
-    let content = '';
-
     // 写真が非常に多い場合のみ警告（閾値を50枚に引き上げ）
     const photoCount = photos.length;
     if (photoCount > 50) {
@@ -7389,116 +7490,7 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     const timeout = baseTimeout + additionalTimeout;
     console.log(`タイムアウト設定: ${timeout / 1000}秒 (写真${photoCount}枚)`);
 
-    const fetchWithTimeout = async (url, options, timeoutMs = timeout) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        console.log(`🔗 API呼び出し: ${url.split('?')[0]}...`);
-        const response = await fetch(url, { ...options, signal: controller.signal });
-        clearTimeout(timeoutId);
-        console.log(`✅ API応答ステータス: ${response.status}`);
-        return response;
-      } catch (error) {
-        clearTimeout(timeoutId);
-        console.error('📡 ネットワークエラー:', error.name, error.message);
-        if (error.name === 'AbortError') {
-          throw new Error(`API呼び出しがタイムアウトしました（${timeoutMs / 1000}秒）。写真が多い場合は数を減らしてみてください。`);
-        }
-        throw error;
-      }
-    };
-
-    if (provider === 'gemini') {
-      const res = await fetchWithTimeout(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(cfg.apiKey)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }],
-            generationConfig: { temperature: 0.7 }
-          })
-        }
-      );
-      const data = await res.json();
-      if (data.error) {
-        throw new Error(`Gemini API エラー: ${data.error.message || JSON.stringify(data.error)}`);
-      }
-      if (!data.candidates || !data.candidates[0]) {
-        throw new Error('Gemini APIからの応答が不正です。candidatesが空です。');
-      }
-      content = data.candidates[0]?.content?.parts?.[0]?.text || '';
-    } else if (provider === 'openai') {
-      const res = await fetchWithTimeout(
-        'https://api.openai.com/v1/chat/completions',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${cfg.apiKey}`
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.7
-          })
-        }
-      );
-      const data = await res.json();
-      if (data.error) {
-        throw new Error(`OpenAI API エラー: ${data.error.message || JSON.stringify(data.error)}`);
-      }
-      if (!data.choices || !data.choices[0]) {
-        throw new Error('OpenAI APIからの応答が不正です。choicesが空です。');
-      }
-      content = data.choices[0]?.message?.content || '';
-    } else if (provider === 'anthropic') {
-      const res = await fetchWithTimeout(
-        'https://api.anthropic.com/v1/messages',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': cfg.apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: 'claude-3-5-haiku-20241022',
-            max_tokens: 4096,
-            system: systemPrompt,
-            messages: [{ role: 'user', content: userPrompt }]
-          })
-        }
-      );
-      const data = await res.json();
-      if (data.error) {
-        throw new Error(`Anthropic API エラー: ${data.error.message || JSON.stringify(data.error)}`);
-      }
-      if (!data.content || !data.content[0]) {
-        throw new Error('Anthropic APIからの応答が不正です。contentが空です。');
-      }
-      content = data.content[0]?.text || '';
-    } else {
-      throw new Error('未対応のプロバイダーです: ' + provider);
-    }
-    if (!content.trim()) {
-      throw new Error('AIからの応答が空です。APIキーが正しいか、プロバイダーの設定を確認してください。');
-    }
-
-    // AIの出力から不要な前置き文とマークダウンを削除
-    let finalHtml = content.trim();
-
-    // ```html と ``` を削除
-    finalHtml = finalHtml.replace(/```html\s*/gi, '').replace(/```\s*$/g, '');
-
-    // HTMLタグ（<h2, <div など）より前にある前置き文を削除
-    const htmlTagMatch = finalHtml.match(/(<h2\s|<div\s)/i);
-    if (htmlTagMatch && htmlTagMatch.index > 0) {
-      finalHtml = finalHtml.substring(htmlTagMatch.index);
-    }
+    let finalHtml = await callTravelogueTextAI(systemPrompt, userPrompt, cfg, timeout);
 
     finalHtml = finalHtml.trim();
 
@@ -7712,6 +7704,191 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
   }
 }
 
+/** トリップ（親なら全子トリップを集約）の生成済みアニメ画像を全て返す */
+function getAllAnimesForTrip(trip) {
+  if (!trip) return [];
+  if (trip.isParent) {
+    return getChildTrips(trip.id).flatMap(c =>
+      (c.generatedAnimes || c.animes || []).map(a => ({ ...a, _tripName: c.name, _tripId: c.id }))
+    );
+  }
+  return (trip.generatedAnimes || trip.animes || []).map(a => ({ ...a, _tripName: trip.name, _tripId: trip.id }));
+}
+
+/**
+ * 子トリップへのアクセスカード一覧のHTMLを組み立てる。
+ * 各カードには写真サムネイル・件数バッジ・旅行記/動画への直接リンクを付け、
+ * 総合情報ページから傘下の各トリップの情報にすぐアクセスできるようにする。
+ */
+function buildChildAccessSectionHtml(children) {
+  if (!children || children.length === 0) return '';
+  const cards = children.map(c => {
+    const thumbUrl = (c.photos || []).find(p => p.url)?.url || getAnimeCoverForTrip(c)?.url || '';
+    const hasTravelogue = tripHasTravelogue(c);
+    const videoUrls = getTripVideoUrlsForTrip(c);
+    const stampCount = (c.photos || []).filter(p => p.isStamp).length;
+    const landmarkCount = (c.photos || []).filter(p => p.landmarkNo).length;
+    const safeName = escapeHtml(c.name || '無題');
+
+    const badges = [];
+    if (landmarkCount > 0) badges.push(`📍${landmarkCount}`);
+    if (stampCount > 0) badges.push(`🎫${stampCount}`);
+
+    const links = [];
+    if (hasTravelogue) {
+      links.push(`<a href="#" class="travelogue-child-link" data-trip-id="${c.id}" style="display:inline-block;padding:4px 10px;background:#f0f0f0;border-radius:14px;font-size:0.8rem;text-decoration:none;color:#333;">📖 旅行記</a>`);
+    }
+    if (videoUrls.length > 0) {
+      links.push(`<a href="${escapeHtml(videoUrls[0])}" target="_blank" rel="noopener" style="display:inline-block;padding:4px 10px;background:#f0f0f0;border-radius:14px;font-size:0.8rem;text-decoration:none;color:#333;">🎬 動画</a>`);
+    }
+
+    return `<div class="travelogue-child-card" style="border:1px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#fff;">
+      ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" style="width:100%;height:130px;object-fit:cover;display:block;" />` : ''}
+      <div style="padding:10px 12px;">
+        <div style="font-weight:700;font-size:0.95rem;margin-bottom:4px;">${safeName}</div>
+        ${badges.length > 0 ? `<div style="font-size:0.78rem;color:#888;margin-bottom:8px;">${badges.join('　')}</div>` : ''}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">${links.join('')}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="travelogue-child-access-section" style="margin:2.5rem 0;">
+    <h3 style="margin-bottom:1rem;font-size:1.2rem;">🗂️ 子トリップ一覧（${children.length}件）</h3>
+    <div class="travelogue-child-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px;">${cards}</div>
+  </div>`;
+}
+
+/**
+ * 親トリップ向けの総合情報ページ（サマリー旅行記）を生成する。
+ * 子トリップ全ての写真を1枚ずつ解説するのではなく、既にサマリー表示で使っている
+ * アニメ・動画・旅行記リンク・スタンプなどの集約情報からサマリー文を作り、
+ * マップは全子トリップのルートを1枚にまとめ、末尾に子トリップへのアクセスカードを添える。
+ */
+async function generateParentSummaryTravelogueWithAI(trip) {
+  const cfg = cachedAiConfig ?? (await loadUserAiConfig());
+  if (!cfg?.apiKey?.trim()) {
+    alert('旅行記生成にはAPIキーが必要です。AI設定でプロバイダーを選択し、APIキーを入力してください。');
+    return;
+  }
+
+  const btn = document.getElementById('generateTravelogueBtn');
+  const originalBtnText = btn?.textContent || '旅行記生成';
+  const customInstructions = (document.getElementById('travelogueCustomInstructions')?.value || '').trim();
+  const tripColor = trip.color || TRIP_COLORS[0];
+
+  const children = getChildTrips(trip.id);
+  if (children.length === 0) {
+    alert('この親トリップには子トリップがありません。子トリップを作成してから旅行記を生成してください。');
+    return;
+  }
+
+  try {
+    setStatus('子トリップの情報を集計中...');
+    if (btn) btn.textContent = '旅行記生成中...';
+
+    const stamps = getStampListForTrip(trip);
+    const videoUrls = getTripVideoUrlsForTrip(trip);
+    const animes = getAllAnimesForTrip(trip);
+    const childrenWithTravelogue = children.filter(c => tripHasTravelogue(c));
+    const totalPhotos = children.reduce((sum, c) => sum + (c.photos || []).length, 0);
+    const totalLandmarks = children.reduce((sum, c) => sum + (c.photos || []).filter(p => p.landmarkNo).length, 0);
+
+    // 全子トリップのGPXから総移動距離を集計（取得できないものはスキップ）
+    let totalKm = 0;
+    await Promise.all(children.map(async (c) => {
+      try {
+        const gpxText = await getGpxContent(c);
+        if (gpxText) {
+          const stats = getGpxStats(gpxText);
+          if (stats?.moveKm) totalKm += stats.moveKm;
+        }
+      } catch (_) {}
+    }));
+
+    const childList = children.map(c => {
+      const bits = [c.name || '無題'];
+      if (c.description) bits.push(c.description);
+      return `- ${bits.join('：')}`;
+    }).join('\n');
+
+    const systemPrompt = `HTMLのみを出力してください。説明文や\`\`\`htmlなどのマークダウンは不要です。
+
+これは複数の子トリップ（日程・区間）をまとめた「親トリップ」の総合情報ページです。
+子トリップの写真を1枚ずつ解説する詳細な旅行記ではなく、旅全体を俯瞰できる分かりやすいサマリーを書いてください。
+
+構造（この順番・タグをそのまま使う）:
+1. タイトル: <h2 class="travelogue-title">魅力的な表題</h2>
+2. サマリー: <div class="travelogue-summary"><p>300字程度で、旅全体の行程・魅力・見どころを紹介する文章</p></div>
+<div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
+
+重要:
+- HTMLのみ出力。上記の2ブロック以外（個々の写真セクションなど）は書かないでください。
+- トリップカラー=${tripColor}
+- 与えられた数値（距離・件数など）は書き換えず、正確に反映してください。${customInstructions ? `
+【ユーザー指示】以下の指示を必ず守ってください（強調すべき情報として優先的に反映すること）:
+${customInstructions}` : ''}`;
+
+    const userPrompt = `以下の情報をもとに、上記の構造に従って親トリップ全体の総合情報ページを生成してください。
+
+トリップ名: ${trip.name || '（無題）'}
+${trip.description ? `説明: ${trip.description}` : ''}
+子トリップ数: ${children.length}
+子トリップ一覧:
+${childList}
+${totalKm > 0 ? `総移動距離: 約${Math.round(totalKm)}km` : ''}
+訪問地点数（写真ベース）: 約${totalPhotos}件
+ランドマーク数: ${totalLandmarks}
+スタンプ数: ${stamps.length}
+旅行記がある子トリップ数: ${childrenWithTravelogue.length}
+生成されたアニメ画像数: ${animes.length}
+動画数: ${videoUrls.length}`;
+
+    setStatus('旅行記を生成中...');
+    let finalHtml = await callTravelogueTextAI(systemPrompt, userPrompt, cfg, 90000);
+
+    // 子トリップへのアクセスカードを末尾に追加（傘下の各情報へすぐアクセスできるように）
+    finalHtml += buildChildAccessSectionHtml(children);
+
+    if (!trip.id || !currentTrip || currentTrip.id !== trip.id) {
+      throw new Error('トリップIDが一致しません。旅行記生成中に別のトリップが選択された可能性があります。');
+    }
+
+    try {
+      const travelogueUrl = await uploadTravelogueToStorage(trip.id, finalHtml);
+      currentTrip.travelogueUrl = travelogueUrl;
+      currentTrip.travelogueHtml = null;
+      currentTrip.travelogueGeneratedAt = Date.now();
+      if (!currentTrip.travelogueHistory) currentTrip.travelogueHistory = [];
+      currentTrip.travelogueHistory.push({ url: travelogueUrl, timestamp: Date.now() });
+    } catch (err) {
+      console.error('旅行記のStorage保存エラー:', err);
+      if (finalHtml.length < 500000) {
+        currentTrip.travelogueHtml = finalHtml;
+        currentTrip.travelogueUrl = null;
+        currentTrip.travelogueGeneratedAt = Date.now();
+        if (!currentTrip.travelogueHistory) currentTrip.travelogueHistory = [];
+        currentTrip.travelogueHistory.push({ html: finalHtml, timestamp: Date.now() });
+      } else {
+        throw new Error('旅行記のサイズが大きすぎてStorageにも保存できませんでした: ' + err.message);
+      }
+    }
+
+    await saveTrip();
+    updateCoverPreview();
+    updateTravelogueActionButtons();
+    updateTravelogueHistoryLinks();
+    updateViewerSection();
+    setStatus('総合情報ページを作成しました');
+    showTravelogueModal();
+  } catch (err) {
+    console.error('親トリップ旅行記生成エラー:', err);
+    alert('総合情報ページの生成に失敗しました: ' + (err.message || String(err)));
+    setStatus('旅行記生成に失敗しました');
+  } finally {
+    if (btn) btn.textContent = originalBtnText;
+  }
+}
+
 async function initTravelogueMap(trip) {
   const wrap = document.getElementById('travelogueMap');
   if (!wrap || !window.L) return;
@@ -7719,21 +7896,32 @@ async function initTravelogueMap(trip) {
     travelogueMap.remove();
     travelogueMap = null;
   }
-  const pts = [];
-  try {
-    const gpxText = await getGpxContent(trip);
-    if (gpxText) pts.push(...parseGpxPoints(gpxText));
-  } catch (_) {}
-  if (pts.length <= 1 && (trip.photos || []).length > 0) {
-    const photoPts = (trip.photos || [])
-      .map(p => ensureLatLng(p.lat, p.lng))
-      .filter(Boolean)
-      .map(c => [c.lat, c.lng]);
-    if (photoPts.length > 0) pts.push(...photoPts);
-  }
-  if (pts.length === 0) return;
+
+  // 親トリップは自身のGPX・写真を持たないため、全子トリップのルート・写真を集約して
+  // 1枚の地図に表示する（マップInk/generateEinkMapDataUrlと同じ集約方針）。
+  const sourceTrips = trip.isParent ? getChildTrips(trip.id) : [trip];
+  if (sourceTrips.length === 0) return;
+
+  const perTripPts = await Promise.all(sourceTrips.map(async (t) => {
+    const tPts = [];
+    try {
+      const gpxText = await getGpxContent(t);
+      if (gpxText) tPts.push(...parseGpxPoints(gpxText));
+    } catch (_) {}
+    if (tPts.length <= 1 && (t.photos || []).length > 0) {
+      const photoPts = (t.photos || [])
+        .map(p => ensureLatLng(p.lat, p.lng))
+        .filter(Boolean)
+        .map(c => [c.lat, c.lng]);
+      if (photoPts.length > 0) tPts.push(...photoPts);
+    }
+    return tPts;
+  }));
+
+  const firstPoint = perTripPts.flat()[0] || null;
+  if (!firstPoint) return;
   wrap.style.display = '';
-  travelogueMap = L.map('travelogueMap').setView([pts[0][0], pts[0][1]], 10);
+  travelogueMap = L.map('travelogueMap').setView([firstPoint[0], firstPoint[1]], 10);
 
   // メインマップと同じレイヤーを使用（高解像度対応）
   if (currentMapLayer === 'satellite') {
@@ -7767,71 +7955,77 @@ async function initTravelogueMap(trip) {
     }).addTo(travelogueMap);
   }
 
-  const color = trip.color || TRIP_COLORS[0];
+  // トリップごと（親トリップなら子トリップごと）に、ルート線とマーカーを描画する。
+  // 色はメインの地図・マップInkと同じくtrip.color（未設定ならTRIP_COLORSの順送り）を使う。
+  const allPoints = [];
+  sourceTrips.forEach((t, tripIdx) => {
+    const tPts = perTripPts[tripIdx];
+    const color = t.color || trip.color || TRIP_COLORS[tripIdx % TRIP_COLORS.length];
 
-  // GPSルートを表示
-  if (pts.length > 1) {
-    L.polyline(pts, { color, weight: 3, opacity: 0.7 }).addTo(travelogueMap);
-  }
-
-  // 写真ポイントをマーカーで表示
-  const photos = trip.photos || [];
-  const photoPoints = [];
-  photos.forEach((p, i) => {
-    const coord = ensureLatLng(p.lat, p.lng);
-    if (coord) {
-      photoPoints.push([coord.lat, coord.lng]);
-
-      const isLandmark = !!(p.landmarkNo);
-      const isStamp = !!(p.isStamp);
-      let markerHtml;
-
-      if (isStamp) {
-        // スタンプは番号のみの丸（写真を表示しない）
-        const no = String(p.landmarkNo || '?').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        markerHtml = `<div style="background:${color};width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)">${no}</div>`;
-      } else if (isLandmark && p.url) {
-        // ランドマーク（スタンプでない）は小さい写真で表示
-        const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        markerHtml = `
-          <div style="position:relative;width:40px;height:40px;">
-            <img src="${getPhotoThumbUrl(p)}" decoding="async" style="width:40px;height:40px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
-            <span style="position:absolute;top:-2px;left:-2px;background:${color};color:#fff;font-weight:bold;font-size:10px;padding:2px 4px;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${no}</span>
-          </div>
-        `;
-      } else if (isLandmark) {
-        // ランドマーク（写真なし）
-        const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        markerHtml = `<div style="background:${color};width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)">${no}</div>`;
-      } else {
-        // 通常のポイント
-        markerHtml = `<span style="background:${color};border:2px solid #fff;width:10px;height:10px;border-radius:50%;display:block;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>`;
-      }
-
-      const showsSmallPhoto = isLandmark && !isStamp && p.url;
-      const marker = L.marker([coord.lat, coord.lng], {
-        icon: L.divIcon({
-          className: 'travelogue-map-marker',
-          html: markerHtml,
-          iconSize: showsSmallPhoto ? [40, 40] : ((isLandmark || isStamp) ? [28, 28] : [10, 10]),
-          iconAnchor: showsSmallPhoto ? [20, 40] : ((isLandmark || isStamp) ? [14, 14] : [5, 5])
-        })
-      });
-
-      // ツールチップ表示
-      const tooltipParts = [];
-      if (p.landmarkNo) tooltipParts.push('📍 ' + p.landmarkNo);
-      if (p.name) tooltipParts.push(p.name);
-      if (p.description) tooltipParts.push(p.description);
-      const tooltipLabel = tooltipParts.length ? tooltipParts.join(' — ') : `#${i + 1}`;
-      marker.bindTooltip(tooltipLabel, { direction: 'top', offset: [0, -10] });
-
-      marker.addTo(travelogueMap);
+    // GPSルートを表示（トリップごとに独立した線として描画し、トリップ間を線でつながない）
+    if (tPts.length > 1) {
+      L.polyline(tPts, { color, weight: 3, opacity: 0.7 }).addTo(travelogueMap);
     }
+    allPoints.push(...tPts);
+
+    // 写真ポイントをマーカーで表示
+    const photos = t.photos || [];
+    photos.forEach((p, i) => {
+      const coord = ensureLatLng(p.lat, p.lng);
+      if (coord) {
+        allPoints.push([coord.lat, coord.lng]);
+
+        const isLandmark = !!(p.landmarkNo);
+        const isStamp = !!(p.isStamp);
+        let markerHtml;
+
+        if (isStamp) {
+          // スタンプは番号のみの丸（写真を表示しない）
+          const no = String(p.landmarkNo || '?').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          markerHtml = `<div style="background:${color};width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)">${no}</div>`;
+        } else if (isLandmark && p.url) {
+          // ランドマーク（スタンプでない）は小さい写真で表示
+          const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          markerHtml = `
+            <div style="position:relative;width:40px;height:40px;">
+              <img src="${getPhotoThumbUrl(p)}" decoding="async" style="width:40px;height:40px;border-radius:4px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);object-fit:cover;display:block;" />
+              <span style="position:absolute;top:-2px;left:-2px;background:${color};color:#fff;font-weight:bold;font-size:10px;padding:2px 4px;border-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${no}</span>
+            </div>
+          `;
+        } else if (isLandmark) {
+          // ランドマーク（写真なし）
+          const no = String(p.landmarkNo).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          markerHtml = `<div style="background:${color};width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:13px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)">${no}</div>`;
+        } else {
+          // 通常のポイント
+          markerHtml = `<span style="background:${color};border:2px solid #fff;width:10px;height:10px;border-radius:50%;display:block;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span>`;
+        }
+
+        const showsSmallPhoto = isLandmark && !isStamp && p.url;
+        const marker = L.marker([coord.lat, coord.lng], {
+          icon: L.divIcon({
+            className: 'travelogue-map-marker',
+            html: markerHtml,
+            iconSize: showsSmallPhoto ? [40, 40] : ((isLandmark || isStamp) ? [28, 28] : [10, 10]),
+            iconAnchor: showsSmallPhoto ? [20, 40] : ((isLandmark || isStamp) ? [14, 14] : [5, 5])
+          })
+        });
+
+        // ツールチップ表示（親トリップ集約時は由来トリップ名も添える）
+        const tooltipParts = [];
+        if (trip.isParent && t.name) tooltipParts.push(t.name);
+        if (p.landmarkNo) tooltipParts.push('📍 ' + p.landmarkNo);
+        if (p.name) tooltipParts.push(p.name);
+        if (p.description) tooltipParts.push(p.description);
+        const tooltipLabel = tooltipParts.length ? tooltipParts.join(' — ') : `#${i + 1}`;
+        marker.bindTooltip(tooltipLabel, { direction: 'top', offset: [0, -10] });
+
+        marker.addTo(travelogueMap);
+      }
+    });
   });
 
-  // 全てのポイント（GPSルート + 写真ポイント）が収まるように表示
-  const allPoints = [...pts, ...photoPoints];
+  // 全てのポイント（GPSルート + 写真ポイント、全トリップ分）が収まるように表示
   if (allPoints.length > 0) {
     const bounds = L.latLngBounds(allPoints);
     travelogueMap.fitBounds(bounds, { padding: [40, 40] });
@@ -7848,8 +8042,9 @@ async function showTravelogueModal(trip) {
   const t = trip || currentTrip;
   if (!t) return;
 
-  // 親トリップの場合、子トリップの旅行記リストを表示
-  if (t.isParent) {
+  // 親トリップの場合、自身の総合情報ページ（旅行記生成済みなら）を表示する。
+  // まだ生成していない場合のみ、従来通り子トリップの旅行記ピッカーを表示する。
+  if (t.isParent && !tripHasTravelogue(t)) {
     const children = getChildTrips(t.id);
     const childrenWithTravelogue = children.filter(c =>
       tripHasTravelogue(c)
@@ -8163,6 +8358,19 @@ async function showTravelogueModal(trip) {
       });
     });
 
+    // 親トリップの総合情報ページ内、子トリップアクセスカードの「📖 旅行記」リンク
+    content.querySelectorAll('.travelogue-child-link').forEach((link) => {
+      link.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const tripId = link.dataset.tripId;
+        if (tripId) {
+          await loadTripById(tripId);
+          showTravelogueModal(currentTrip);
+        }
+      });
+    });
+
     // 旅行記内の写真・アニメ画像をクリックで拡大表示
     content.querySelectorAll('img').forEach((img) => {
       img.style.cursor = 'pointer';
@@ -8230,7 +8438,11 @@ async function showTravelogueModal(trip) {
       });
     }
 
-    if (t && (t.photos?.length || t.gpxData || t.gpxDataUrl)) {
+    // 親トリップは自身のphotos/GPXを持たないため、子トリップにマップ材料があるかで判定する
+    const hasMapData = t?.isParent
+      ? getChildTrips(t.id).some(c => (c.photos?.length || c.gpxData || c.gpxDataUrl))
+      : !!(t?.photos?.length || t?.gpxData || t?.gpxDataUrl);
+    if (t && hasMapData) {
       // 新しいtravelogue-map-containerがある場合はそれを使用
       const mapContainer = document.getElementById('travelogue-map-container');
       if (mapContainer) {
