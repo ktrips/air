@@ -7300,11 +7300,9 @@ async function generateTravelogueWithAI() {
   } catch (_) {}
   if (gpxSummary) parts.push(`GPS情報: ${gpxSummary}`);
 
-  // 🚀 高速化：Wikipedia取得を完全にスキップ
   const photoInfos = [];
 
   if (photos.length > 0) {
-    // photoInfosを構築（Wikipediaなし）
     photos.forEach((p, i) => {
       const loc = p.placeName || '';
       const desc = p.description || p.name || '';
@@ -7321,6 +7319,29 @@ async function generateTravelogueWithAI() {
         isStamp: !!p.isStamp
       });
     });
+  }
+
+  // ── ランドマーク写真はWikipediaから概要を取得し、サマリー情報として付加する ──────
+  // 全写真ではなくランドマークのみを対象にし、並列取得することで待ち時間を抑える
+  // （fetchWikipediaForPlaceは座標/地名ごとにキャッシュされるため、再生成時は再取得しない）
+  const landmarkIndexes = photoInfos
+    .map((pi, idx) => (pi.landmarkNo && !pi.isStamp ? idx : -1))
+    .filter(idx => idx >= 0);
+  if (landmarkIndexes.length > 0) {
+    setStatus(`ランドマーク情報をWikipediaから取得中...(${landmarkIndexes.length}件)`);
+    await Promise.all(landmarkIndexes.map(async (idx) => {
+      const pi = photoInfos[idx];
+      const p = photos[idx];
+      try {
+        const wiki = await fetchWikipediaForPlace(p?.lat, p?.lng, pi.placeName || pi.pointName);
+        if (wiki?.extract) {
+          pi.wikiTitle = wiki.title || '';
+          pi.wikiExtract = wiki.extract.slice(0, 300);
+        }
+      } catch (_) {
+        // 取得失敗時はそのランドマークの情報なしで続行（旅行記生成自体は止めない）
+      }
+    }));
   }
 
   // ── 過去の旅行記から既存の写真説明を取得して流用 ──────────────────────────
@@ -7352,6 +7373,7 @@ async function generateTravelogueWithAI() {
     console.log(`♻️ 過去の旅行記から ${reuseCount} 件の写真説明を流用予定 (新規: ${photoInfos.length - reuseCount} 件)`);
     setStatus(`過去の旅行記から ${reuseCount} 件を流用、${photoInfos.length - reuseCount} 件を新規生成...`);
   }
+  const hasWikiInfo = photoInfos.some(pi => pi.wikiExtract);
 
   const tripColor = trip.color || '#e1306c';
 
@@ -7429,6 +7451,9 @@ async function generateTravelogueWithAI() {
       if (pi.ukiyoeImage) {
         info.push(`[浮世絵:${pi.ukiyoeImage.url}]`);
       }
+      if (pi.wikiExtract) {
+        info.push(`[Wikipedia概要:${pi.wikiExtract}]`);
+      }
       // 過去の旅行記に既存の説明がある場合はタグとして渡す
       if (pi.prevContent) {
         if (pi.prevContent.overlay) info.push(`[既存オーバーレイ:${pi.prevContent.overlay}]`);
@@ -7473,7 +7498,8 @@ async function generateTravelogueWithAI() {
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください${customInstructions ? `
 【ユーザー指示】以下の指示を必ず守って旅行記を生成してください:
 ${customInstructions}` : ''}${reuseCount > 0 ? `
-【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}`;
+【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}${hasWikiInfo ? `
+【Wikipedia概要の扱い】写真情報に[Wikipedia概要:...]がある場合、それはそのランドマークに関するWikipediaからの参考情報です。このテキストをそのままコピーせず、必ず旅行記の文体に合わせて自分の言葉で要約・言い換えたうえで、その写真の情景描写に歴史的背景や豆知識として自然に盛り込んでください。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
   const provider = cfg.provider || 'gemini';
@@ -9483,13 +9509,6 @@ async function generateEinkStampSheetDataUrl(trip) {
         ctx.restore();
       }
     }
-
-    // 判子（はんこ）風の二重四角枠（写真の有無に関わらず縁取りとして描画）
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 6;
-    ctx.strokeRect(x0, y0, SQUARE, SQUARE);
-    ctx.lineWidth = 2;
-    ctx.strokeRect(innerX, innerY, innerSize, innerSize);
 
     const label = String(stamp.landmarkNo || (i + 1));
     if (photoImg) {
