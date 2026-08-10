@@ -8883,54 +8883,43 @@ async function generateEinkMapDataUrl(trip) {
     };
   };
 
-  // 海（水域）を背景として黒で塗りつぶし、陸地だけをNatural Earth 110m land polygonsで
-  // 白抜きにする。トリップ範囲より少し広めの範囲を対象にする。
-  // 110m解像度は都市規模のズームには粗すぎて誤った形になるため、範囲が十分広い
-  // （複数の子トリップを集約した広域マップなど）場合にのみ適用する。
-  const SEA_FILL_MIN_SPAN_DEG = 1.0;
-  const geoSpanDeg = Math.max(latRange.max - latRange.min, lngRange.max - lngRange.min);
-  if (geoSpanDeg >= SEA_FILL_MIN_SPAN_DEG) {
-    try {
+  // 海岸線（陸地ポリゴンの輪郭）を背景として描画。塗りつぶしはせず、太めの線で目立たせる。
+  // トリップ範囲より少し広めの範囲を対象にする。
+  try {
+    const landPolygons = await loadLandPolygonData();
+    if (landPolygons.length > 0) {
+      const latPad = Math.max((latRange.max - latRange.min) * 0.3, 0.05);
+      const lngPad = Math.max((lngRange.max - lngRange.min) * 0.3, 0.05);
+      const boxLatMin = latRange.min - latPad, boxLatMax = latRange.max + latPad;
+      const boxLngMin = lngRange.min - lngPad, boxLngMax = lngRange.max + lngPad;
+
       ctx.save();
       ctx.beginPath();
       ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
       ctx.clip();
-
-      // まず描画エリア全体を「海」として黒で塗る
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
-
-      const landPolygons = await loadLandPolygonData();
-      if (landPolygons.length > 0) {
-        const latPad = Math.max((latRange.max - latRange.min) * 0.3, 0.05);
-        const lngPad = Math.max((lngRange.max - lngRange.min) * 0.3, 0.05);
-        const boxLatMin = latRange.min - latPad, boxLatMax = latRange.max + latPad;
-        const boxLngMin = lngRange.min - lngPad, boxLngMax = lngRange.max + lngPad;
-
-        landPolygons.forEach(rings => {
-          // トリップ範囲（＋余白）にかすっている陸地だけを描画対象にする（外輪郭で簡易判定）
-          const exterior = rings[0] || [];
-          const isRelevant = exterior.some(([lat, lng]) =>
-            lat >= boxLatMin && lat <= boxLatMax && lng >= boxLngMin && lng <= boxLngMax
-          );
-          if (!isRelevant) return;
-          // 外輪郭は白（陸地）、2つ目以降の輪（湖などの穴）は黒（水域）に塗り戻す
-          rings.forEach((ring, idx) => {
-            ctx.beginPath();
-            ring.forEach(([lat, lng], i) => {
-              const pt = toCanvas(lat, lng);
-              if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
-            });
-            ctx.closePath();
-            ctx.fillStyle = idx === 0 ? '#ffffff' : '#000000';
-            ctx.fill();
+      ctx.strokeStyle = '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する
+      ctx.lineWidth = 4.5;
+      landPolygons.forEach(rings => {
+        // トリップ範囲（＋余白）にかすっている陸地だけを描画対象にする（外輪郭で簡易判定）
+        const exterior = rings[0] || [];
+        const isRelevant = exterior.some(([lat, lng]) =>
+          lat >= boxLatMin && lat <= boxLatMax && lng >= boxLngMin && lng <= boxLngMax
+        );
+        if (!isRelevant) return;
+        rings.forEach(ring => {
+          ctx.beginPath();
+          ring.forEach(([lat, lng], i) => {
+            const pt = toCanvas(lat, lng);
+            if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
           });
+          ctx.closePath();
+          ctx.stroke();
         });
-      }
+      });
       ctx.restore();
-    } catch (err) {
-      console.warn('海・陸地の塗り分けに失敗（スキップ）:', err);
     }
+  } catch (err) {
+    console.warn('海岸線の描画に失敗（スキップ）:', err);
   }
 
   // タイトル配置の判定: 下部中央のエリアにルート・ランドマークが何もかかっていなければ、
