@@ -299,6 +299,12 @@
             <option value="map-ink">マップInk</option>
             <option value="map-bw">マップBW</option>
             <option value="stamp-ink">スタンプInk</option>
+            <option value="infographic">インフォグラフィック</option>
+          </select>
+          <select id="modelLevelSelect" class="menu-select menu-select-inline" title="画像生成に使うモデルの品質レベル">
+            <option value="low" selected>ロウ</option>
+            <option value="mid">ミドル</option>
+            <option value="high">ハイ</option>
           </select>
           <button type="button" class="btn btn-primary" id="generateAnimeBtnViewer" title="選択したスタイルで画像を生成">画像生成</button>
         </div>
@@ -315,6 +321,11 @@
             <option value="hiroshige">歌川広重風</option>
             <option value="hokusai">葛飾北斎風</option>
           </select>
+        </div>
+        <div id="infographicInputWrap" class="menu-row" style="display:none;padding-left:1rem;">
+          <textarea id="infographicInput"
+            placeholder="例：お遍路さんの年代は、2006年には60代以上が70%だったのが直近では50%、その代わり40,50代が40%、それ以下が10%となっている（任意）"
+            style="width:100%;min-height:80px;padding:8px;border:1px solid var(--border);border-radius:4px;font-size:13px;resize:vertical;"></textarea>
         </div>
         <div id="generatedAnimesList" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;padding-left:1rem;"></div>
       </section>

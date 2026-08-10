@@ -6282,9 +6282,13 @@ const NON_COVER_ANIME_STYLES = new Set(['meisho-ukiyoe', 'map-ink', 'map-bw', 's
 function getAnimeCoverForTrip(trip) {
   const animes = trip?.generatedAnimes || trip?.animes || [];
   if (animes.length === 0) return null;
-  const coverAnimes = animes.filter(a => a.style && !String(a.style).startsWith('detail') && !NON_COVER_ANIME_STYLES.has(a.style));
+  const isNotCoverStyle = (style) => {
+    const s = String(style || '');
+    return s.startsWith('detail') || s.startsWith('infographic') || NON_COVER_ANIME_STYLES.has(s);
+  };
+  const coverAnimes = animes.filter(a => a.style && !isNotCoverStyle(a.style));
   if (coverAnimes.length > 0) return coverAnimes[0];
-  if (!NON_COVER_ANIME_STYLES.has(animes[0].style)) return animes[0];
+  if (!isNotCoverStyle(animes[0].style)) return animes[0];
   return null;
 }
 
@@ -6832,6 +6836,19 @@ const AI_MODEL_DEFAULTS = {
   openai: 'gpt-image-1-mini',
   gemini: 'gemini-3.1-flash-image'
 };
+
+// 画像生成メニューの「ロウ/ミドル/ハイ」選択に対応するインデックス。
+// AI_MODEL_OPTIONS[provider]は既にリーズナブル→標準→ハイスペックの順で並んでいるため、
+// そのままLOW/MID/HIGHの位置として使う。
+const MODEL_LEVEL_INDEX = { low: 0, mid: 1, high: 2 };
+
+/** 選択された品質レベルに対応するモデル名を、設定中のプロバイダーのAI_MODEL_OPTIONSから選ぶ */
+function getModelForLevel(provider, level) {
+  const options = AI_MODEL_OPTIONS[provider];
+  if (!options || options.length === 0) return null;
+  const idx = MODEL_LEVEL_INDEX[level] ?? MODEL_LEVEL_INDEX.low;
+  return (options[idx] || options[options.length - 1]).value;
+}
 
 function updateAiModelFieldVisibility(provider, currentModel) {
   const modelField = document.getElementById('aiModelField');
@@ -8707,6 +8724,12 @@ const ANIME_STYLES = {
     brand: '名所絵',
     prompt: '',
     brandClass: 'anime-brand-ukiyoe'
+  },
+  'infographic': {
+    label: 'インフォグラフィック',
+    brand: '',
+    prompt: '',
+    brandClass: 'anime-brand-event'
   }
 };
 
@@ -9739,15 +9762,17 @@ async function showAnimeModal() {
     return;
   }
 
-  // アニメ生成用cfg（ユーザー設定のプロバイダー・モデルを使用）
+  // アニメ生成用cfg（プロバイダーはユーザー設定を使用し、モデルは「ロウ/ミドル/ハイ」選択に応じて選ぶ）
+  const modelLevel = document.getElementById('modelLevelSelect')?.value || 'low';
   const animeCfg = {
     provider,
     apiKey,
-    model: cfg?.model || null
+    model: getModelForLevel(provider, modelLevel) || cfg?.model || null
   };
 
   const style = ANIME_STYLES[styleId] || ANIME_STYLES['chikyu-cover'];
   const isDetail4Pages = styleId === 'detail4pages';
+  const isInfographic = styleId === 'infographic';
   const isEventStory = styleId === 'event-story';
   const isMeishoUkiyoe = styleId === 'meisho-ukiyoe';
   const isCoverInk = styleId === 'cover-ink';
@@ -10111,6 +10136,96 @@ async function showAnimeModal() {
         setStatus(`${generatedAnimesToAdd.length}ページのアニメを生成しました`);
       } else {
         alert('詳細4ページの生成に失敗しました。APIキーと旅行記の内容を確認してください。');
+      }
+      return;
+    }
+
+    // インフォグラフィック: 旅行記＋追加情報（統計データなど）から、データ・グラフ・イラストを
+    // 交えたカラフルなインフォグラフィックを4枚生成する（キャラ画像は不要）
+    if (isInfographic) {
+      const infographicInput = document.getElementById('infographicInput');
+      const extraInfo = infographicInput?.value?.trim() || '';
+
+      setStatus('旅行記の内容を取得中...');
+      const travelogueRaw = await getTravelogueTextForTrip(trip, 3000);
+      const combinedSource = [
+        trip.description,
+        travelogueRaw,
+        extraInfo ? `【追加情報】${extraInfo}` : ''
+      ].filter(Boolean).join('\n\n');
+
+      if (!combinedSource.trim()) {
+        alert('旅行記・説明・追加情報のいずれかが必要です。まず旅行記を生成するか、追加情報欄にデータを入力してください。');
+        return;
+      }
+
+      const tripName = trip.name || '旅行';
+      const photos = trip.photos || [];
+      const refImages = await buildAnimeReferenceImages(null, photos, 3);
+      const refPhotoUrls = refImages.map(r => r.dataUrl);
+
+      // 4枚それぞれの切り口。「データで見る旅」は追加情報があればそれを優先的にグラフ化する。
+      const infographicPages = [
+        { title: '旅の概要・ハイライト', instruction: '旅の全体像（訪問地・日数・移動ルート）と主なハイライトを、簡単な地図イラストやピクトグラムを交えて紹介する。' },
+        {
+          title: 'データで見る旅',
+          instruction: extraInfo
+            ? '【追加情報】に書かれている統計データを主役にし、棒グラフ・円グラフ・折れ線グラフなど具体的なグラフで数字の変化や割合を視覚化する。'
+            : '旅行記から読み取れる訪問回数・時間帯・移動手段などの傾向を、グラフやピクトグラムで視覚化する。'
+        },
+        { title: '訪問スポット・体験', instruction: '実際に訪れた場所や体験を、アイコンやイラストマップで楽しく紹介する。' },
+        { title: '旅の思い出・エピソード', instruction: '旅行記に書かれた印象的な出来事やエピソードを、イラストと短いキャプションで振り返る。' }
+      ];
+
+      const generatedAnimesToAdd = [];
+      for (let page = 1; page <= 4; page++) {
+        const pageTheme = infographicPages[page - 1];
+        setStatus(`インフォグラフィック生成中 ${page}/4...`);
+        if (btn) btn.textContent = `インフォグラフィック生成中 (${page}/4)...`;
+
+        setStatus(`ページ${page}/4の情景を要約中...`);
+        const pageBrief = await buildSceneBrief(combinedSource, animeCfg, 220);
+
+        const promptParts = [
+          `旅行「${tripName}」のインフォグラフィックを4枚シリーズで作成します。今回は${page}/4枚目「${pageTheme.title}」です。`,
+          '',
+          '【重要】画像内のすべての文字・数字・ラベル・見出しは必ず日本語のみで記述してください。英語は一切使用しないでください。',
+          '',
+          '【スタイル】カラフルで親しみやすいインフォグラフィックデザイン。データ・グラフ・イラストを組み合わせ、雑誌や旅行ガイドのように整ったレイアウトにする。単色べたぬりや白黒ではなく、鮮やかで多彩な配色を使うこと。',
+          '',
+          `【このページの内容】${pageTheme.title}：${pageTheme.instruction}`,
+          '',
+          '【元データ】',
+          pageBrief || combinedSource.slice(0, 1200),
+          '',
+          '【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。文字・数字は読みやすく大きめに配置してください。'
+        ];
+
+        if (refPhotoUrls.length > 0) {
+          promptParts.push('');
+          promptParts.push('【添付の参照写真】この旅で実際に撮影した写真です。イラストの雰囲気・実在の風景の参考にしてください。');
+        }
+
+        const generatedDataUrl = await generateImageWithAI(promptParts.join('\n'), refPhotoUrls, animeCfg);
+        if (generatedDataUrl) {
+          const storageUrl = await uploadAnimeImageToStorage(trip.id, generatedDataUrl, 'infographic');
+          generatedAnimesToAdd.push({
+            url: storageUrl,
+            timestamp: Date.now(),
+            style: `infographic-page${page}`
+          });
+        }
+      }
+
+      if (generatedAnimesToAdd.length > 0) {
+        if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
+        currentTrip.generatedAnimes.push(...generatedAnimesToAdd);
+        await saveTrip({ silent: true });
+        renderGeneratedAnimesList();
+        showAnimeImageViewer(generatedAnimesToAdd, currentTrip.name || '');
+        setStatus(`${generatedAnimesToAdd.length}枚のインフォグラフィックを生成しました`);
+      } else {
+        alert('インフォグラフィックの生成に失敗しました。APIキーと入力内容を確認してください。');
       }
       return;
     }
@@ -11607,15 +11722,17 @@ function initEventListeners() {
   if (animePlayBtn) animePlayBtn.onclick = () => toggleAnimePlay();
   if (animeModal) animeModal.onclick = (e) => { if (e.target === animeModal) closeAnimeModal(); };
 
-  // アニメスタイル選択時に出来事入力欄・名所浮世絵入力欄の表示を切り替え
+  // アニメスタイル選択時に出来事入力欄・名所浮世絵入力欄・インフォグラフィック入力欄の表示を切り替え
   const animeStyleSelect = document.getElementById('animeStyleSelect');
   const eventStoryInputWrap = document.getElementById('eventStoryInputWrap');
   const meishoUkiyoeInputWrap = document.getElementById('meishoUkiyoeInputWrap');
-  if (animeStyleSelect && eventStoryInputWrap && meishoUkiyoeInputWrap) {
+  const infographicInputWrap = document.getElementById('infographicInputWrap');
+  if (animeStyleSelect && eventStoryInputWrap && meishoUkiyoeInputWrap && infographicInputWrap) {
     animeStyleSelect.onchange = () => {
       const value = animeStyleSelect.value;
       eventStoryInputWrap.style.display = value === 'event-story' ? '' : 'none';
       meishoUkiyoeInputWrap.style.display = value === 'meisho-ukiyoe' ? '' : 'none';
+      infographicInputWrap.style.display = value === 'infographic' ? '' : 'none';
     };
   }
 
