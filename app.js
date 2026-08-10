@@ -8804,10 +8804,14 @@ async function generateEinkMapDataUrl(trip) {
   const perTripData = await Promise.all(sourceTrips.map(t => getTripRouteAndLandmarks(t)));
   // トリップをまたいで線をつながないよう、ルートはトリップごとに独立したセグメントとして保持する。
   // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描くため、由来トリップも保持する。
+  // 色はメインの地図と同じくtrip.color（未設定ならTRIP_COLORSの順送り）を使う。
+  const tripColorOf = (i) => sourceTrips[i].color || TRIP_COLORS[i % TRIP_COLORS.length];
   const routeSegments = perTripData
-    .map((d, i) => ({ coords: d.routeCoords, isPlan: isPlanTrip(sourceTrips[i]) }))
+    .map((d, i) => ({ coords: d.routeCoords, isPlan: isPlanTrip(sourceTrips[i]), color: tripColorOf(i) }))
     .filter(seg => seg.coords.length > 0);
-  const landmarkPhotos = perTripData.flatMap(d => d.landmarkPhotos);
+  const landmarkPhotos = perTripData.flatMap((d, i) =>
+    d.landmarkPhotos.map(lp => ({ ...lp, color: tripColorOf(i) }))
+  );
 
   if (landmarkPhotos.length === 0 && routeSegments.length === 0) return null;
 
@@ -8892,7 +8896,7 @@ async function generateEinkMapDataUrl(trip) {
       ctx.beginPath();
       ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
       ctx.clip();
-      ctx.strokeStyle = '#000000';
+      ctx.strokeStyle = '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する
       ctx.lineWidth = 2.2;
       coastlines.forEach(line => {
         // トリップ範囲（＋余白）にかすっている海岸線だけを描画対象にする（簡易バウンディングボックス判定）
@@ -8959,12 +8963,15 @@ async function generateEinkMapDataUrl(trip) {
   }
 
   // ルート線（トリップごとに独立したセグメントとして描画し、トリップ間を線でつながない）。
+  // メインの地図と同じトリップカラーを使い、太く目立たせる。
   // トリップ名が「Plan」で始まる場合は計画段階の旅として点線で描く。
   routeSegments.forEach(seg => {
     if (seg.coords.length <= 1) return;
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 6;
-    ctx.setLineDash(seg.isPlan ? [16, 12] : []);
+    ctx.strokeStyle = seg.color;
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.setLineDash(seg.isPlan ? [22, 16] : []);
     ctx.beginPath();
     seg.coords.forEach((c, i) => {
       const pt = toCanvas(c.lat, c.lng);
@@ -8974,8 +8981,9 @@ async function generateEinkMapDataUrl(trip) {
   });
   ctx.setLineDash([]); // 以降の描画（ランドマーク円・方位マークなど）に点線が影響しないようリセット
 
-  // ランドマーク番号を描画（並び順・件数は冒頭で確定済みのsortedLandmarksを使う）
-  sortedLandmarks.forEach(({ photo, coord }) => {
+  // ランドマーク番号を描画（並び順・件数は冒頭で確定済みのsortedLandmarksを使う）。
+  // 円の縁は由来トリップと同じ色にして、ルート線との対応が分かるようにする。
+  sortedLandmarks.forEach(({ photo, coord, color }) => {
     const pt = toCanvas(coord.lat, coord.lng);
     const label = String(photo.landmarkNo);
     const radius = label.length >= 3 ? 34 : label.length === 2 ? 30 : 26;
@@ -8983,8 +8991,8 @@ async function generateEinkMapDataUrl(trip) {
     ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = color;
     ctx.stroke();
     ctx.fillStyle = '#000000';
     ctx.font = `bold ${label.length >= 3 ? 22 : 26}px sans-serif`;
