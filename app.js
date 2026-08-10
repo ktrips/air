@@ -278,9 +278,11 @@ function drawQrCodeCorner(ctx, url, canvasW, canvasH, opts = {}) {
 
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(x, y, boxSize, boxSize);
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, boxSize, boxSize);
+    if (opts.border !== false) {
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, boxSize, boxSize);
+    }
 
     // セル境界をピクセル単位に丸めて隙間（アンチエイリアスによる白い筋）が出ないようにする
     const cell = qrSize / count;
@@ -9403,13 +9405,20 @@ async function generateEinkStampSheetDataUrl(trip) {
   // 各スタンプの写真を先に読み込んでおく（写真がない/失敗したものはnull）
   const stampPhotoImages = await Promise.all(stamps.map(s => loadStampPhotoImage(s.url)));
 
-  // スタンプ数に応じて列数を決め、なるべく正方形に近いグリッドにする
-  const COLS = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(stamps.length * 1.4))));
+  // 1行2列の固定グリッド。スタンプをなるべく大きく表示するため正方形セルを大きめに取る。
+  const COLS = 2;
   const rows = Math.ceil(stamps.length / COLS);
+  const SQUARE = 480; // 各スタンプの一辺
+  const GAP = 24; // セル同士の間隔
+  const PAD = 40; // 外周の余白
+  const TOP_MARGIN = 90; // タイトル分のみ（サブタイトルは廃止）
+  const BOTTOM_MARGIN = 40;
+  // 親トリップ集約時のみ、各スタンプの下に由来トリップ名を表示するための帯を確保する
+  const LABEL_H = trip.isParent ? 30 : 0;
+  const ROW_PITCH = SQUARE + LABEL_H + GAP;
 
-  const CELL = 220, PAD = 30, TOP_MARGIN = 130, BOTTOM_MARGIN = 60;
-  const canvasW = COLS * CELL + PAD * 2;
-  const canvasH = rows * CELL + TOP_MARGIN + BOTTOM_MARGIN;
+  const canvasW = PAD * 2 + SQUARE * COLS + GAP * (COLS - 1);
+  const canvasH = TOP_MARGIN + rows * (SQUARE + LABEL_H) + GAP * (rows - 1) + BOTTOM_MARGIN;
 
   const canvas = document.createElement('canvas');
   canvas.width = canvasW;
@@ -9423,35 +9432,34 @@ async function generateEinkStampSheetDataUrl(trip) {
   ctx.lineWidth = 4;
   ctx.strokeRect(2, 2, canvasW - 4, canvasH - 4);
 
-  // タイトル
+  // タイトル（トリップ名のみ。「スタンプ一覧」のサブタイトルは表示しない）
   ctx.fillStyle = '#000000';
   ctx.textAlign = 'center';
   ctx.font = 'bold 46px sans-serif';
-  ctx.fillText(trip.name || '旅行', canvasW / 2, 68);
-  ctx.font = '24px sans-serif';
-  ctx.fillText('スタンプ一覧', canvasW / 2, 105);
+  ctx.fillText(trip.name || '旅行', canvasW / 2, 62);
 
   // 親トリップ集約時は番号が子トリップ間で重複し得るため、由来トリップ名を添えて区別する
   const showSourceTripName = !!trip.isParent;
+  const inset = 14; // 外枠と内側（写真）の間隔
 
   stamps.forEach((stamp, i) => {
     const col = i % COLS, row = Math.floor(i / COLS);
-    const cx = PAD + col * CELL + CELL / 2;
-    const cy = TOP_MARGIN + row * CELL + CELL / 2;
-    const outerR = CELL * 0.38;
-    const innerR = outerR - 10;
+    const x0 = PAD + col * (SQUARE + GAP);
+    const y0 = TOP_MARGIN + row * ROW_PITCH;
+    const cx = x0 + SQUARE / 2;
+    const innerX = x0 + inset, innerY = y0 + inset, innerSize = SQUARE - inset * 2;
     const photoImg = stampPhotoImages[i];
 
     if (photoImg) {
-      // 実際にアップロードされた写真を円形に切り抜き、白黒（グレースケール＋コントラスト強調）で描画する
+      // 実際にアップロードされた写真を四角に切り抜き、白黒（グレースケール＋コントラスト強調）で描画する
       ctx.save();
       ctx.beginPath();
-      ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+      ctx.rect(innerX, innerY, innerSize, innerSize);
       ctx.clip();
       ctx.filter = 'grayscale(100%) contrast(1.25)';
-      const scale = Math.max((innerR * 2) / photoImg.width, (innerR * 2) / photoImg.height);
+      const scale = Math.max(innerSize / photoImg.width, innerSize / photoImg.height);
       const dw = photoImg.width * scale, dh = photoImg.height * scale;
-      ctx.drawImage(photoImg, cx - dw / 2, cy - dh / 2, dw, dh);
+      ctx.drawImage(photoImg, innerX + innerSize / 2 - dw / 2, innerY + innerSize / 2 - dh / 2, dw, dh);
       ctx.filter = 'none';
       ctx.restore();
 
@@ -9459,83 +9467,74 @@ async function generateEinkStampSheetDataUrl(trip) {
       if (stamp.name) {
         ctx.save();
         ctx.beginPath();
-        ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+        ctx.rect(innerX, innerY, innerSize, innerSize);
         ctx.clip();
-        const capH = innerR * 0.56;
-        const grad = ctx.createLinearGradient(0, cy + innerR - capH, 0, cy + innerR);
+        const capH = innerSize * 0.16;
+        const grad = ctx.createLinearGradient(0, innerY + innerSize - capH, 0, innerY + innerSize);
         grad.addColorStop(0, 'rgba(0,0,0,0)');
         grad.addColorStop(1, 'rgba(0,0,0,0.72)');
         ctx.fillStyle = grad;
-        ctx.fillRect(cx - innerR, cy + innerR - capH, innerR * 2, capH);
+        ctx.fillRect(innerX, innerY + innerSize - capH, innerSize, capH);
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'alphabetic';
-        ctx.font = '15px sans-serif';
-        ctx.fillText(truncateTextToWidth(ctx, stamp.name, innerR * 1.7), cx, cy + innerR - 10);
+        ctx.font = '22px sans-serif';
+        ctx.fillText(truncateTextToWidth(ctx, stamp.name, innerSize * 0.9), cx, innerY + innerSize - 16);
         ctx.restore();
       }
     }
 
-    // 判子（はんこ）風の二重丸（写真の有無に関わらず縁取りとして描画）
-    ctx.beginPath();
-    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
-    ctx.lineWidth = 5;
+    // 判子（はんこ）風の二重四角枠（写真の有無に関わらず縁取りとして描画）
     ctx.strokeStyle = '#000000';
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
+    ctx.lineWidth = 6;
+    ctx.strokeRect(x0, y0, SQUARE, SQUARE);
     ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.strokeRect(innerX, innerY, innerSize, innerSize);
 
     const label = String(stamp.landmarkNo || (i + 1));
     if (photoImg) {
       // 写真がある場合は左上に白丸バッジで番号を表示（写真の濃淡によらず読めるように）
-      const badgeR = label.length >= 3 ? 22 : 18;
-      const badgeX = cx - innerR * 0.62, badgeY = cy - innerR * 0.62;
+      const badgeR = label.length >= 3 ? 28 : 24;
+      const badgeX = innerX + badgeR + 6, badgeY = innerY + badgeR + 6;
       ctx.beginPath();
       ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
       ctx.fillStyle = '#ffffff';
       ctx.fill();
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 3;
       ctx.strokeStyle = '#000000';
       ctx.stroke();
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = `bold ${label.length >= 3 ? 16 : 20}px sans-serif`;
+      ctx.font = `bold ${label.length >= 3 ? 22 : 28}px sans-serif`;
       ctx.fillText(label, badgeX, badgeY + 1);
     } else {
       // 写真がない場合は従来通り中央に大きく番号・名前を表示
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = `bold ${label.length >= 3 ? 40 : 52}px sans-serif`;
-      ctx.fillText(label, cx, cy - (stamp.name ? 12 : 0));
+      ctx.font = `bold ${label.length >= 3 ? 90 : 120}px sans-serif`;
+      ctx.fillText(label, cx, y0 + SQUARE / 2 - (stamp.name ? 24 : 0));
 
       if (stamp.name) {
-        ctx.font = '16px sans-serif';
-        ctx.fillText(truncateTextToWidth(ctx, stamp.name, outerR * 1.6), cx, cy + outerR * 0.55);
+        ctx.font = '28px sans-serif';
+        ctx.fillText(truncateTextToWidth(ctx, stamp.name, SQUARE * 0.8), cx, y0 + SQUARE / 2 + SQUARE * 0.22);
       }
     }
 
     if (showSourceTripName && stamp._tripName) {
+      // 枠の下に確保したLABEL_H分の帯に由来トリップ名を表示する
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'alphabetic';
-      ctx.font = '13px sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.font = '15px sans-serif';
       ctx.fillStyle = '#000000';
-      ctx.fillText(truncateTextToWidth(ctx, stamp._tripName, CELL - 16), cx, TOP_MARGIN + row * CELL + CELL - 14);
+      ctx.fillText(truncateTextToWidth(ctx, stamp._tripName, SQUARE - 20), cx, y0 + SQUARE + LABEL_H / 2);
     }
   });
   ctx.textBaseline = 'alphabetic';
 
-  // フッター
-  ctx.font = '18px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#000000';
-  ctx.fillText(`全${stamps.length}スタンプ`, canvasW / 2, canvasH - 20);
-
-  // 右下にこのトリップを開けるQRコードを表示する
-  drawQrCodeCorner(ctx, buildTripShareUrl(trip), canvasW, canvasH);
+  // 右下にこのトリップを開けるQRコードを表示する（枠線は表示せず、白地とQR本体のみ）
+  drawQrCodeCorner(ctx, buildTripShareUrl(trip), canvasW, canvasH, { border: false });
 
   return canvas.toDataURL('image/png');
 }
