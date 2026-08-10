@@ -3223,7 +3223,17 @@ async function updateMapMarkers() {
   updatePlaybackPulseMarker();
 }
 
+// パース済みGPX座標のキャッシュ（GPXテキスト → [lat,lon]配列）。
+// 同じGPXがupdateMapMarkers等から何度も再パースされるのを避ける。
+// 際限なく増えないよう、最大件数を超えたら最も古いエントリから削除する簡易LRU。
+const gpxPointsCache = new Map();
+const GPX_POINTS_CACHE_MAX = 50;
+
 function parseGpxPoints(xmlStr) {
+  if (!xmlStr) return [];
+  const cached = gpxPointsCache.get(xmlStr);
+  if (cached) return cached.slice(); // 呼び出し側の誤った破壊的変更からキャッシュ本体を守る
+
   const pts = [];
   const parser = new DOMParser();
   const doc = parser.parseFromString(xmlStr, 'application/xml');
@@ -3271,7 +3281,13 @@ function parseGpxPoints(xmlStr) {
     }
   }
 
-  return pts;
+  if (gpxPointsCache.size >= GPX_POINTS_CACHE_MAX) {
+    const oldestKey = gpxPointsCache.keys().next().value;
+    gpxPointsCache.delete(oldestKey);
+  }
+  gpxPointsCache.set(xmlStr, pts);
+
+  return pts.slice();
 }
 
 function haversineKm(lat1, lon1, lat2, lon2) {
@@ -7446,10 +7462,10 @@ async function generateTravelogueWithAI() {
 2. サマリー: ${summaryStructure}
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
 3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
-<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
+<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" loading="lazy" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
 
 【名所浮世絵の配置】写真情報に[浮世絵:URL]が含まれる場合、その写真セクションの情景描写の後に浮世絵を配置（同じURLの浮世絵は旅行記全体で1回のみ表示すること）:
-<div style="margin:1.5rem 0 0 0;text-align:center;"><img src="浮世絵URL" alt="名所浮世絵" style="width:100%;max-width:600px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:inline-block;"/><p style="margin-top:0.5rem;font-size:0.85rem;color:#666;font-style:italic;">※この名所の浮世絵風イラスト</p></div>
+<div style="margin:1.5rem 0 0 0;text-align:center;"><img src="浮世絵URL" alt="名所浮世絵" loading="lazy" style="width:100%;max-width:600px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:inline-block;"/><p style="margin-top:0.5rem;font-size:0.85rem;color:#666;font-style:italic;">※この名所の浮世絵風イラスト</p></div>
 
 重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください${customInstructions ? `
@@ -7493,6 +7509,10 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     let finalHtml = await callTravelogueTextAI(systemPrompt, userPrompt, cfg, timeout);
 
     finalHtml = finalHtml.trim();
+
+    // 全<img>にloading="lazy"を強制する（プロンプトで指示済みだが、AIが従わなかった場合のフォールバック）。
+    // 写真が多いトリップでも初期表示時に全画像を一括ダウンロードしないようにする。
+    finalHtml = finalHtml.replace(/<img(?![^>]*\bloading=)([^>]*)>/gi, (m, attrs) => `<img${attrs} loading="lazy">`);
 
     // 動画URLがあるポイントの写真をサムネイルに差し替え（AIが従わなかった場合のフォールバック）
     photos.filter(p => p.url && p.videoUrl && p.videoUrl.trim()).forEach(p => {
@@ -7743,7 +7763,7 @@ function buildChildAccessSectionHtml(children) {
     }
 
     return `<div class="travelogue-child-card" style="border:1px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#fff;">
-      ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" style="width:100%;height:130px;object-fit:cover;display:block;" />` : ''}
+      ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" loading="lazy" style="width:100%;height:130px;object-fit:cover;display:block;" />` : ''}
       <div style="padding:10px 12px;">
         <div style="font-weight:700;font-size:0.95rem;margin-bottom:4px;">${safeName}</div>
         ${badges.length > 0 ? `<div style="font-size:0.78rem;color:#888;margin-bottom:8px;">${badges.join('　')}</div>` : ''}

@@ -1,21 +1,30 @@
 /**
  * Service Worker – air travel diary
  * 戦略:
- *   - 同一オリジン静的アセット: stale-while-revalidate（即キャッシュ返却 + バックグラウンド更新）
+ *   - コアアプリファイル（app.js/index.html/CSS）: network-first
+ *     （デプロイ直後から即座に最新版が反映されるよう、まずネットワークを優先する。
+ *      オフライン時のみキャッシュにフォールバックする）
+ *   - その他の同一オリジン静的アセット（アイコン等）: stale-while-revalidate
+ *     （即キャッシュ返却 + バックグラウンド更新。滅多に変わらないため許容できる）
  *   - CDN スクリプト/スタイル: cache-first（変更が少ないため）
  *   - Firestore / Firebase API / Storage: スキップ（キャッシュ不可）
  *   - GPX ファイル: cache-first（IndexedDB とは別の HTTP キャッシュ層）
  */
 
-const CACHE_VERSION = 'air-v6'; // mapbox-glを動的読み込みに変更（index.html更新）
+const CACHE_VERSION = 'air-v7'; // コアアプリファイルをnetwork-firstに変更（stale-while-revalidateによる反映遅延を解消）
 
-// インストール時に事前キャッシュする同一オリジンアセット
-const PRECACHE_ASSETS = [
+// network-first で扱うコアアプリファイル（デプロイのたびに変わり得るもの）
+const NETWORK_FIRST_ASSETS = [
   '/',
   '/index.html',
   '/app.js',
   '/style.css',
   '/map-trip-name.css',
+];
+
+// インストール時に事前キャッシュする同一オリジンアセット
+const PRECACHE_ASSETS = [
+  ...NETWORK_FIRST_ASSETS,
   '/manifest.json',
   '/icon.svg',
   '/favicon-16.png',
@@ -104,15 +113,40 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 同一オリジンの静的アセット: stale-while-revalidate
   const requestUrl = new URL(request.url);
   if (requestUrl.origin === self.location.origin) {
+    // コアアプリファイル: network-first（デプロイを即座に反映させる）
+    if (NETWORK_FIRST_ASSETS.includes(requestUrl.pathname)) {
+      event.respondWith(networkFirst(request));
+      return;
+    }
+    // その他の同一オリジン静的アセット: stale-while-revalidate
     event.respondWith(staleWhileRevalidate(request));
     return;
   }
 });
 
 // ─── キャッシュ戦略ヘルパー ─────────────────────────────────────────────────
+
+/**
+ * network-first: まずネットワークから取得（常に最新を優先）。
+ * オフライン等でネットワークが失敗した場合のみキャッシュにフォールバックする。
+ */
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_VERSION);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (err) {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    console.warn('[SW] network-first: ネットワーク・キャッシュ共に失敗:', request.url);
+    return new Response('Network error', { status: 503 });
+  }
+}
 
 /** cache-first: キャッシュにあればそれを返す。なければネットワーク取得してキャッシュに保存 */
 async function cacheFirst(request) {
