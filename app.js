@@ -10180,11 +10180,19 @@ async function showAnimeModal() {
       const generatedAnimesToAdd = [];
       for (let page = 1; page <= 4; page++) {
         const pageTheme = infographicPages[page - 1];
+        const isDataPage = page === 2;
         setStatus(`インフォグラフィック生成中 ${page}/4...`);
         if (btn) btn.textContent = `インフォグラフィック生成中 (${page}/4)...`;
 
-        setStatus(`ページ${page}/4の情景を要約中...`);
-        const pageBrief = await buildSceneBrief(combinedSource, animeCfg, 220);
+        // 「データで見る旅」ページは、要約によって数値が変質・欠落しないよう、
+        // 追加情報欄の文章をそのまま使う（要約しない）。他のページは情景ブリーフで要約する。
+        let pageContent;
+        if (isDataPage && extraInfo) {
+          pageContent = extraInfo;
+        } else {
+          setStatus(`ページ${page}/4の情景を要約中...`);
+          pageContent = (await buildSceneBrief(combinedSource, animeCfg, 220)) || combinedSource.slice(0, 1200);
+        }
 
         const promptParts = [
           `旅行「${tripName}」のインフォグラフィックを4枚シリーズで作成します。今回は${page}/4枚目「${pageTheme.title}」です。`,
@@ -10195,8 +10203,12 @@ async function showAnimeModal() {
           '',
           `【このページの内容】${pageTheme.title}：${pageTheme.instruction}`,
           '',
-          '【元データ】',
-          pageBrief || combinedSource.slice(0, 1200),
+          isDataPage && extraInfo
+            ? '【入力された統計データ・数値情報（最優先で正確に反映すること。数値・割合・年代などを書き換えたり、記載のない数値を創作したりしないでください）】'
+            : '【元データ】',
+          pageContent,
+          '',
+          '【忠実性について】上記のデータ・地名・固有名詞・数値は入力情報に忠実に描いてください。特に数値やグラフの比率は入力内容と矛盾しないようにしてください。',
           '',
           '【画質】輪郭がはっきりした高精細で綺麗な仕上がりに。文字・数字は読みやすく大きめに配置してください。'
         ];

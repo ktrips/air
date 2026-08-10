@@ -267,13 +267,12 @@
         </div>
       </section>
       <section class="menu-section editor-only" id="aiMenuSection">
-        <div class="menu-row menu-row-label-btn">
-          <span class="menu-label">AI生成</span>
+        <div class="menu-row" style="display:flex;align-items:center;gap:8px;">
           <button type="button" class="btn btn-secondary" id="aiSettingsBtn" title="AI API キーを設定">AI設定</button>
+          <button type="button" class="btn btn-travelogue" id="generateTravelogueBtn" title="写真・説明・URL・動画・GPSから旅行記をAI生成">旅行記生成</button>
         </div>
         <div class="menu-row" style="display:flex;align-items:center;gap:8px;padding-left:1rem;">
-          <button type="button" class="btn btn-travelogue" id="generateTravelogueBtn" title="写真・説明・URL・動画・GPSから旅行記をAI生成">旅行記生成</button>
-          <div id="travelogueHistoryLinks" style="display:flex;gap:6px;align-items:center;margin-left:8px;flex-wrap:wrap;"></div>
+          <div id="travelogueHistoryLinks" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"></div>
           <div id="generatedImagesPreview" style="display:flex;gap:8px;align-items:center;"></div>
         </div>
         <div class="menu-row" style="padding-left:1rem;padding-right:0.5rem;">
@@ -302,9 +301,9 @@
             <option value="infographic">インフォグラフィック</option>
           </select>
           <select id="modelLevelSelect" class="menu-select menu-select-inline" title="画像生成に使うモデルの品質レベル">
-            <option value="low" selected>Low</option>
-            <option value="mid">Mid</option>
-            <option value="high">High</option>
+            <option value="low" selected>L</option>
+            <option value="mid">M</option>
+            <option value="high">H</option>
           </select>
           <button type="button" class="btn btn-primary" id="generateAnimeBtnViewer" title="選択したスタイルで画像を生成">画像生成</button>
         </div>
