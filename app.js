@@ -9140,8 +9140,15 @@ async function generateEinkMapDataUrl(trip, options = {}) {
     };
   };
 
-  // 海岸線（陸地ポリゴンの輪郭）を背景として描画。塗りつぶしはせず、太めの線で目立たせる。
-  // トリップ範囲より少し広めの範囲を対象にする。
+  // 海・陸地を背景として描画。トリップ範囲より少し広めの範囲を対象にする。
+  // マップBW（白黒）: 海・湖を黒で塗りつぶし、陸地を白抜きにする（くっきりした地図らしい見た目に）。
+  // マップInk（カラー）: 塗りつぶさず、陸地の輪郭を太めの線で描くだけにとどめる
+  //   （ルート・ランドマークの配色を主役にするため）。
+  // 110m解像度は都市規模のズームには粗すぎて誤った形になるため、塗りつぶしは
+  // トリップの地理的な範囲が一定以上広い場合のみ行う。
+  const SEA_FILL_MIN_SPAN_DEG = 1.0;
+  const geoSpanDeg = Math.max(latRange.max - latRange.min, lngRange.max - lngRange.min);
+  const fillSea = monochrome && geoSpanDeg >= SEA_FILL_MIN_SPAN_DEG;
   try {
     const landPolygons = await loadLandPolygonData();
     if (landPolygons.length > 0) {
@@ -9154,8 +9161,16 @@ async function generateEinkMapDataUrl(trip, options = {}) {
       ctx.beginPath();
       ctx.rect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
       ctx.clip();
-      ctx.strokeStyle = monochrome ? '#000000' : '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する（マップBWでは黒）
-      ctx.lineWidth = 4.5;
+
+      if (fillSea) {
+        // まず描画エリア全体を「海」として黒で塗ってから、陸地ポリゴンを白で塗り重ねる
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(SIDE_MARGIN, TOP_MARGIN, drawWidth, drawHeight);
+      } else {
+        ctx.strokeStyle = monochrome ? '#000000' : '#5b8fb0'; // 海岸線は控えめな青系にし、ルート・ランドマークの色と区別する（マップBWでは黒）
+        ctx.lineWidth = 4.5;
+      }
+
       landPolygons.forEach(rings => {
         // トリップ範囲（＋余白）にかすっている陸地だけを描画対象にする（外輪郭で簡易判定）
         const exterior = rings[0] || [];
@@ -9163,14 +9178,20 @@ async function generateEinkMapDataUrl(trip, options = {}) {
           lat >= boxLatMin && lat <= boxLatMax && lng >= boxLngMin && lng <= boxLngMax
         );
         if (!isRelevant) return;
-        rings.forEach(ring => {
+        rings.forEach((ring, idx) => {
           ctx.beginPath();
           ring.forEach(([lat, lng], i) => {
             const pt = toCanvas(lat, lng);
             if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
           });
           ctx.closePath();
-          ctx.stroke();
+          if (fillSea) {
+            // 外輪郭は白（陸地）、2つ目以降の輪（湖などの穴）は黒（水域）に塗り戻す
+            ctx.fillStyle = idx === 0 ? '#ffffff' : '#000000';
+            ctx.fill();
+          } else {
+            ctx.stroke();
+          }
         });
       });
       ctx.restore();
@@ -9199,17 +9220,24 @@ async function generateEinkMapDataUrl(trip, options = {}) {
   }
 
   if (!bottomBoxOccupied) {
-    // 下部の空白にタイトルを大きく表示。海（黒塗り）の上に乗る場合でも読めるよう、
-    // QRコードと同様に白い背景を先に敷いてから黒文字を乗せる。
+    // 下部の空白にタイトルを大きく表示。黒塗りの海に重なる場合は白文字、
+    // 白地（陸地・背景）に重なる場合は黒文字にして、どちらでも確実に読めるようにする。
     const centerX = (bottomBoxX0 + bottomBoxX1) / 2;
     const centerY = (bottomBoxY0 + bottomBoxY1) / 2;
     const availableWidth = bottomBoxWidth * 0.92;
     const titleText = trip.name || '旅行マップ';
     const titleFont = fitTextFontSize(ctx, titleText, availableWidth, Math.min(84, Math.round(bottomBoxHeight * 0.38)), 22);
     const subtitleSize = Math.max(18, Math.round(titleFont * 0.42));
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(bottomBoxX0, bottomBoxY0, bottomBoxWidth, bottomBoxHeight);
-    ctx.fillStyle = '#000000';
+
+    // 実際に描画された背景ピクセルの明るさから文字色を決める
+    let textColor = '#000000';
+    try {
+      const px = ctx.getImageData(Math.round(centerX), Math.round(centerY), 1, 1).data;
+      const brightness = (px[0] + px[1] + px[2]) / 3;
+      textColor = brightness < 128 ? '#ffffff' : '#000000';
+    } catch (_) {}
+
+    ctx.fillStyle = textColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = `bold ${titleFont}px sans-serif`;
