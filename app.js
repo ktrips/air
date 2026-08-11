@@ -9395,6 +9395,574 @@ function fitTextFontSize(ctx, text, maxWidth, maxFontSize, minFontSize = 16, wei
   return size;
 }
 
+// ============================================================
+// トリップ動画書き出し（地図の移動＋写真のスライドショーをmp4/webmで書き出す）
+// canvasに毎フレーム手描きし、canvas.captureStream + MediaRecorderでそのまま録画する。
+// 実際のマップタイル（Leaflet/Mapbox）はCORSで汚染されるため描画できず、
+// E-Ink画像生成と同じ「座標から決定論的に描く簡易マップ」の手法を流用する。
+const TRIP_VIDEO_W = 720;
+const TRIP_VIDEO_H = 1280; // モバイルの縦長（9:16）
+const TRIP_VIDEO_FPS = 30;
+const TRIP_VIDEO_BITRATE = 2500000; // 2.5Mbps: 高画質を保ちつつファイルサイズを抑える
+const TRIP_VIDEO_MAP_X = 40, TRIP_VIDEO_MAP_Y = 96, TRIP_VIDEO_MAP_W = 640, TRIP_VIDEO_MAP_H = 460, TRIP_VIDEO_MAP_R = 28;
+const TRIP_VIDEO_CARD_X = 40, TRIP_VIDEO_CARD_Y = 606, TRIP_VIDEO_CARD_W = 640, TRIP_VIDEO_CARD_H = 560, TRIP_VIDEO_CARD_R = 28;
+const TRIP_VIDEO_TITLE_MS = 1400;
+const TRIP_VIDEO_TRANSITION_MS = 800;
+const TRIP_VIDEO_HOLD_MS = 1700;
+
+let tripVideoExportState = null; // { cancelled: boolean } / 生成中でなければnull
+let tripVideoExportObjectUrl = null;
+
+/**
+ * Safari/iOSはMediaRecorderで直接mp4(h264)録画に対応しているためそれを優先し、
+ * 非対応環境（Chrome/Firefoxなど）はwebmにフォールバックする。
+ * ffmpeg.wasm等での変換は行わない（数十MBの追加ダウンロードが発生し、
+ * このアプリの軽量さの方針と合わないため）。
+ */
+function pickTripVideoMimeType() {
+  if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return null;
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm'
+  ];
+  return candidates.find(c => MediaRecorder.isTypeSupported(c)) || null;
+}
+
+function openTripVideoExportModal() {
+  document.getElementById('tripVideoExportModal')?.classList.add('open');
+}
+
+function closeTripVideoExportModal() {
+  document.getElementById('tripVideoExportModal')?.classList.remove('open');
+  if (tripVideoExportState) tripVideoExportState.cancelled = true;
+}
+
+function setTripVideoExportStatus(text, progress) {
+  const statusEl = document.getElementById('tripVideoExportStatus');
+  if (statusEl) statusEl.textContent = text || '';
+  if (progress != null) {
+    const bar = document.getElementById('tripVideoExportProgressBar');
+    if (bar) bar.style.width = `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}%`;
+  }
+}
+
+function setTripVideoExportCancelLabel(text) {
+  const btn = document.getElementById('tripVideoExportCancelBtn');
+  if (btn) btn.textContent = text;
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+/** hexカラーを指定%だけ明るく（負値で暗く）した rgb() 文字列を返す */
+function shadeHexColor(hex, percent) {
+  const h = (hex || '#333333').replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const num = parseInt(full, 16) || 0x333333;
+  const clamp = (v) => Math.max(0, Math.min(255, v));
+  const r = clamp((num >> 16) + Math.round(255 * percent / 100));
+  const g = clamp(((num >> 8) & 0xff) + Math.round(255 * percent / 100));
+  const b = clamp((num & 0xff) + Math.round(255 * percent / 100));
+  return `rgb(${r},${g},${b})`;
+}
+
+/** GPXは数千点になり得るため、動画の背景線として描く分は間引く */
+function decimateCoords(coords, maxPoints) {
+  if (coords.length <= maxPoints) return coords;
+  const step = Math.ceil(coords.length / maxPoints);
+  const out = [];
+  for (let i = 0; i < coords.length; i += step) out.push(coords[i]);
+  const last = coords[coords.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
+}
+
+/** 画像URLをcanvas安全なdata URL経由でImageとして読み込む（CORS汚染対策はfetchImageAsResizedDataUrlと同じ） */
+async function loadTripVideoImage(url, maxDim) {
+  if (!url) return null;
+  try {
+    const dataUrl = await fetchImageAsResizedDataUrl(url, maxDim);
+    if (!dataUrl) return null;
+    return await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  } catch (err) {
+    console.warn('動画用画像の読み込みに失敗（スキップ）:', url, err);
+    return null;
+  }
+}
+
+/** 各ポイントに座標を割り当てる。GPSが無いポイントは直前の有効な座標を引き継ぐ */
+function computeTripVideoPoints(photos) {
+  const coords = photos.map(p => ensureLatLng(p.lat, p.lng));
+  const fallback = coords.find(c => c) || { lat: 35.6812, lng: 139.7671 };
+  let last = fallback;
+  return photos.map((p, i) => {
+    const c = coords[i] || last;
+    last = c;
+    return { ...p, _coord: c };
+  });
+}
+
+/** 背景に薄く表示するGPXルート（E-Ink地図生成と同じくトリップごとに独立したセグメントとして扱う） */
+async function buildTripVideoRouteSegments(trip) {
+  const sourceTrips = trip.isParent ? getChildTrips(trip.id) : [trip];
+  const perTripData = await Promise.all(sourceTrips.map(t => getTripRouteAndLandmarks(t)));
+  return perTripData
+    .map((d, i) => ({
+      coords: decimateCoords(d.routeCoords, 600),
+      color: sourceTrips[i].color || TRIP_COLORS[i % TRIP_COLORS.length]
+    }))
+    .filter(seg => seg.coords.length > 1);
+}
+
+/** 緯度経度→簡易マップ内のローカル座標への投影（E-Ink地図と同じcos補正つきfit-contain） */
+function buildTripVideoProjection(points, routeSegments, mapW, mapH) {
+  const allCoords = [...points.map(p => p._coord), ...routeSegments.flatMap(s => s.coords)].filter(Boolean);
+  const minMaxOf = (values) => values.reduce(
+    (acc, v) => ({ min: Math.min(acc.min, v), max: Math.max(acc.max, v) }),
+    { min: Infinity, max: -Infinity }
+  );
+  const latRange = minMaxOf(allCoords.map(c => c.lat));
+  const lngRange = minMaxOf(allCoords.map(c => c.lng));
+  const avgLatRad = ((latRange.min + latRange.max) / 2) * Math.PI / 180;
+  const cosLat = Math.max(0.15, Math.cos(avgLatRad));
+  const project = (lat, lng) => ({ x: lng * cosLat, y: lat });
+  const projected = allCoords.map(c => project(c.lat, c.lng));
+  const xRange = minMaxOf(projected.map(p => p.x));
+  const yRange = minMaxOf(projected.map(p => p.y));
+  const PAD = 1.35; // 地図の余白（1.0でぴったり、大きいほど余白が広い）
+  const spanX = Math.max(xRange.max - xRange.min, 0.0008) * PAD;
+  const spanY = Math.max(yRange.max - yRange.min, 0.0008) * PAD;
+  const centerX = (xRange.min + xRange.max) / 2;
+  const centerY = (yRange.min + yRange.max) / 2;
+  const scale = Math.min(mapW / spanX, mapH / spanY);
+  return {
+    toXY(lat, lng) {
+      const p = project(lat, lng);
+      return {
+        x: mapW / 2 + (p.x - centerX) * scale,
+        y: mapH / 2 - (p.y - centerY) * scale
+      };
+    }
+  };
+}
+
+/** durationMs間、毎フレームrenderFn(t)を呼び続ける（tは0→1）。canvas.captureStreamがこの描画をそのまま録画する */
+/**
+ * requestAnimationFrameはタブがバックグラウンド/非表示になると完全に停止する
+ * ブラウザが多く、動画書き出し中にアプリを切り替えられると無限に固まってしまう。
+ * setTimeoutは非表示時も（多少スロットリングされつつ）動き続けるため、
+ * 画面表示を伴わないこのオフスクリーン描画にはこちらを使う。
+ */
+function runVideoFrames(state, renderFn, durationMs) {
+  return new Promise(resolve => {
+    const start = performance.now();
+    const step = () => {
+      if (state.cancelled) { resolve(); return; }
+      const t = Math.min(1, (performance.now() - start) / durationMs);
+      renderFn(t);
+      if (t < 1) setTimeout(step, 1000 / TRIP_VIDEO_FPS); else resolve();
+    };
+    step();
+  });
+}
+
+function drawTripVideoBackground(ctx, trip) {
+  const color = trip.color || TRIP_COLORS[0];
+  const grad = ctx.createLinearGradient(0, 0, 0, TRIP_VIDEO_H);
+  grad.addColorStop(0, shadeHexColor(color, -8));
+  grad.addColorStop(1, shadeHexColor(color, -55));
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, TRIP_VIDEO_W, TRIP_VIDEO_H);
+}
+
+function drawTripVideoHeader(ctx, trip) {
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = '600 24px sans-serif';
+  ctx.fillText(truncateTextToWidth(ctx, trip.name || '', TRIP_VIDEO_W - 100), TRIP_VIDEO_W / 2, 70);
+  ctx.restore();
+}
+
+/** Instagramストーリー風の区切りプログレスバー */
+function drawTripVideoProgress(ctx, total, currentIdx, segT) {
+  const barY = 28, barH = 4, gap = 5;
+  const areaX = 40, areaW = TRIP_VIDEO_W - 80;
+  const segW = Math.max(2, (areaW - gap * (total - 1)) / total);
+  for (let i = 0; i < total; i++) {
+    const x = areaX + i * (segW + gap);
+    roundRectPath(ctx, x, barY, segW, barH, 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fill();
+    let ratio = 0;
+    if (i < currentIdx) ratio = 1;
+    else if (i === currentIdx) ratio = Math.max(0, Math.min(1, segT));
+    if (ratio > 0) {
+      roundRectPath(ctx, x, barY, segW * ratio, barH, 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+    }
+  }
+}
+
+function drawTripVideoMap(ctx, proj, routeSegments, points, currentIdx, markerCoord) {
+  ctx.save();
+  roundRectPath(ctx, TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H, TRIP_VIDEO_MAP_R);
+  ctx.clip();
+  ctx.fillStyle = '#eef2f5';
+  ctx.fillRect(TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H);
+
+  const toXY = (lat, lng) => {
+    const p = proj.toXY(lat, lng);
+    return { x: TRIP_VIDEO_MAP_X + p.x, y: TRIP_VIDEO_MAP_Y + p.y };
+  };
+
+  routeSegments.forEach(seg => {
+    ctx.beginPath();
+    seg.coords.forEach((c, i) => {
+      const p = toXY(c.lat, c.lng);
+      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+    });
+    ctx.strokeStyle = seg.color;
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+
+  const visited = points.slice(0, currentIdx + 1).filter(p => p._coord);
+  if (visited.length > 1) {
+    ctx.beginPath();
+    visited.forEach((p, i) => {
+      const pt = toXY(p._coord.lat, p._coord.lng);
+      if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
+    });
+    ctx.strokeStyle = '#ff4d5e';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  visited.slice(0, -1).forEach(p => {
+    const pt = toXY(p._coord.lat, p._coord.lng);
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff4d5e';
+    ctx.fill();
+  });
+
+  if (markerCoord) {
+    const mp = toXY(markerCoord.lat, markerCoord.lng);
+    const pulse = 1 + 0.18 * Math.sin(performance.now() / 260);
+    ctx.beginPath();
+    ctx.arc(mp.x, mp.y, 14 * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,77,94,0.25)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(mp.x, mp.y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ff4d5e';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(mp.x, mp.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff4d5e';
+    ctx.fill();
+  }
+
+  ctx.restore();
+  roundRectPath(ctx, TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H, TRIP_VIDEO_MAP_R);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.stroke();
+}
+
+/** 写真カードをクロスフェード＋ケンバーンズ（ゆっくり拡大）で描画 */
+function drawTripVideoCardCrossfade(ctx, state) {
+  roundRectPath(ctx, TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H, TRIP_VIDEO_CARD_R);
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = '#111111';
+  ctx.fillRect(TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H);
+
+  const drawCover = (img, alpha, zoom) => {
+    if (!img || alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+    const scale = Math.max(TRIP_VIDEO_CARD_W / img.width, TRIP_VIDEO_CARD_H / img.height) * (1 + 0.06 * zoom);
+    const dw = img.width * scale, dh = img.height * scale;
+    const dx = TRIP_VIDEO_CARD_X + (TRIP_VIDEO_CARD_W - dw) / 2;
+    const dy = TRIP_VIDEO_CARD_Y + (TRIP_VIDEO_CARD_H - dh) / 2;
+    ctx.drawImage(img, dx, dy, dw, dh);
+    ctx.globalAlpha = 1;
+  };
+
+  if (state.fromImg !== state.toImg) {
+    drawCover(state.fromImg, 1 - state.crossT, 0);
+    drawCover(state.toImg, state.crossT, state.zoomT);
+  } else {
+    drawCover(state.toImg, 1, state.zoomT);
+  }
+
+  const grad = ctx.createLinearGradient(0, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H * 0.62, 0, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.6)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H * 0.62, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H * 0.38);
+
+  if (state.isVideoPoint) {
+    const cx = TRIP_VIDEO_CARD_X + TRIP_VIDEO_CARD_W - 52, cy = TRIP_VIDEO_CARD_Y + 52;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx - 8, cy - 12);
+    ctx.lineTo(cx - 8, cy + 12);
+    ctx.lineTo(cx + 12, cy);
+    ctx.closePath();
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+  }
+
+  ctx.restore();
+  roundRectPath(ctx, TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H, TRIP_VIDEO_CARD_R);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.stroke();
+}
+
+function drawTripVideoCardLabel(ctx, point) {
+  const label = point?.name || '';
+  if (!label) return;
+  ctx.save();
+  ctx.textBaseline = 'alphabetic';
+  let x = TRIP_VIDEO_CARD_X + 24;
+  let maxW = TRIP_VIDEO_CARD_W - 48;
+  if (point.landmarkNo) {
+    const bx = x + 16, by = TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H - 40;
+    ctx.beginPath();
+    ctx.arc(bx, by, 16, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.fillStyle = '#111111';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(point.landmarkNo), bx, by + 5);
+    x += 42;
+    maxW -= 42;
+  }
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(truncateTextToWidth(ctx, label, maxW), x, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H - 30);
+  ctx.restore();
+}
+
+function composeTripVideoTitleFrame(ctx, trip, t) {
+  drawTripVideoBackground(ctx, trip);
+  const et = easeInOutCubic(Math.min(1, t / 0.6));
+  ctx.save();
+  ctx.globalAlpha = et;
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const title = trip.name || '旅の記録';
+  const titleSize = fitTextFontSize(ctx, title, TRIP_VIDEO_W - 120, 56, 28);
+  ctx.font = `bold ${titleSize}px sans-serif`;
+  ctx.fillText(truncateTextToWidth(ctx, title, TRIP_VIDEO_W - 120), TRIP_VIDEO_W / 2, TRIP_VIDEO_H / 2 - 20);
+  ctx.font = '22px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText('Air', TRIP_VIDEO_W / 2, TRIP_VIDEO_H / 2 + 30);
+  ctx.restore();
+}
+
+function composeTripVideoFrame(ctx, trip, points, routeSegments, proj, currentIdx, markerCoord, imgState, segT) {
+  drawTripVideoBackground(ctx, trip);
+  drawTripVideoProgress(ctx, points.length, currentIdx, segT);
+  drawTripVideoHeader(ctx, trip);
+  drawTripVideoMap(ctx, proj, routeSegments, points, currentIdx, markerCoord);
+  drawTripVideoCardCrossfade(ctx, imgState);
+  drawTripVideoCardLabel(ctx, points[currentIdx]);
+}
+
+/**
+ * トリップの地図移動＋写真スライドショーを1本のmp4（非対応ブラウザではwebm）動画として書き出す。
+ * 実際のライブマップ（Leaflet/Mapbox）は使わず、オフスクリーンcanvasに独自描画したものを
+ * canvas.captureStream + MediaRecorderでそのまま録画するため、画面上の再生表示には影響しない。
+ */
+async function exportTripVideo(trip) {
+  if (!trip) { showToast(MSG_NO_PHOTOS); return; }
+  if (tripVideoExportState) { showToast('🎬 動画を生成中です'); return; }
+
+  const mimeType = pickTripVideoMimeType();
+  if (!mimeType || !document.createElement('canvas').captureStream) {
+    showToast('🎬 お使いのブラウザは動画の書き出しに対応していません');
+    return;
+  }
+
+  const allPhotos = getDisplayPhotos();
+  const photos = allPhotos.filter(p => (p.url && p.url.trim()) || (p.videoUrl && p.videoUrl.trim()));
+  if (!photos.length) {
+    showToast('📷 書き出せる写真・動画がありません');
+    return;
+  }
+
+  const points = computeTripVideoPoints(photos);
+
+  tripVideoExportState = { cancelled: false };
+  if (tripVideoExportObjectUrl) {
+    URL.revokeObjectURL(tripVideoExportObjectUrl);
+    tripVideoExportObjectUrl = null;
+  }
+  openTripVideoExportModal();
+  setTripVideoExportCancelLabel('キャンセル');
+  setTripVideoExportStatus('写真を読み込み中…', 0);
+  const downloadLinkEl = document.getElementById('tripVideoExportDownloadLink');
+  if (downloadLinkEl) downloadLinkEl.style.display = 'none';
+  const previewEl = document.getElementById('tripVideoExportPreview');
+  if (previewEl) { previewEl.style.display = 'none'; previewEl.removeAttribute('src'); }
+
+  try {
+    const routeSegments = await buildTripVideoRouteSegments(trip);
+    const proj = buildTripVideoProjection(points, routeSegments, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H);
+
+    // 写真を先読み（動画ポイントはサムネイルで代用）
+    const images = [];
+    for (let i = 0; i < points.length; i++) {
+      if (tripVideoExportState.cancelled) break;
+      const p = points[i];
+      const isVideo = p.videoUrl && p.videoUrl.trim();
+      const url = isVideo ? getVideoThumbnailUrl(p.videoUrl) : p.url;
+      images.push(await loadTripVideoImage(url, 960));
+      setTripVideoExportStatus(`写真を読み込み中…（${i + 1}/${points.length}）`, (i + 1) / points.length * 0.35);
+    }
+    if (tripVideoExportState.cancelled) throw new Error('cancelled');
+
+    const canvas = document.createElement('canvas');
+    canvas.width = TRIP_VIDEO_W;
+    canvas.height = TRIP_VIDEO_H;
+    const ctx = canvas.getContext('2d');
+
+    const stream = canvas.captureStream(TRIP_VIDEO_FPS);
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: TRIP_VIDEO_BITRATE });
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+    const stopped = new Promise(resolve => { recorder.onstop = resolve; });
+    recorder.start();
+
+    setTripVideoExportStatus('動画を生成中…', 0.35);
+
+    await runVideoFrames(tripVideoExportState, (t) => {
+      composeTripVideoTitleFrame(ctx, trip, t);
+    }, TRIP_VIDEO_TITLE_MS);
+
+    for (let i = 0; i < points.length && !tripVideoExportState.cancelled; i++) {
+      const prev = points[Math.max(0, i - 1)];
+      const curr = points[i];
+      const prevImg = images[Math.max(0, i - 1)];
+      const currImg = images[i];
+      const isVideoPoint = !!(curr.videoUrl && curr.videoUrl.trim());
+
+      // 遷移: 前のポイント→現在のポイントへ地図を移動しながら写真をクロスフェード
+      await runVideoFrames(tripVideoExportState, (t) => {
+        const et = easeInOutCubic(t);
+        const markerCoord = i === 0 ? curr._coord : {
+          lat: lerp(prev._coord.lat, curr._coord.lat, et),
+          lng: lerp(prev._coord.lng, curr._coord.lng, et)
+        };
+        composeTripVideoFrame(ctx, trip, points, routeSegments, proj, i, markerCoord, {
+          fromImg: i === 0 ? currImg : prevImg,
+          toImg: currImg,
+          crossT: i === 0 ? 1 : et,
+          zoomT: 0,
+          isVideoPoint
+        }, t);
+      }, i === 0 ? 200 : TRIP_VIDEO_TRANSITION_MS);
+
+      if (tripVideoExportState.cancelled) break;
+
+      // 保持: 写真をしっかり見せる（ゆっくりケンバーンズ拡大）
+      await runVideoFrames(tripVideoExportState, (t) => {
+        composeTripVideoFrame(ctx, trip, points, routeSegments, proj, i, curr._coord, {
+          fromImg: currImg,
+          toImg: currImg,
+          crossT: 1,
+          zoomT: t,
+          isVideoPoint
+        }, 1);
+      }, TRIP_VIDEO_HOLD_MS);
+
+      setTripVideoExportStatus(`動画を生成中…（${i + 1}/${points.length}）`, 0.35 + (i + 1) / points.length * 0.6);
+    }
+
+    recorder.stop();
+    await stopped;
+
+    if (tripVideoExportState.cancelled) {
+      setTripVideoExportStatus('キャンセルしました');
+      closeTripVideoExportModal();
+      return;
+    }
+
+    const blobType = mimeType.split(';')[0];
+    const blob = new Blob(chunks, { type: blobType });
+    const ext = blobType === 'video/mp4' ? 'mp4' : 'webm';
+    const objectUrl = URL.createObjectURL(blob);
+    tripVideoExportObjectUrl = objectUrl;
+    const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
+
+    if (previewEl) { previewEl.src = objectUrl; previewEl.style.display = ''; }
+    if (downloadLinkEl) {
+      downloadLinkEl.href = objectUrl;
+      downloadLinkEl.download = `${sanitizeFileNamePart(trip.name)}.${ext}`;
+      downloadLinkEl.style.display = '';
+    }
+    setTripVideoExportCancelLabel('閉じる');
+    setTripVideoExportStatus(
+      ext === 'mp4'
+        ? `完成しました（${sizeMb}MB）`
+        : `完成しました（${sizeMb}MB・このブラウザはmp4録画非対応のためwebm形式です）`,
+      1
+    );
+  } catch (err) {
+    if (err?.message !== 'cancelled') {
+      console.error('動画書き出しエラー:', err);
+      setTripVideoExportStatus('動画の生成に失敗しました');
+      setTripVideoExportCancelLabel('閉じる');
+      showToast('🎬 動画の生成に失敗しました');
+    }
+  } finally {
+    tripVideoExportState = null;
+  }
+}
+
 /**
  * 写真URLを、E-Ink向けに白黒（グレースケール＋コントラスト強調）化した
  * <img>要素として読み込む。Storageへの直接描画はCORSでcanvasが汚染される
@@ -11959,6 +12527,8 @@ function initEventListeners() {
   };
 
   document.getElementById('playBtn').onclick = startPlay;
+  const tripVideoDownloadBtn = document.getElementById('tripVideoDownloadBtn');
+  if (tripVideoDownloadBtn) tripVideoDownloadBtn.onclick = () => exportTripVideo(currentTrip);
   const playStopBtnMobile = document.getElementById('playStopBtnMobile');
   if (playStopBtnMobile) {
     playStopBtnMobile.onclick = () => {
@@ -12054,6 +12624,8 @@ function initEventListeners() {
       }
     };
   }
+  const mobileTripVideoDownloadBtn = document.getElementById('mobileTripVideoDownloadBtn');
+  if (mobileTripVideoDownloadBtn) mobileTripVideoDownloadBtn.onclick = () => exportTripVideo(currentTrip);
   // モバイル用のボタン
   const mobileVideoBtn = document.getElementById('mobileVideoBtn');
   if (mobileVideoBtn) mobileVideoBtn.onclick = () => {
@@ -12251,6 +12823,13 @@ function initEventListeners() {
   if (createImageModalClose) createImageModalClose.onclick = () => closeCreateImageModal();
   if (createImageBackBtn) createImageBackBtn.onclick = () => closeCreateImageModal();
   if (createImageModal) createImageModal.onclick = (e) => { if (e.target === createImageModal) closeCreateImageModal(); };
+
+  const tripVideoExportModal = document.getElementById('tripVideoExportModal');
+  const tripVideoExportModalClose = document.getElementById('tripVideoExportModalClose');
+  const tripVideoExportCancelBtn = document.getElementById('tripVideoExportCancelBtn');
+  if (tripVideoExportModalClose) tripVideoExportModalClose.onclick = () => closeTripVideoExportModal();
+  if (tripVideoExportCancelBtn) tripVideoExportCancelBtn.onclick = () => closeTripVideoExportModal();
+  if (tripVideoExportModal) tripVideoExportModal.onclick = (e) => { if (e.target === tripVideoExportModal) closeTripVideoExportModal(); };
 
   const travelogueModal = document.getElementById('travelogueModal');
   const travelogueModalClose = document.getElementById('travelogueModalClose');
