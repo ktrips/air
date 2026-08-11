@@ -74,6 +74,21 @@ if ! command -v firebase &> /dev/null; then
   exit 1
 fi
 
+# app.js/style.css は Service Worker で cache-first 配信しているため、
+# 内容が変わったら CACHE_VERSION も切り替わるようにする（さもないと古いキャッシュが残り続ける）。
+# 内容のハッシュから自動生成することで、更新のたびに手動でバージョン番号を上げる必要をなくす。
+# デプロイ後は元のsw.jsに戻し、リポジトリを汚さないようにする。
+SW_RESTORE=""
+if [[ "$TARGET" == *"hosting"* ]] && [ -f sw.js ]; then
+  HASH=$(cat app.js style.css map-trip-name.css 2>/dev/null | shasum -a 256 | cut -c1-10)
+  cp sw.js sw.js.bak
+  SW_RESTORE="1"
+  trap '[ -n "$SW_RESTORE" ] && mv -f sw.js.bak sw.js 2>/dev/null' EXIT
+  sed -i.tmp "s/^const CACHE_VERSION = '.*';/const CACHE_VERSION = 'air-${HASH}';/" sw.js
+  rm -f sw.js.tmp
+  echo "🔑 Service Worker キャッシュバージョン: air-${HASH}"
+fi
+
 # デプロイ実行
 echo "🚀 デプロイを開始します..."
 firebase deploy --only "$TARGET" --project airgo-trip

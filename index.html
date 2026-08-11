@@ -762,17 +762,18 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
-  <script src="assets/js/qrcode.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-storage-compat.js"></script>
-  <script src="config.js" onerror="console.log('config.js not found, using default settings')"></script>
-  <script src="firebase-config.js" onerror="window.FIREBASE_CONFIG_LOAD_FAILED=true"></script>
-  <script src="firebase-init.js"></script>
-  <script src="app.js"></script>
+  <!-- defer: 全てdocument順に実行されるため依存順は保たれる。HTMLの解析・初期描画をブロックしない -->
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+  <script defer src="assets/js/qrcode.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.7.0/firebase-storage-compat.js"></script>
+  <script defer src="config.js" onerror="console.log('config.js not found, using default settings')"></script>
+  <script defer src="firebase-config.js" onerror="window.FIREBASE_CONFIG_LOAD_FAILED=true"></script>
+  <script defer src="firebase-init.js"></script>
+  <script defer src="app.js"></script>
 
   <!-- Service Worker 登録 -->
   <script>

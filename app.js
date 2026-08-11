@@ -2434,6 +2434,7 @@ function updateViewerSection() {
         allAnimes.forEach((anime) => {
           const img = document.createElement('img');
           img.src = anime.url;
+          img.loading = 'lazy';
           img.alt = anime.style || '';
           img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
           img.onclick = (e) => {
@@ -2521,6 +2522,7 @@ function updateViewerSection() {
       animes.forEach((anime, idx) => {
         const img = document.createElement('img');
         img.src = anime.url;
+        img.loading = 'lazy';
         img.style.width = '100px';
         img.style.height = '100px';
         img.style.objectFit = 'cover';
@@ -5588,6 +5590,7 @@ function renderTripList() {
         animes.forEach((anime, idx) => {
           const img = document.createElement('img');
           img.src = anime.url;
+          img.loading = 'lazy';
           img.alt = anime.style || '';
           img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || '');
           img.className = 'trip-detail-thumb';
@@ -5661,6 +5664,7 @@ function renderTripList() {
           allAnimes.forEach((anime) => {
             const img = document.createElement('img');
             img.src = anime.url;
+            img.loading = 'lazy';
             img.alt = anime.style || '';
             img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
             img.onclick = (e) => {
@@ -5941,6 +5945,7 @@ function renderParentTripChildren(parentId) {
       allAnimes.forEach((anime) => {
         const img = document.createElement('img');
         img.src = anime.url;
+        img.loading = 'lazy';
         img.alt = anime.style || '';
         img.title = anime._tripName ? `${anime._tripName} - ${anime.style || 'アニメ'}` : (anime.style || 'アニメ');
         img.onclick = (e) => {
@@ -11373,6 +11378,7 @@ function renderGeneratedAnimesList() {
     // サムネイル画像
     const img = document.createElement('img');
     img.src = anime.url;
+    img.loading = 'lazy';
     img.alt = `${currentTrip.name}のアニメ画像`;
     img.style.cssText = 'height:90px;width:auto;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.2);cursor:pointer;display:block;';
     img.title = 'クリックで拡大表示';

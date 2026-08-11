@@ -1,9 +1,12 @@
 /**
  * Service Worker – air travel diary
  * 戦略:
- *   - コアアプリファイル（app.js/index.html/CSS）: network-first
- *     （デプロイ直後から即座に最新版が反映されるよう、まずネットワークを優先する。
- *      オフライン時のみキャッシュにフォールバックする）
+ *   - HTMLシェル（/, index.html）: network-first
+ *     （小さいので毎回取りに行っても軽く、常に最新のエントリポイントを保証する）
+ *   - app.js/CSSなどの重いコアアセット: cache-first
+ *     （CACHE_VERSIONはdeploy.shがデプロイのたびに内容ハッシュから自動生成するため、
+ *      内容が変わればキャッシュキーごと切り替わり、古いキャッシュはactivateで削除される。
+ *      これによりnetwork-firstの「毎回ネットワーク往復」コストを払わずに済む）
  *   - その他の同一オリジン静的アセット（アイコン等）: stale-while-revalidate
  *     （即キャッシュ返却 + バックグラウンド更新。滅多に変わらないため許容できる）
  *   - CDN スクリプト/スタイル: cache-first（変更が少ないため）
@@ -11,12 +14,19 @@
  *   - GPX ファイル: cache-first（IndexedDB とは別の HTTP キャッシュ層）
  */
 
-const CACHE_VERSION = 'air-v7'; // コアアプリファイルをnetwork-firstに変更（stale-while-revalidateによる反映遅延を解消）
+// deploy.sh がデプロイのたびに app.js/style.css 等の内容ハッシュへ書き換える
+// （ローカルで直接開いた場合はこの固定値のまま＝cache-firstだが、内容が変わればいずれにせよ
+//   手動デプロイ時に更新されるため開発時の実害はない）
+const CACHE_VERSION = 'air-v8';
 
-// network-first で扱うコアアプリファイル（デプロイのたびに変わり得るもの）
-const NETWORK_FIRST_ASSETS = [
+// HTMLシェル: network-first（デプロイのたびに変わり得るが、小さいので常に取得しても軽い）
+const SHELL_ASSETS = [
   '/',
   '/index.html',
+];
+
+// 重いコアアセット: cache-first（CACHE_VERSIONの切り替えで鮮度を担保する）
+const VERSIONED_ASSETS = [
   '/app.js',
   '/style.css',
   '/map-trip-name.css',
@@ -24,7 +34,8 @@ const NETWORK_FIRST_ASSETS = [
 
 // インストール時に事前キャッシュする同一オリジンアセット
 const PRECACHE_ASSETS = [
-  ...NETWORK_FIRST_ASSETS,
+  ...SHELL_ASSETS,
+  ...VERSIONED_ASSETS,
   '/manifest.json',
   '/icon.svg',
   '/favicon-16.png',
@@ -115,9 +126,14 @@ self.addEventListener('fetch', (event) => {
 
   const requestUrl = new URL(request.url);
   if (requestUrl.origin === self.location.origin) {
-    // コアアプリファイル: network-first（デプロイを即座に反映させる）
-    if (NETWORK_FIRST_ASSETS.includes(requestUrl.pathname)) {
+    // HTMLシェル: network-first（デプロイを即座に反映させる）
+    if (SHELL_ASSETS.includes(requestUrl.pathname)) {
       event.respondWith(networkFirst(request));
+      return;
+    }
+    // 重いコアアセット: cache-first（CACHE_VERSIONがデプロイごとに切り替わるため鮮度は保たれる）
+    if (VERSIONED_ASSETS.includes(requestUrl.pathname)) {
+      event.respondWith(cacheFirst(request));
       return;
     }
     // その他の同一オリジン静的アセット: stale-while-revalidate
