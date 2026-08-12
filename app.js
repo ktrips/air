@@ -627,6 +627,10 @@ let tripRegionFilter = 'all';
 // 特定ドメイン用: 親トリップ名でフィルタ（ohenro/henro.ktrips.net では「しまなみ・淡路と四国遍路」とその子のみ表示）
 let tripFilterParentName = null;
 
+// ohenro/henro.ktrips.net のデフォルトトリップ（「しまなみ・淡路と四国遍路」）。
+// トリップ名は改名され得るためIDで固定する（名前でハードコードすると改名時に一致しなくなる）。
+const OHENRO_DEFAULT_TRIP_ID = 'trip_1773618081995';
+
 /** 日本の大まかな範囲（緯度・経度） */
 const JAPAN_BOUNDS = { latMin: 24.2, latMax: 45.5, lngMin: 122.9, lngMax: 153.9 };
 
@@ -676,7 +680,7 @@ function initRegionFilterFromUrl() {
     } else {
       // ドメイン名による自動選択
       if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-        window.appUrlTripName = 'しまなみ・淡路と四国遍路';
+        window.appUrlTripId = OHENRO_DEFAULT_TRIP_ID;
         console.log('🏠 ドメイン自動選択: ohenro.ktrips.net');
       }
     }
@@ -13098,9 +13102,9 @@ function init() {
             }
           }
 
-          // 初回アクセス：「しまなみ・淡路と四国遍路」の親トリップを一覧表示状態でデフォルト表示
+          // 初回アクセス：「しまなみ・淡路と四国遍路」の親トリップを一覧表示状態でデフォルト表示（改名に強いようIDで検索）
           if (!tripToLoad) {
-            const defaultParentTrip = myTrips.find(t => t.isParent && t.name === 'しまなみ・淡路と四国遍路');
+            const defaultParentTrip = myTrips.find(t => t.id === OHENRO_DEFAULT_TRIP_ID && t.isParent);
             if (defaultParentTrip) {
               console.log(`[${host}] 初回アクセス - デフォルト親トリップを表示: ${defaultParentTrip.name}`);
               tripToLoad = defaultParentTrip.id;
