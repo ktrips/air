@@ -9410,11 +9410,19 @@ const TRIP_VIDEO_W = 720;
 const TRIP_VIDEO_H = 1280; // モバイルの縦長（9:16）
 const TRIP_VIDEO_FPS = 30;
 const TRIP_VIDEO_BITRATE = 2500000; // 2.5Mbps: 高画質を保ちつつファイルサイズを抑える
-// 写真は全画面表示、地図は左上に小さくオーバーラップさせる（従来640x460の約1/3サイズ）
-const TRIP_VIDEO_MAP_X = 24, TRIP_VIDEO_MAP_Y = 96, TRIP_VIDEO_MAP_W = 224, TRIP_VIDEO_MAP_H = 160, TRIP_VIDEO_MAP_R = 16;
+// 写真は全画面表示、地図は左上に小さくオーバーラップさせる（従来640x460の約1/3サイズを基準に、さらに縦横1.5倍）
+const TRIP_VIDEO_MAP_X = 24, TRIP_VIDEO_MAP_Y = 96, TRIP_VIDEO_MAP_W = 336, TRIP_VIDEO_MAP_H = 240, TRIP_VIDEO_MAP_R = 16;
 const TRIP_VIDEO_TITLE_MS = 1400;
 const TRIP_VIDEO_TRANSITION_MS = 800;
 const TRIP_VIDEO_HOLD_MS = 1700;
+
+/** 動画生成にかかるおおよその秒数を見積もる（実時間で録画するため、写真読み込み時間を除けばほぼこの通りの長さになる） */
+function estimateTripVideoSeconds(pointCount) {
+  if (pointCount <= 0) return 0;
+  const firstMs = 200 + TRIP_VIDEO_HOLD_MS;
+  const restMs = (pointCount - 1) * (TRIP_VIDEO_TRANSITION_MS + TRIP_VIDEO_HOLD_MS);
+  return Math.ceil((TRIP_VIDEO_TITLE_MS + firstMs + restMs) / 1000);
+}
 
 // 地図の背景タイル（衛星写真＝地形が視覚的にわかるスタイル。アプリ本体のデフォルト地図と同じ）。
 // server.arcgisonline.com はcanvas読み込みに必要なCORSヘッダーを返すため使用（OSM本家は
@@ -9897,10 +9905,51 @@ function composeTripVideoFrame(ctx, trip, points, routeSegments, tileBundle, cur
   drawTripVideoLabel(ctx, points[currentIdx]);
 }
 
+/** 生成した動画をStorageにアップロードし、ダウンロードURLを返す */
+async function uploadTripVideoToStorage(tripId, blob, ext) {
+  if (!window.firebaseStorage || !window.firebaseAuth?.currentUser) throw new Error('Storage not ready');
+  const path = `trips/${tripId}/videos/trip_video_${Date.now()}.${ext}`;
+  const ref = window.firebaseStorage.ref(path);
+  await ref.put(blob, { contentType: blob.type || (ext === 'mp4' ? 'video/mp4' : 'video/webm') });
+  return await ref.getDownloadURL();
+}
+
+/**
+ * 生成した動画を、トリップの最後のポイントのvideoUrlとして保存する（画面から再生できるように）。
+ * 動画URLは既存の再生機構（showVideoOverlay等）がYouTube/Vimeo以外は<video>タグで
+ * そのまま再生するフォールバックを持つため、追加対応なしで再生可能。
+ * 親トリップ集約時は実際に写真を持つ子トリップのドキュメントを直接更新する
+ * （saveTrip()はフォーム入力・currentTrip前提のため、子トリップの写真は更新できない）。
+ */
+async function attachGeneratedVideoToLastPoint(trip, points, videoUrl) {
+  if (!window.firebaseDb || !window.firebaseAuth?.currentUser) return false;
+  const lastPoint = points[points.length - 1];
+  if (!lastPoint) return false;
+  const targetTripId = lastPoint._tripId || trip.id;
+  const targetTrip = myTripsMap.get(targetTripId);
+  const photoIdx = lastPoint._photoIndexInTrip;
+  if (!targetTrip || photoIdx == null || !targetTrip.photos?.[photoIdx]) return false;
+
+  const uid = window.firebaseAuth.currentUser.uid;
+  if (targetTrip.userId && targetTrip.userId !== uid) return false;
+
+  targetTrip.photos = targetTrip.photos.map((p, i) => i === photoIdx ? { ...p, videoUrl } : p);
+  await window.firebaseDb.collection('trips').doc(targetTripId).set(
+    { photos: targetTrip.photos, updatedAt: Date.now() },
+    { merge: true }
+  );
+  if (currentTrip?.id === targetTripId) currentTrip.photos = targetTrip.photos;
+  renderThumbnails();
+  await updateMapMarkers();
+  return true;
+}
+
 /**
  * トリップの地図移動＋写真スライドショーを1本のmp4（非対応ブラウザではwebm）動画として書き出す。
  * 実際のライブマップ（Leaflet/Mapbox）は使わず、オフスクリーンcanvasに独自描画したものを
  * canvas.captureStream + MediaRecorderでそのまま録画するため、画面上の再生表示には影響しない。
+ * 完成した動画はダウンロードできるほか、ログイン中であればStorageに保存し、
+ * トリップの最後のポイントにvideoUrlとして紐付けて画面から再生できるようにする。
  */
 async function exportTripVideo(trip) {
   if (!trip) { showToast(MSG_NO_PHOTOS); return; }
@@ -9920,6 +9969,12 @@ async function exportTripVideo(trip) {
   }
 
   const points = computeTripVideoPoints(photos);
+
+  const estimatedSeconds = estimateTripVideoSeconds(points.length);
+  const confirmed = confirm(
+    `${points.length}枚の画像から動画を生成するので、${estimatedSeconds}秒ほどかかります。\nその間は画面を閉じないでください。実行しますか？`
+  );
+  if (!confirmed) return;
 
   tripVideoExportState = { cancelled: false };
   if (tripVideoExportObjectUrl) {
@@ -10033,12 +10088,30 @@ async function exportTripVideo(trip) {
       downloadLinkEl.style.display = '';
     }
     setTripVideoExportCancelLabel('閉じる');
-    setTripVideoExportStatus(
-      ext === 'mp4'
-        ? `完成しました（${sizeMb}MB）`
-        : `完成しました（${sizeMb}MB・このブラウザはmp4録画非対応のためwebm形式です）`,
-      1
-    );
+    const baseMsg = ext === 'mp4'
+      ? `完成しました（${sizeMb}MB）`
+      : `完成しました（${sizeMb}MB・このブラウザはmp4録画非対応のためwebm形式です）`;
+
+    const lastPoint = points[points.length - 1];
+    const targetTripId = lastPoint?._tripId || trip.id;
+    if (window.firebaseAuth?.currentUser) {
+      setTripVideoExportStatus(`${baseMsg}\n最後のポイントに保存中…`, 1);
+      try {
+        const storageUrl = await uploadTripVideoToStorage(targetTripId, blob, ext);
+        const saved = await attachGeneratedVideoToLastPoint(trip, points, storageUrl);
+        setTripVideoExportStatus(
+          saved
+            ? `${baseMsg}\n最後のポイント「${lastPoint.name || ''}」に保存しました。画面から再生できます`
+            : `${baseMsg}\n最後のポイントへの保存はスキップされました（権限がありません）`,
+          1
+        );
+      } catch (saveErr) {
+        console.error('動画のトリップへの保存エラー:', saveErr);
+        setTripVideoExportStatus(`${baseMsg}\n※トリップへの保存に失敗しました（ダウンロードは可能です）`, 1);
+      }
+    } else {
+      setTripVideoExportStatus(baseMsg, 1);
+    }
   } catch (err) {
     if (err?.message !== 'cancelled') {
       console.error('動画書き出しエラー:', err);
@@ -12523,6 +12596,13 @@ function initEventListeners() {
     await updateMapMarkers();
     await renderTripDetailPane();
   };
+  const menuVideoExportBtn = document.getElementById('menuVideoExportBtn');
+  if (menuVideoExportBtn) {
+    menuVideoExportBtn.onclick = () => {
+      closeMenu();
+      exportTripVideo(currentTrip);
+    };
+  }
   document.getElementById('tripParentInput').onchange = () => {
     const isParent = document.getElementById('tripParentInput').checked;
     document.getElementById('tripParentSelectWrap').style.display = isParent ? 'none' : '';
@@ -12622,8 +12702,6 @@ function initEventListeners() {
   };
 
   document.getElementById('playBtn').onclick = startPlay;
-  const tripVideoDownloadBtn = document.getElementById('tripVideoDownloadBtn');
-  if (tripVideoDownloadBtn) tripVideoDownloadBtn.onclick = () => exportTripVideo(currentTrip);
   const playStopBtnMobile = document.getElementById('playStopBtnMobile');
   if (playStopBtnMobile) {
     playStopBtnMobile.onclick = () => {
@@ -12719,8 +12797,6 @@ function initEventListeners() {
       }
     };
   }
-  const mobileTripVideoDownloadBtn = document.getElementById('mobileTripVideoDownloadBtn');
-  if (mobileTripVideoDownloadBtn) mobileTripVideoDownloadBtn.onclick = () => exportTripVideo(currentTrip);
   // モバイル用のボタン
   const mobileVideoBtn = document.getElementById('mobileVideoBtn');
   if (mobileVideoBtn) mobileVideoBtn.onclick = () => {

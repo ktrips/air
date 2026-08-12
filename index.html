@@ -40,7 +40,6 @@
         <div class="header-controls" id="headerControls">
           <button type="button" class="btn btn-secondary btn-sm" id="photoPrevBtn">前</button>
           <button type="button" class="btn btn-primary btn-sm" id="playBtn">▶ 再生</button>
-          <button type="button" class="btn btn-secondary btn-sm" id="tripVideoDownloadBtn" title="地図と写真の再生をmp4動画としてダウンロード">↓</button>
           <button type="button" class="btn btn-secondary btn-sm" id="photoNextBtn">次</button>
           <button type="button" id="headerVideoBtn" class="btn btn-primary btn-sm header-video-btn" style="display:none">🎬 動画</button>
           <button type="button" id="headerAnimeBtn" class="btn btn-secondary btn-sm header-anime-btn" style="display:none">🖼️ アニメ</button>
@@ -49,7 +48,6 @@
         <div class="header-mobile-controls" id="headerMobileControls">
           <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoPrevBtn" title="前の写真">◀︎</button>
           <button type="button" class="btn btn-primary btn-xs" id="mobilePlayBtn" title="再生/停止">▶</button>
-          <button type="button" class="btn btn-secondary btn-xs" id="mobileTripVideoDownloadBtn" title="動画としてダウンロード">↓</button>
           <button type="button" class="btn btn-secondary btn-xs" id="mobilePhotoNextBtn" title="次の写真">▶︎</button>
           <button type="button" class="btn btn-primary btn-xs" id="mobileVideoBtn" style="display:none" title="動画">🎬</button>
           <button type="button" class="btn btn-secondary btn-xs" id="mobileAnimeBtn" style="display:none" title="アニメ">🖼️</button>
@@ -189,6 +187,7 @@
       <section class="menu-section editor-only" id="tripActionsSection">
         <div class="menu-row">
           <button type="button" class="btn btn-secondary btn-sm" id="newTripBtn">新規</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="menuVideoExportBtn" title="地図と写真の再生をmp4動画として書き出す">🎬 画像から動画生成</button>
         </div>
       </section>
       <section class="menu-section editor-only" id="tripSection">
@@ -441,7 +440,7 @@
         <button type="button" class="modal-close" id="tripVideoExportModalClose">&times;</button>
       </div>
       <div class="modal-body">
-        <p id="tripVideoExportStatus" class="modal-desc">準備中…</p>
+        <p id="tripVideoExportStatus" class="modal-desc" style="white-space:pre-line;">準備中…</p>
         <div style="background:var(--border);border-radius:99px;height:6px;overflow:hidden;margin:8px 0 16px;">
           <div id="tripVideoExportProgressBar" style="background:var(--primary,#dc2743);height:100%;width:0%;transition:width .2s ease;"></div>
         </div>
