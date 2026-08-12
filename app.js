@@ -2747,16 +2747,13 @@ function toggleThumbnails() {
 
 /** デフォルト表示用: トリップ一覧の全GPS情報を持つトリップを取得 */
 function getTripsWithGpsForOverview() {
-  const displayItems = getTripsForDisplay();
-  const result = [];
-  for (const { trip } of displayItems) {
-    if (trip.isParent) {
-      const children = getChildTrips(trip.id);
-      result.push(...children);
-    } else {
-      result.push(trip);
-    }
-  }
+  // getTripsForDisplay()は親トリップの子を(tripRegionFilter/tripFilterParentNameで)
+  // 個別にフィルタ済みで返す。ここで親IDから子を再取得すると、そのフィルタを素通りして
+  // 無関係な地域の子トリップまで地図に出てしまうため、displayItemsの中身をそのまま使う
+  // （親トリップ自体はGPS/写真を持たない入れ物のため除外し、子・単独トリップだけを対象にする）。
+  const result = getTripsForDisplay()
+    .filter(item => item.isChild || !item.trip.isParent)
+    .map(item => item.trip);
   return result.filter(t => t.gpxData || t.gpxDataUrl || ((t.photos || []).some(p => p.lat != null && p.lng != null)));
 }
 
