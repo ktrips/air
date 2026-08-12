@@ -9409,11 +9409,20 @@ const TRIP_VIDEO_W = 720;
 const TRIP_VIDEO_H = 1280; // モバイルの縦長（9:16）
 const TRIP_VIDEO_FPS = 30;
 const TRIP_VIDEO_BITRATE = 2500000; // 2.5Mbps: 高画質を保ちつつファイルサイズを抑える
-const TRIP_VIDEO_MAP_X = 40, TRIP_VIDEO_MAP_Y = 96, TRIP_VIDEO_MAP_W = 640, TRIP_VIDEO_MAP_H = 460, TRIP_VIDEO_MAP_R = 28;
-const TRIP_VIDEO_CARD_X = 40, TRIP_VIDEO_CARD_Y = 606, TRIP_VIDEO_CARD_W = 640, TRIP_VIDEO_CARD_H = 560, TRIP_VIDEO_CARD_R = 28;
+// 写真は全画面表示、地図は左上に小さくオーバーラップさせる（従来640x460の約1/3サイズ）
+const TRIP_VIDEO_MAP_X = 24, TRIP_VIDEO_MAP_Y = 96, TRIP_VIDEO_MAP_W = 224, TRIP_VIDEO_MAP_H = 160, TRIP_VIDEO_MAP_R = 16;
 const TRIP_VIDEO_TITLE_MS = 1400;
 const TRIP_VIDEO_TRANSITION_MS = 800;
 const TRIP_VIDEO_HOLD_MS = 1700;
+
+// 地図の背景タイル（衛星写真＝地形が視覚的にわかるスタイル。アプリ本体のデフォルト地図と同じ）。
+// server.arcgisonline.com はcanvas読み込みに必要なCORSヘッダーを返すため使用（OSM本家は
+// ポリシー上ブロックされる場合があるため避ける）。
+const TRIP_VIDEO_TILE_SIZE = 256;
+const TRIP_VIDEO_TILE_MAX_ZOOM = 18;
+function tripVideoTileUrl(z, x, y) {
+  return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+}
 
 let tripVideoExportState = null; // { cancelled: boolean } / 生成中でなければnull
 let tripVideoExportObjectUrl = null;
@@ -9541,8 +9550,35 @@ async function buildTripVideoRouteSegments(trip) {
     .filter(seg => seg.coords.length > 1);
 }
 
-/** 緯度経度→簡易マップ内のローカル座標への投影（E-Ink地図と同じcos補正つきfit-contain） */
-function buildTripVideoProjection(points, routeSegments, mapW, mapH) {
+// 標準的なslippy-map（Webメルカトル）のタイル座標変換
+function lngToTileXFrac(lng, z) { return (lng + 180) / 360 * Math.pow(2, z); }
+function latToTileYFrac(lat, z) {
+  const rad = lat * Math.PI / 180;
+  return (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2 * Math.pow(2, z);
+}
+
+/** ルート全体が地図の枠に収まる最大のズームレベルを探す（Leafletのfit-boundsと同じ考え方） */
+function pickTripVideoTileZoom(latRange, lngRange, mapW, mapH) {
+  const PAD = 0.82; // 枠の端まで使い切らず少し余白を残す
+  let best = 2;
+  for (let z = 2; z <= TRIP_VIDEO_TILE_MAX_ZOOM; z++) {
+    const spanW = (lngToTileXFrac(lngRange.max, z) - lngToTileXFrac(lngRange.min, z)) * TRIP_VIDEO_TILE_SIZE;
+    const spanH = (latToTileYFrac(latRange.min, z) - latToTileYFrac(latRange.max, z)) * TRIP_VIDEO_TILE_SIZE;
+    if (spanW <= mapW * PAD && spanH <= mapH * PAD) {
+      best = z;
+    } else {
+      break;
+    }
+  }
+  return best;
+}
+
+/**
+ * ルート全体を覆う衛星タイル画像を一括で読み込む（地図は左上に固定表示する簡易ミニマップの
+ * ため、ポイントごとの再取得はせずここで一度だけ取得する）。一部タイルの取得に失敗しても
+ * （CORS非対応・オフライン等）他のタイルとルート線・マーカーの描画は継続する。
+ */
+async function buildTripVideoTiles(points, routeSegments, mapW, mapH) {
   const allCoords = [...points.map(p => p._coord), ...routeSegments.flatMap(s => s.coords)].filter(Boolean);
   const minMaxOf = (values) => values.reduce(
     (acc, v) => ({ min: Math.min(acc.min, v), max: Math.max(acc.max, v) }),
@@ -9550,24 +9586,40 @@ function buildTripVideoProjection(points, routeSegments, mapW, mapH) {
   );
   const latRange = minMaxOf(allCoords.map(c => c.lat));
   const lngRange = minMaxOf(allCoords.map(c => c.lng));
-  const avgLatRad = ((latRange.min + latRange.max) / 2) * Math.PI / 180;
-  const cosLat = Math.max(0.15, Math.cos(avgLatRad));
-  const project = (lat, lng) => ({ x: lng * cosLat, y: lat });
-  const projected = allCoords.map(c => project(c.lat, c.lng));
-  const xRange = minMaxOf(projected.map(p => p.x));
-  const yRange = minMaxOf(projected.map(p => p.y));
-  const PAD = 1.35; // 地図の余白（1.0でぴったり、大きいほど余白が広い）
-  const spanX = Math.max(xRange.max - xRange.min, 0.0008) * PAD;
-  const spanY = Math.max(yRange.max - yRange.min, 0.0008) * PAD;
-  const centerX = (xRange.min + xRange.max) / 2;
-  const centerY = (yRange.min + yRange.max) / 2;
-  const scale = Math.min(mapW / spanX, mapH / spanY);
+
+  const z = pickTripVideoTileZoom(latRange, lngRange, mapW, mapH);
+  const centerXFrac = lngToTileXFrac((lngRange.min + lngRange.max) / 2, z);
+  const centerYFrac = latToTileYFrac((latRange.min + latRange.max) / 2, z);
+  const originXFrac = centerXFrac - (mapW / 2) / TRIP_VIDEO_TILE_SIZE;
+  const originYFrac = centerYFrac - (mapH / 2) / TRIP_VIDEO_TILE_SIZE;
+
+  const startTx = Math.floor(originXFrac);
+  const startTy = Math.floor(originYFrac);
+  const endTx = Math.floor(originXFrac + mapW / TRIP_VIDEO_TILE_SIZE);
+  const endTy = Math.floor(originYFrac + mapH / TRIP_VIDEO_TILE_SIZE);
+  const worldTiles = Math.pow(2, z);
+
+  const tileDefs = [];
+  for (let ty = startTy; ty <= endTy; ty++) {
+    if (ty < 0 || ty >= worldTiles) continue;
+    for (let tx = startTx; tx <= endTx; tx++) {
+      const wrappedX = ((tx % worldTiles) + worldTiles) % worldTiles;
+      tileDefs.push({ tx, ty, url: tripVideoTileUrl(z, wrappedX, ty) });
+    }
+  }
+
+  const loaded = await Promise.all(tileDefs.map(t => loadTripVideoImage(t.url, TRIP_VIDEO_TILE_SIZE)));
+  const tileImages = new Map();
+  tileDefs.forEach((t, i) => { if (loaded[i]) tileImages.set(`${t.tx},${t.ty}`, loaded[i]); });
+
   return {
-    toXY(lat, lng) {
-      const p = project(lat, lng);
+    tileImages,
+    originXFrac,
+    originYFrac,
+    project(lat, lng) {
       return {
-        x: mapW / 2 + (p.x - centerX) * scale,
-        y: mapH / 2 - (p.y - centerY) * scale
+        x: (lngToTileXFrac(lng, z) - originXFrac) * TRIP_VIDEO_TILE_SIZE,
+        y: (latToTileYFrac(lat, z) - originYFrac) * TRIP_VIDEO_TILE_SIZE
       };
     }
   };
@@ -9633,71 +9685,90 @@ function drawTripVideoProgress(ctx, total, currentIdx, segT) {
   }
 }
 
-function drawTripVideoMap(ctx, proj, routeSegments, points, currentIdx, markerCoord) {
+function drawTripVideoMap(ctx, tileBundle, routeSegments, points, currentIdx, markerCoord) {
+  // 写真の上に浮いて見えるよう、外枠にドロップシャドウを落としてから本体を描く
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 5;
+  roundRectPath(ctx, TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H, TRIP_VIDEO_MAP_R);
+  ctx.fillStyle = '#cfd6da';
+  ctx.fill();
+  ctx.restore();
+
   ctx.save();
   roundRectPath(ctx, TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H, TRIP_VIDEO_MAP_R);
   ctx.clip();
-  ctx.fillStyle = '#eef2f5';
+  ctx.fillStyle = '#cfd6da';
   ctx.fillRect(TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H);
 
+  // 実際の衛星タイル（地形が分かる背景）を敷く。一部取得失敗しても上の背景色がフォールバックになる
+  tileBundle.tileImages.forEach((img, key) => {
+    const [tx, ty] = key.split(',').map(Number);
+    const x = TRIP_VIDEO_MAP_X + (tx - tileBundle.originXFrac) * TRIP_VIDEO_TILE_SIZE;
+    const y = TRIP_VIDEO_MAP_Y + (ty - tileBundle.originYFrac) * TRIP_VIDEO_TILE_SIZE;
+    ctx.drawImage(img, x, y, TRIP_VIDEO_TILE_SIZE, TRIP_VIDEO_TILE_SIZE);
+  });
+
   const toXY = (lat, lng) => {
-    const p = proj.toXY(lat, lng);
+    const p = tileBundle.project(lat, lng);
     return { x: TRIP_VIDEO_MAP_X + p.x, y: TRIP_VIDEO_MAP_Y + p.y };
   };
 
-  routeSegments.forEach(seg => {
+  const strokePath = (coordsToXY, color, width, alpha) => {
     ctx.beginPath();
-    seg.coords.forEach((c, i) => {
-      const p = toXY(c.lat, c.lng);
-      if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-    });
-    ctx.strokeStyle = seg.color;
-    ctx.globalAlpha = 0.3;
-    ctx.lineWidth = 6;
+    coordsToXY.forEach((pt, i) => { if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y); });
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    // 衛星写真は背景が賑やかなため、白い縁取り（ハロー）を先に描いてから色線を重ね視認性を確保する
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = width + 2;
+    ctx.globalAlpha = alpha;
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
     ctx.stroke();
     ctx.globalAlpha = 1;
+  };
+
+  routeSegments.forEach(seg => {
+    if (seg.coords.length <= 1) return;
+    strokePath(seg.coords.map(c => toXY(c.lat, c.lng)), seg.color, 3, 0.55);
   });
 
   const visited = points.slice(0, currentIdx + 1).filter(p => p._coord);
   if (visited.length > 1) {
-    ctx.beginPath();
-    visited.forEach((p, i) => {
-      const pt = toXY(p._coord.lat, p._coord.lng);
-      if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
-    });
-    ctx.strokeStyle = '#ff4d5e';
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.stroke();
+    strokePath(visited.map(p => toXY(p._coord.lat, p._coord.lng)), '#ff4d5e', 3, 1);
   }
 
   visited.slice(0, -1).forEach(p => {
     const pt = toXY(p._coord.lat, p._coord.lng);
     ctx.beginPath();
-    ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+    ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
     ctx.fillStyle = '#ff4d5e';
     ctx.fill();
   });
 
   if (markerCoord) {
     const mp = toXY(markerCoord.lat, markerCoord.lng);
-    const pulse = 1 + 0.18 * Math.sin(performance.now() / 260);
+    const pulse = 1 + 0.2 * Math.sin(performance.now() / 260);
     ctx.beginPath();
-    ctx.arc(mp.x, mp.y, 14 * pulse, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,77,94,0.25)';
+    ctx.arc(mp.x, mp.y, 9 * pulse, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,77,94,0.3)';
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(mp.x, mp.y, 10, 0, Math.PI * 2);
+    ctx.arc(mp.x, mp.y, 6, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 2;
     ctx.strokeStyle = '#ff4d5e';
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(mp.x, mp.y, 4, 0, Math.PI * 2);
+    ctx.arc(mp.x, mp.y, 2.5, 0, Math.PI * 2);
     ctx.fillStyle = '#ff4d5e';
     ctx.fill();
   }
@@ -9705,25 +9776,22 @@ function drawTripVideoMap(ctx, proj, routeSegments, points, currentIdx, markerCo
   ctx.restore();
   roundRectPath(ctx, TRIP_VIDEO_MAP_X, TRIP_VIDEO_MAP_Y, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H, TRIP_VIDEO_MAP_R);
   ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
   ctx.stroke();
 }
 
-/** 写真カードをクロスフェード＋ケンバーンズ（ゆっくり拡大）で描画 */
-function drawTripVideoCardCrossfade(ctx, state) {
-  roundRectPath(ctx, TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H, TRIP_VIDEO_CARD_R);
-  ctx.save();
-  ctx.clip();
+/** 写真を全画面表示（クロスフェード＋ケンバーンズのゆっくり拡大） */
+function drawTripVideoPhoto(ctx, state) {
   ctx.fillStyle = '#111111';
-  ctx.fillRect(TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H);
+  ctx.fillRect(0, 0, TRIP_VIDEO_W, TRIP_VIDEO_H);
 
   const drawCover = (img, alpha, zoom) => {
     if (!img || alpha <= 0) return;
     ctx.globalAlpha = alpha;
-    const scale = Math.max(TRIP_VIDEO_CARD_W / img.width, TRIP_VIDEO_CARD_H / img.height) * (1 + 0.06 * zoom);
+    const scale = Math.max(TRIP_VIDEO_W / img.width, TRIP_VIDEO_H / img.height) * (1 + 0.06 * zoom);
     const dw = img.width * scale, dh = img.height * scale;
-    const dx = TRIP_VIDEO_CARD_X + (TRIP_VIDEO_CARD_W - dw) / 2;
-    const dy = TRIP_VIDEO_CARD_Y + (TRIP_VIDEO_CARD_H - dh) / 2;
+    const dx = (TRIP_VIDEO_W - dw) / 2;
+    const dy = (TRIP_VIDEO_H - dh) / 2;
     ctx.drawImage(img, dx, dy, dw, dh);
     ctx.globalAlpha = 1;
   };
@@ -9735,58 +9803,68 @@ function drawTripVideoCardCrossfade(ctx, state) {
     drawCover(state.toImg, 1, state.zoomT);
   }
 
-  const grad = ctx.createLinearGradient(0, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H * 0.62, 0, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H);
-  grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.6)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H * 0.62, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H * 0.38);
-
   if (state.isVideoPoint) {
-    const cx = TRIP_VIDEO_CARD_X + TRIP_VIDEO_CARD_W - 52, cy = TRIP_VIDEO_CARD_Y + 52;
+    // 地図（左上）と重ならないよう右上に動画ポイントの再生アイコンを表示
+    const cx = TRIP_VIDEO_W - 44, cy = TRIP_VIDEO_MAP_Y + TRIP_VIDEO_MAP_H / 2;
     ctx.beginPath();
-    ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 24, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(cx - 8, cy - 12);
-    ctx.lineTo(cx - 8, cy + 12);
-    ctx.lineTo(cx + 12, cy);
+    ctx.moveTo(cx - 7, cy - 11);
+    ctx.lineTo(cx - 7, cy + 11);
+    ctx.lineTo(cx + 11, cy);
     ctx.closePath();
     ctx.fillStyle = '#ffffff';
     ctx.fill();
   }
-
-  ctx.restore();
-  roundRectPath(ctx, TRIP_VIDEO_CARD_X, TRIP_VIDEO_CARD_Y, TRIP_VIDEO_CARD_W, TRIP_VIDEO_CARD_H, TRIP_VIDEO_CARD_R);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-  ctx.stroke();
 }
 
-function drawTripVideoCardLabel(ctx, point) {
+/** 上部（プログレスバー・トリップ名）の視認性を確保するための暗いグラデーション */
+function drawTripVideoTopGradient(ctx) {
+  const h = 160;
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, TRIP_VIDEO_W, h);
+}
+
+/** 下部（ポイント名ラベル）の視認性を確保するための暗いグラデーション */
+function drawTripVideoBottomGradient(ctx) {
+  const h = 260;
+  const grad = ctx.createLinearGradient(0, TRIP_VIDEO_H - h, 0, TRIP_VIDEO_H);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.62)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, TRIP_VIDEO_H - h, TRIP_VIDEO_W, h);
+}
+
+function drawTripVideoLabel(ctx, point) {
   const label = point?.name || '';
   if (!label) return;
   ctx.save();
   ctx.textBaseline = 'alphabetic';
-  let x = TRIP_VIDEO_CARD_X + 24;
-  let maxW = TRIP_VIDEO_CARD_W - 48;
+  const baseY = TRIP_VIDEO_H - 48;
+  let x = 28;
+  let maxW = TRIP_VIDEO_W - 56;
   if (point.landmarkNo) {
-    const bx = x + 16, by = TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H - 40;
+    const bx = x + 18, by = baseY - 10;
     ctx.beginPath();
-    ctx.arc(bx, by, 16, 0, Math.PI * 2);
+    ctx.arc(bx, by, 18, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
     ctx.fillStyle = '#111111';
-    ctx.font = 'bold 16px sans-serif';
+    ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(String(point.landmarkNo), bx, by + 5);
-    x += 42;
-    maxW -= 42;
+    ctx.fillText(String(point.landmarkNo), bx, by + 6);
+    x += 48;
+    maxW -= 48;
   }
-  ctx.font = 'bold 28px sans-serif';
+  ctx.font = 'bold 32px sans-serif';
   ctx.textAlign = 'left';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(truncateTextToWidth(ctx, label, maxW), x, TRIP_VIDEO_CARD_Y + TRIP_VIDEO_CARD_H - 30);
+  ctx.fillText(truncateTextToWidth(ctx, label, maxW), x, baseY);
   ctx.restore();
 }
 
@@ -9808,13 +9886,14 @@ function composeTripVideoTitleFrame(ctx, trip, t) {
   ctx.restore();
 }
 
-function composeTripVideoFrame(ctx, trip, points, routeSegments, proj, currentIdx, markerCoord, imgState, segT) {
-  drawTripVideoBackground(ctx, trip);
+function composeTripVideoFrame(ctx, trip, points, routeSegments, tileBundle, currentIdx, markerCoord, imgState, segT) {
+  drawTripVideoPhoto(ctx, imgState);
+  drawTripVideoTopGradient(ctx);
   drawTripVideoProgress(ctx, points.length, currentIdx, segT);
   drawTripVideoHeader(ctx, trip);
-  drawTripVideoMap(ctx, proj, routeSegments, points, currentIdx, markerCoord);
-  drawTripVideoCardCrossfade(ctx, imgState);
-  drawTripVideoCardLabel(ctx, points[currentIdx]);
+  drawTripVideoMap(ctx, tileBundle, routeSegments, points, currentIdx, markerCoord);
+  drawTripVideoBottomGradient(ctx);
+  drawTripVideoLabel(ctx, points[currentIdx]);
 }
 
 /**
@@ -9856,7 +9935,10 @@ async function exportTripVideo(trip) {
 
   try {
     const routeSegments = await buildTripVideoRouteSegments(trip);
-    const proj = buildTripVideoProjection(points, routeSegments, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H);
+
+    setTripVideoExportStatus('地図タイルを読み込み中…', 0.02);
+    const tileBundle = await buildTripVideoTiles(points, routeSegments, TRIP_VIDEO_MAP_W, TRIP_VIDEO_MAP_H);
+    if (tripVideoExportState.cancelled) throw new Error('cancelled');
 
     // 写真を先読み（動画ポイントはサムネイルで代用）
     const images = [];
@@ -9866,7 +9948,7 @@ async function exportTripVideo(trip) {
       const isVideo = p.videoUrl && p.videoUrl.trim();
       const url = isVideo ? getVideoThumbnailUrl(p.videoUrl) : p.url;
       images.push(await loadTripVideoImage(url, 960));
-      setTripVideoExportStatus(`写真を読み込み中…（${i + 1}/${points.length}）`, (i + 1) / points.length * 0.35);
+      setTripVideoExportStatus(`写真を読み込み中…（${i + 1}/${points.length}）`, 0.05 + (i + 1) / points.length * 0.30);
     }
     if (tripVideoExportState.cancelled) throw new Error('cancelled');
 
@@ -9902,7 +9984,7 @@ async function exportTripVideo(trip) {
           lat: lerp(prev._coord.lat, curr._coord.lat, et),
           lng: lerp(prev._coord.lng, curr._coord.lng, et)
         };
-        composeTripVideoFrame(ctx, trip, points, routeSegments, proj, i, markerCoord, {
+        composeTripVideoFrame(ctx, trip, points, routeSegments, tileBundle, i, markerCoord, {
           fromImg: i === 0 ? currImg : prevImg,
           toImg: currImg,
           crossT: i === 0 ? 1 : et,
@@ -9915,7 +9997,7 @@ async function exportTripVideo(trip) {
 
       // 保持: 写真をしっかり見せる（ゆっくりケンバーンズ拡大）
       await runVideoFrames(tripVideoExportState, (t) => {
-        composeTripVideoFrame(ctx, trip, points, routeSegments, proj, i, curr._coord, {
+        composeTripVideoFrame(ctx, trip, points, routeSegments, tileBundle, i, curr._coord, {
           fromImg: currImg,
           toImg: currImg,
           crossT: 1,
