@@ -624,7 +624,7 @@ let addingGpsPointMode = false; // GPSポイント追加モード
 // トリップ所在フィルタ: 'all' | 'japan' | 'global'（URLパラメータ ?region=japan または ?region=global で指定可能）
 let tripRegionFilter = 'all';
 
-// 特定ドメイン用: 親トリップ名でフィルタ（ohenro/henro.ktrips.net では「しまなみ街道と四国お遍路旅」とその子のみ表示）
+// 特定ドメイン用: 親トリップ名でフィルタ（ohenro/henro.ktrips.net では「しまなみ・淡路と四国遍路」とその子のみ表示）
 let tripFilterParentName = null;
 
 /** 日本の大まかな範囲（緯度・経度） */
@@ -676,7 +676,7 @@ function initRegionFilterFromUrl() {
     } else {
       // ドメイン名による自動選択
       if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-        window.appUrlTripName = 'しまなみ街道と四国お遍路旅';
+        window.appUrlTripName = 'しまなみ・淡路と四国遍路';
         console.log('🏠 ドメイン自動選択: ohenro.ktrips.net');
       }
     }
@@ -12348,6 +12348,7 @@ function initEventListeners() {
       console.log('🚀 URLパラメータで指定されたトリップを読み込みます:', tripToLoad.name);
       await loadTripById(tripToLoad.id);
       // トリップ名をフィルタに設定（子トリップの場合は親を見つける）
+      const prevFilterName = tripFilterParentName;
       if (tripToLoad.isParent) {
         tripFilterParentName = tripToLoad.name;
       } else if (tripToLoad.parentId) {
@@ -12355,6 +12356,11 @@ function initEventListeners() {
         if (parent) {
           tripFilterParentName = parent.name;
         }
+      }
+      // フィルタが変わった場合、既に描画済みの一覧を絞り込み後の内容で描き直す
+      if (tripFilterParentName !== prevFilterName) {
+        renderTripList();
+        refreshTripSelect();
       }
     }
 
@@ -13092,14 +13098,18 @@ function init() {
             }
           }
 
-          // 初回アクセス：「しまなみ街道と四国お遍路旅」の親トリップを一覧表示状態でデフォルト表示
+          // 初回アクセス：「しまなみ・淡路と四国遍路」の親トリップを一覧表示状態でデフォルト表示
           if (!tripToLoad) {
-            const defaultParentTrip = myTrips.find(t => t.isParent && t.name === 'しまなみ街道と四国お遍路旅');
+            const defaultParentTrip = myTrips.find(t => t.isParent && t.name === 'しまなみ・淡路と四国遍路');
             if (defaultParentTrip) {
               console.log(`[${host}] 初回アクセス - デフォルト親トリップを表示: ${defaultParentTrip.name}`);
               tripToLoad = defaultParentTrip.id;
+              // ohenro/henroドメインでは、このトリップとその子だけに一覧を絞り込む
+              if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
+                tripFilterParentName = defaultParentTrip.name;
+              }
             } else {
-              const defaultTrip = myTrips.find(t => t.name === 'Day1 しまなみ街道');
+              const defaultTrip = myTrips.find(t => t.name === 'D1 しまなみ街道');
               if (defaultTrip) {
                 console.log(`[${host}] 初回アクセス - デフォルトトリップを表示: ${defaultTrip.name}`);
                 tripToLoad = defaultTrip.id;
@@ -13127,6 +13137,11 @@ function init() {
         try {
           console.log(`📂 読み込み前のcurrentTrip:`, currentTrip?.id || 'null');
           await loadTripById(tripToLoad);
+          // tripFilterParentNameがこの時点で確定するため、既に描画済みの一覧を絞り込み後の内容で描き直す
+          if (tripFilterParentName) {
+            renderTripList();
+            refreshTripSelect();
+          }
           console.log(`✅ トリップ読み込み完了:`, {
             id: currentTrip?.id,
             name: currentTrip?.name,
