@@ -337,13 +337,14 @@ async function overlayQrCodeOnDataUrl(dataUrl, url) {
 }
 
 /**
- * canvas中央に「御朱印」の印影のような朱色のQRコードを、外枠なしで自然に
- * 埋め込むように描画する。QRの直下だけは滲むような柔らかい白系グラデーションで
- * 下地を作りスキャン用コントラストを確保しつつ、縁は透明にフェードさせることで
- * 額縁のような境界線を作らず、絵の中に溶け込むようにしている。
+ * canvas左側に、実際の御朱印帳の朱印のような四角い朱色のQRコードを、
+ * 目立たせすぎず自然に埋め込むように描画する。中央には配置せず、
+ * サイズも控えめにして、既存の文字・朱印などの意匠に馴染ませる。
+ * QRの直下だけはぼかした柔らかい下地でスキャン用コントラストを確保しつつ、
+ * 硬い額縁のような境界線は作らない。
  * 装飾で読み取り率が落ちないよう誤り訂正レベルは高め（Q）にしている。
  */
-function drawGoshuinQrCenter(ctx, url, canvasW, canvasH, opts = {}) {
+function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
   if (!window.qrcode || !url) return;
   try {
     const qr = window.qrcode(0, 'Q');
@@ -351,30 +352,28 @@ function drawGoshuinQrCenter(ctx, url, canvasW, canvasH, opts = {}) {
     qr.make();
     const count = qr.getModuleCount();
 
-    const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.34);
-    const margin = opts.margin ?? Math.round(qrSize * 0.12);
+    // 目立たせすぎないよう控えめなサイズにする
+    const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.20);
+    const margin = opts.margin ?? Math.round(qrSize * 0.16);
     const plateSize = qrSize + margin * 2;
-    const cx = opts.cx ?? canvasW / 2;
-    const cy = opts.cy ?? canvasH / 2;
+    // 中央ではなく左側（御朱印帳の朱印がよく押される位置に近い、やや下寄り）
+    const cx = opts.cx ?? canvasW * 0.22;
+    const cy = opts.cy ?? canvasH * 0.60;
+    const plateX = cx - plateSize / 2;
+    const plateY = cy - plateSize / 2;
     const vermillionDark = '#7a1220';
 
-    // QR下地: 外枠のない、朱肉が紙に滲むような柔らかい円形グラデーション。
-    // QR全体（マージン込みの正方形の対角）を確実に覆ってから縁を透明にフェードさせる。
-    const innerR = plateSize * Math.SQRT1_2 * 1.05;
-    const outerR = innerR * 1.55;
+    // QR下地: 角丸の四角形をぼかして縁を自然になじませる（硬い枠線は作らない）
     ctx.save();
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, outerR);
-    grad.addColorStop(0, 'rgba(255, 253, 247, 0.97)');
-    grad.addColorStop(innerR / outerR, 'rgba(255, 253, 247, 0.94)');
-    grad.addColorStop(1, 'rgba(255, 253, 247, 0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    ctx.filter = `blur(${Math.max(2, Math.round(plateSize * 0.06))}px)`;
+    ctx.fillStyle = 'rgba(253, 248, 236, 0.85)';
+    const pad = plateSize * 0.10;
+    roundRectPath(ctx, plateX - pad, plateY - pad, plateSize + pad * 2, plateSize + pad * 2, Math.round(plateSize * 0.14));
     ctx.fill();
     ctx.restore();
 
-    // QRモジュール（朱色）
-    const qx = cx - qrSize / 2, qy = cy - qrSize / 2;
+    // QRモジュール（朱色。読み取り精度を保つため不透明で描画）
+    const qx = plateX + margin, qy = plateY + margin;
     const cell = qrSize / count;
     ctx.fillStyle = vermillionDark;
     for (let r = 0; r < count; r++) {
@@ -391,11 +390,11 @@ function drawGoshuinQrCenter(ctx, url, canvasW, canvasH, opts = {}) {
 }
 
 /**
- * AI生成済みの画像（dataURL）中央に御朱印風QRコードを合成する。
+ * AI生成済みの画像（dataURL）左側に、御朱印の朱印のようなQRコードを合成する。
  * overlayQrCodeOnDataUrl と同じくdata:URLはCORSタイントの対象にならないため、
  * Canvasへの読み込み・再書き出しは安全に行える。
  */
-async function overlayGoshuinQrCenter(dataUrl, url) {
+async function overlayGoshuinQrSeal(dataUrl, url) {
   if (!dataUrl) return dataUrl;
   try {
     const img = await new Promise((resolve, reject) => {
@@ -409,7 +408,7 @@ async function overlayGoshuinQrCenter(dataUrl, url) {
     canvas.height = img.naturalHeight;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0);
-    drawGoshuinQrCenter(ctx, url, canvas.width, canvas.height);
+    drawGoshuinQrSeal(ctx, url, canvas.width, canvas.height);
     return canvas.toDataURL('image/png');
   } catch (err) {
     console.warn('御朱印風QRコードの合成に失敗（元画像をそのまま使用）:', err);
@@ -3949,46 +3948,24 @@ function showPhotoPopupEditMode(lat, lng) {
   landmarkRow.appendChild(stampWrap);
 
   // 画像生成（スタンプ投稿のみ）: 写真をカラーE-Ink風アートに変換し、
-  // 中央に御朱印風QRコードを合成した1枚の画像を生成する。スタンプの右横に小さく配置。
+  // 左側に控えめな御朱印風QRコードを合成した1枚の画像を生成する。スタンプの右横に小さく配置。
   const goshuinBtn = document.createElement('button');
   goshuinBtn.type = 'button';
   goshuinBtn.className = 'btn btn-stamp btn-xs';
   goshuinBtn.textContent = '🖼️ 画像生成';
-  goshuinBtn.title = '写真をカラーE-Ink風アートに変換し、中央に御朱印風QRコードを合成した画像を生成します';
+  goshuinBtn.title = '写真をカラーE-Ink風アートに変換し、左側に控えめな御朱印風QRコードを合成した画像を生成します';
   goshuinBtn.style.display = p.isStamp ? '' : 'none';
   landmarkRow.appendChild(goshuinBtn);
 
   form.appendChild(landmarkRow);
 
-  // 生成された御朱印風画像のプレビュー（あれば小さく表示・ダウンロード可能）
-  const goshuinPreview = document.createElement('div');
-  goshuinPreview.className = 'photo-popup-goshuin-preview';
-  goshuinPreview.style.cssText = 'display:none;align-items:center;gap:8px;margin:-0.25rem 0 0.25rem;';
-  const goshuinPreviewImg = document.createElement('img');
-  goshuinPreviewImg.style.cssText = 'height:56px;width:auto;border-radius:6px;box-shadow:0 2px 4px rgba(0,0,0,0.25);cursor:pointer;';
-  goshuinPreviewImg.title = 'クリックで拡大表示';
-  goshuinPreviewImg.alt = '生成された御朱印風画像';
-  const goshuinDownloadLink = document.createElement('a');
-  goshuinDownloadLink.className = 'btn btn-secondary btn-xs';
-  goshuinDownloadLink.textContent = '⬇️ ダウンロード';
-  goshuinDownloadLink.target = '_blank';
-  goshuinDownloadLink.rel = 'noopener';
-  goshuinPreview.appendChild(goshuinPreviewImg);
-  goshuinPreview.appendChild(goshuinDownloadLink);
-  form.appendChild(goshuinPreview);
-
-  const renderGoshuinPreview = (url) => {
-    if (!url) { goshuinPreview.style.display = 'none'; return; }
-    goshuinPreviewImg.src = url;
-    goshuinPreviewImg.onclick = () => window.open(url, '_blank', 'noopener');
-    goshuinDownloadLink.href = url;
-    goshuinDownloadLink.download = `${sanitizeFileNamePart(p.name || currentTrip?.name)}_goshuin.png`;
-    goshuinPreview.style.display = 'flex';
-  };
-  renderGoshuinPreview(p.generatedGoshuinUrl);
+  // ポイント名（幅を狭め、生成された御朱印風画像があればその右に小さく表示）
+  const nameRow = document.createElement('div');
+  nameRow.style.cssText = 'display:flex;align-items:flex-end;gap:8px;';
 
   const nameWrap = document.createElement('div');
   nameWrap.className = 'photo-popup-field';
+  nameWrap.style.maxWidth = '140px';
   const nameLabel = document.createElement('label');
   nameLabel.textContent = 'ポイント名';
   const nameInput = document.createElement('input');
@@ -3998,17 +3975,36 @@ function showPhotoPopupEditMode(lat, lng) {
   nameInput.value = p.name || '';
   nameWrap.appendChild(nameLabel);
   nameWrap.appendChild(nameInput);
-  form.appendChild(nameWrap);
+  nameRow.appendChild(nameWrap);
+
+  // 生成された御朱印風画像のプレビュー（あれば小さく表示。ダウンロードボタンなし）
+  const goshuinPreview = document.createElement('img');
+  goshuinPreview.className = 'photo-popup-goshuin-preview';
+  goshuinPreview.style.cssText = 'display:none;height:56px;width:auto;border-radius:6px;box-shadow:0 2px 4px rgba(0,0,0,0.25);cursor:pointer;';
+  goshuinPreview.title = 'クリックで拡大表示';
+  goshuinPreview.alt = '生成された御朱印風画像';
+  nameRow.appendChild(goshuinPreview);
+
+  form.appendChild(nameRow);
+
+  const renderGoshuinPreview = (url) => {
+    if (!url) { goshuinPreview.style.display = 'none'; return; }
+    goshuinPreview.src = url;
+    goshuinPreview.onclick = () => window.open(url, '_blank', 'noopener');
+    goshuinPreview.style.display = 'block';
+  };
+  renderGoshuinPreview(p.generatedGoshuinUrl);
 
   const descWrap = document.createElement('div');
   descWrap.className = 'photo-popup-field';
   const descLabel = document.createElement('label');
   descLabel.textContent = 'ポイント説明';
-  const descInput = document.createElement('textarea');
-  descInput.className = 'photo-popup-input photo-popup-textarea';
+  const descInput = document.createElement('input');
+  descInput.type = 'text';
+  descInput.className = 'photo-popup-input';
   descInput.placeholder = '説明（任意）';
-  descInput.rows = 2;
-  descInput.value = p.description || '';
+  descInput.maxLength = 200;
+  descInput.value = (p.description || '').slice(0, 200);
   descWrap.appendChild(descLabel);
   descWrap.appendChild(descInput);
   form.appendChild(descWrap);
@@ -10578,7 +10574,7 @@ async function generateEinkCoverImage(trip, preValidatedCfg = null) {
 /**
  * スタンプ投稿（御朱印）用の画像を生成する。
  * 登録された写真をカラー対応E-Ink端末向けのシンプルでアーティスティックな
- * イラストに描き起こし、中央に御朱印風QRコード（登録されたURL、なければ
+ * イラストに描き起こし、左側に控えめな御朱印風QRコード（登録されたURL、なければ
  * そのポイントへのディープリンクURL）を合成した1枚の画像を返す。
  */
 async function generateStampGoshuinImage(trip, idx) {
@@ -10600,7 +10596,7 @@ async function generateStampGoshuinImage(trip, idx) {
     '写真的なリアリズムではなく、旅の御朱印帳に貼るような、上品で温かみのある一枚絵にしてください。',
     `【スポット名】${spotName}`,
     p.description ? `【説明】${p.description}` : '',
-    '画像の中央付近は後でQRコードのスタンプを重ねるため、そこだけ極端に細かい模様や重要な被写体を集中させないでください。'
+    '画像の左側は後でQRコードの朱印を重ねるため、その部分には極端に細かい模様や重要な被写体を集中させないでください。'
   ].filter(Boolean);
   const prompt = promptParts.join('\n');
 
@@ -10612,7 +10608,7 @@ async function generateStampGoshuinImage(trip, idx) {
   if (!rawDataUrl) throw new Error('画像の生成に失敗しました。APIキーと入力内容を確認してください。');
 
   const targetUrl = (p.videoUrl && p.videoUrl.trim()) || buildPhotoShareUrl(trip, idx);
-  const composedDataUrl = await overlayGoshuinQrCenter(rawDataUrl, targetUrl);
+  const composedDataUrl = await overlayGoshuinQrSeal(rawDataUrl, targetUrl);
   return { dataUrl: composedDataUrl, targetUrl };
 }
 
