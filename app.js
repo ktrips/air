@@ -8788,7 +8788,7 @@ async function showTravelogueModal(trip) {
                   ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
                 </div>
               </div>
-              <span class="stamp-card-badge">${stamped ? '✓ スタンプ済み' : '未スタンプ'}</span>
+              <span class="stamp-card-badge">${stamped ? `✓${p.description ? ' ' + escapeHtml(p.description) : ''}` : '未スタンプ'}</span>
             </div>`;
           }).join('')}</div>
           <p style="text-align:center;color:#8b7355;font-size:0.85rem;margin-top:1.5rem;font-style:italic;">訪れた全てのスポットを記録しました ✨</p>
@@ -9143,7 +9143,7 @@ async function switchMobileTab(tab, tripToShow) {
                       ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
                     </div>
                   </div>
-                  <span class="stamp-card-badge">${stamped ? '✓ スタンプ済み' : '未スタンプ'}</span>
+                  <span class="stamp-card-badge">${stamped ? `✓${p.description ? ' ' + escapeHtml(p.description) : ''}` : '未スタンプ'}</span>
                 </div>`;
               }).join('')}</div>
               <p style="text-align:center;color:#8b7355;font-size:0.85rem;margin-top:1.5rem;font-style:italic;">訪れた全てのスポットを記録しました ✨</p>
@@ -9258,7 +9258,7 @@ function showStampRallyModal(trip) {
             ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
           </div>
         </div>
-        <span class="stamp-card-badge">${stamped ? '✓ スタンプ済み' : '未スタンプ'}</span>
+        <span class="stamp-card-badge">${stamped ? `✓${p.description ? ' ' + escapeHtml(p.description) : ''}` : '未スタンプ'}</span>
       </div>`;
     }).join('');
     content.querySelectorAll('.stamp-card').forEach((card) => {
