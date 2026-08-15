@@ -256,6 +256,14 @@ function buildTripShareUrl(trip) {
   return `${base}?t=${encodeURIComponent(trip.id)}`;
 }
 
+/** トリップ内の特定ポイント（写真）に直接ジャンプできる共有URLを組み立てる（御朱印QR埋め込み用） */
+function buildPhotoShareUrl(trip, photoIdx) {
+  const base = buildTripShareUrl(trip);
+  if (photoIdx == null || photoIdx < 0) return base;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}p=${photoIdx}`;
+}
+
 /**
  * canvasの右下に、指定URLのQRコードを白い余白（クワイエットゾーン）付きで描画する。
  * assets/js/qrcode.js（kazuhikoarase/qrcode-generator、MIT）が提供するグローバルqrcodeを使う。
@@ -324,6 +332,99 @@ async function overlayQrCodeOnDataUrl(dataUrl, url) {
     return canvas.toDataURL('image/png');
   } catch (err) {
     console.warn('QRコードの合成に失敗（元画像をそのまま使用）:', err);
+    return dataUrl;
+  }
+}
+
+/**
+ * canvas中央に「御朱印」の印影のような朱色の装飾QRコードを描画する。
+ * 白い台座＋朱色モジュールでスキャン用コントラストを確保しつつ、
+ * 二重丸の朱枠で囲んで印章らしい見た目にする。
+ * 装飾で読み取り率が落ちないよう誤り訂正レベルは高め（Q）にしている。
+ */
+function drawGoshuinQrCenter(ctx, url, canvasW, canvasH, opts = {}) {
+  if (!window.qrcode || !url) return;
+  try {
+    const qr = window.qrcode(0, 'Q');
+    qr.addData(url);
+    qr.make();
+    const count = qr.getModuleCount();
+
+    const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.34);
+    const margin = opts.margin ?? Math.round(qrSize * 0.09);
+    const plateSize = qrSize + margin * 2;
+    const cx = opts.cx ?? canvasW / 2;
+    const cy = opts.cy ?? canvasH / 2;
+    const plateX = cx - plateSize / 2;
+    const plateY = cy - plateSize / 2;
+    const vermillion = '#b7211f';
+    const vermillionDark = '#7a1220';
+
+    // 外周: 朱色の二重丸枠（印影風）
+    const ringR = plateSize / 2 + Math.round(plateSize * 0.10);
+    ctx.save();
+    ctx.strokeStyle = vermillion;
+    ctx.lineWidth = Math.max(3, Math.round(plateSize * 0.035));
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = Math.max(1.5, Math.round(plateSize * 0.014));
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR - Math.round(plateSize * 0.05), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    // QR本体の白台座（角丸・朱枠）
+    ctx.save();
+    ctx.fillStyle = '#fffdf7';
+    roundRectPath(ctx, plateX, plateY, plateSize, plateSize, Math.round(plateSize * 0.08));
+    ctx.fill();
+    ctx.strokeStyle = vermillion;
+    ctx.lineWidth = Math.max(2, Math.round(plateSize * 0.02));
+    roundRectPath(ctx, plateX, plateY, plateSize, plateSize, Math.round(plateSize * 0.08));
+    ctx.stroke();
+    ctx.restore();
+
+    // QRモジュール（朱色）
+    const cell = qrSize / count;
+    const qx = plateX + margin, qy = plateY + margin;
+    ctx.fillStyle = vermillionDark;
+    for (let r = 0; r < count; r++) {
+      const py0 = Math.round(qy + r * cell), py1 = Math.round(qy + (r + 1) * cell);
+      for (let c = 0; c < count; c++) {
+        if (!qr.isDark(r, c)) continue;
+        const px0 = Math.round(qx + c * cell), px1 = Math.round(qx + (c + 1) * cell);
+        ctx.fillRect(px0, py0, px1 - px0, py1 - py0);
+      }
+    }
+  } catch (err) {
+    console.warn('御朱印風QRコードの描画に失敗（スキップ）:', err);
+  }
+}
+
+/**
+ * AI生成済みの画像（dataURL）中央に御朱印風QRコードを合成する。
+ * overlayQrCodeOnDataUrl と同じくdata:URLはCORSタイントの対象にならないため、
+ * Canvasへの読み込み・再書き出しは安全に行える。
+ */
+async function overlayGoshuinQrCenter(dataUrl, url) {
+  if (!dataUrl) return dataUrl;
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = dataUrl;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    drawGoshuinQrCenter(ctx, url, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  } catch (err) {
+    console.warn('御朱印風QRコードの合成に失敗（元画像をそのまま使用）:', err);
     return dataUrl;
   }
 }
@@ -3900,6 +4001,94 @@ function showPhotoPopupEditMode(lat, lng) {
   videoUrlWrap.appendChild(videoUrlInput);
   form.appendChild(videoUrlWrap);
 
+  // リンクURL（スタンプの御朱印風QRコードが指す先。任意）
+  const linkUrlWrap = document.createElement('div');
+  linkUrlWrap.className = 'photo-popup-field';
+  linkUrlWrap.style.display = p.isStamp ? '' : 'none';
+  const linkUrlLabel = document.createElement('label');
+  linkUrlLabel.textContent = 'リンクURL（任意・QRコードの飛び先）';
+  const linkUrlInput = document.createElement('input');
+  linkUrlInput.type = 'url';
+  linkUrlInput.className = 'photo-popup-input';
+  linkUrlInput.placeholder = '未入力ならこのポイントへのURLを自動生成';
+  linkUrlInput.value = p.linkUrl || '';
+  linkUrlWrap.appendChild(linkUrlLabel);
+  linkUrlWrap.appendChild(linkUrlInput);
+  form.appendChild(linkUrlWrap);
+
+  // 画像生成（スタンプ投稿のみ）: 写真をカラーE-Ink風アートに変換し、
+  // 中央に御朱印風QRコードを合成した1枚の画像を生成する
+  const goshuinWrap = document.createElement('div');
+  goshuinWrap.className = 'photo-popup-field photo-popup-goshuin-wrap';
+  goshuinWrap.style.display = p.isStamp ? '' : 'none';
+
+  const goshuinBtn = document.createElement('button');
+  goshuinBtn.type = 'button';
+  goshuinBtn.className = 'btn btn-stamp btn-sm';
+  goshuinBtn.textContent = '🖼️ 画像生成（御朱印QR）';
+  goshuinBtn.title = '写真をカラーE-Ink風アートに変換し、中央に御朱印風QRコードを合成した画像を生成します';
+  goshuinWrap.appendChild(goshuinBtn);
+
+  const goshuinPreview = document.createElement('div');
+  goshuinPreview.className = 'photo-popup-goshuin-preview';
+  goshuinPreview.style.cssText = 'display:none;align-items:center;gap:8px;margin-top:6px;';
+  const goshuinPreviewImg = document.createElement('img');
+  goshuinPreviewImg.style.cssText = 'height:72px;width:auto;border-radius:6px;box-shadow:0 2px 4px rgba(0,0,0,0.25);cursor:pointer;';
+  goshuinPreviewImg.title = 'クリックで拡大表示';
+  goshuinPreviewImg.alt = '生成された御朱印風画像';
+  const goshuinDownloadLink = document.createElement('a');
+  goshuinDownloadLink.className = 'btn btn-secondary btn-sm';
+  goshuinDownloadLink.textContent = '⬇️ ダウンロード';
+  goshuinDownloadLink.target = '_blank';
+  goshuinDownloadLink.rel = 'noopener';
+  goshuinPreview.appendChild(goshuinPreviewImg);
+  goshuinPreview.appendChild(goshuinDownloadLink);
+  goshuinWrap.appendChild(goshuinPreview);
+  form.appendChild(goshuinWrap);
+
+  const renderGoshuinPreview = (url) => {
+    if (!url) { goshuinPreview.style.display = 'none'; return; }
+    goshuinPreviewImg.src = url;
+    goshuinPreviewImg.onclick = () => window.open(url, '_blank', 'noopener');
+    goshuinDownloadLink.href = url;
+    goshuinDownloadLink.download = `${sanitizeFileNamePart(p.name || currentTrip?.name)}_goshuin.png`;
+    goshuinPreview.style.display = 'flex';
+  };
+  renderGoshuinPreview(p.generatedGoshuinUrl);
+
+  goshuinBtn.onclick = async () => {
+    if (!photos[idx]?.url) { alert('先に写真を登録してください'); return; }
+    const originalText = goshuinBtn.textContent;
+    goshuinBtn.disabled = true;
+    goshuinBtn.textContent = '生成中...';
+    setStatus('御朱印風QR画像を生成中...');
+    try {
+      // フォームの最新のリンクURLを反映してから生成する
+      photos[idx].linkUrl = linkUrlInput.value.trim();
+      const { dataUrl } = await generateStampGoshuinImage(currentTrip, idx);
+      const storageUrl = await uploadAnimeImageToStorage(currentTrip.id, dataUrl, `goshuin_${idx}`);
+      photos[idx].generatedGoshuinUrl = storageUrl;
+      if (!currentTrip.generatedAnimes) currentTrip.generatedAnimes = [];
+      currentTrip.generatedAnimes.push({
+        url: storageUrl,
+        timestamp: Date.now(),
+        style: 'stamp-goshuin',
+        name: photos[idx].name || ''
+      });
+      await saveTrip({ silent: true });
+      renderGoshuinPreview(storageUrl);
+      renderGeneratedAnimesList();
+      setStatus('✓ 御朱印風QR画像を生成しました');
+    } catch (err) {
+      console.error('御朱印画像生成エラー:', err);
+      alert('画像の生成に失敗しました: ' + (err.message || String(err)));
+      setStatus('❌ 画像の生成に失敗しました');
+    } finally {
+      goshuinBtn.disabled = false;
+      goshuinBtn.textContent = originalText;
+    }
+  };
+
   const saveDeleteRow = document.createElement('div');
   saveDeleteRow.className = 'photo-popup-save-delete-row';
   const saveBtn = document.createElement('button');
@@ -3954,6 +4143,12 @@ function showPhotoPopupEditMode(lat, lng) {
     }
   };
   landmarkNoWrap.style.display = landmarkCheck.checked ? 'flex' : 'none';
+
+  stampCheck.onchange = () => {
+    const show = stampCheck.checked;
+    linkUrlWrap.style.display = show ? '' : 'none';
+    goshuinWrap.style.display = show ? '' : 'none';
+  };
 
   changeInput.onchange = async (e) => {
     const file = e.target.files?.[0];
@@ -4043,6 +4238,7 @@ function showPhotoPopupEditMode(lat, lng) {
       photos[idx].landmarkNo = landmarkCheck.checked ? landmarkNoInput.value.trim() : '';
       photos[idx].isStamp = stampCheck.checked;
       photos[idx].videoUrl = videoUrlInput.value.trim();
+      photos[idx].linkUrl = linkUrlInput.value.trim();
     }
     // フォームが空の場合（メニュー未表示時など）は currentTrip をフォームに反映してから保存
     const nameEl = document.getElementById('tripNameInput');
@@ -4106,6 +4302,8 @@ function showPhotoPopupEditMode(lat, lng) {
       // ランドマークとスタンプのチェックを外す
       duplicatedPhoto.isLandmark = false;
       duplicatedPhoto.isStamp = false;
+      // 生成済みの御朱印風画像はこのポイント固有のものなので複製しない
+      delete duplicatedPhoto.generatedGoshuinUrl;
 
       // ポイント名に「2」を追加
       if (duplicatedPhoto.name) {
@@ -5198,8 +5396,71 @@ async function loadMyTrips() {
 
   // onSnapshot で初回データ到着を Promise で待つ
   _tripsLoadPromiseUserId = currentUserId;
+  const host = window.location.hostname || '';
+  const isOhenroDomain = /^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host);
+
   _tripsLoadPromise = new Promise((resolve, reject) => {
     let firstFire = true;
+
+    // ohenro/henro.ktrips.net は「しまなみ・淡路と四国遍路」専用サイトのため、
+    // 全公開トリップを読み込まず、対象の親トリップとその子トリップだけを
+    // ピンポイントでクエリして無関係なトリップの読み込みを避ける（パフォーマンス改善）
+    if (isOhenroDomain) {
+      let parentDoc, childDocs = [];
+      let parentReady = false, childrenReady = false;
+
+      const mergeAndCache = () => {
+        myTrips = parentDoc ? [parentDoc, ...childDocs] : [...childDocs];
+        invalidateOrderedTripsCache();
+        tripsCache.data     = myTrips;
+        tripsCache.timestamp = Date.now();
+        tripsCache.userId   = currentUserId;
+      };
+      const maybeFirstFire = () => {
+        if (firstFire && parentReady && childrenReady) {
+          firstFire = false;
+          renderTripList();
+          refreshTripSelect();
+          refreshTripParentSelectOptions();
+          resolve();
+        }
+      };
+      const onErr = (label) => (err) => {
+        console.error(`Firestore onSnapshot エラー (${label}):`, err);
+        if (firstFire) {
+          firstFire = false;
+          myTrips = [];
+          _tripsUnsubscribe = null;
+          reject(err);
+        }
+      };
+
+      const parentUnsub = window.firebaseDb.collection('trips').doc(OHENRO_DEFAULT_TRIP_ID)
+        .onSnapshot((doc) => {
+          parentDoc = doc.exists ? { ...doc.data(), id: doc.id } : null;
+          parentReady = true;
+          mergeAndCache();
+          maybeFirstFire();
+        }, onErr('ohenro親'));
+
+      // parentId 単独の where では Firestore セキュリティルール上パーミッションエラーになるため、
+      // ルールが直接参照する public/userId も併せて絞り込む（等価条件のみなので複合インデックス不要）
+      const childrenQueryBase = window.firebaseAuth?.currentUser
+        ? window.firebaseDb.collection('trips').where('userId', '==', window.firebaseAuth.currentUser.uid)
+        : window.firebaseDb.collection('trips').where('public', '==', true);
+
+      const childrenUnsub = childrenQueryBase
+        .where('parentId', '==', OHENRO_DEFAULT_TRIP_ID)
+        .onSnapshot((snapshot) => {
+          childDocs = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+          childrenReady = true;
+          mergeAndCache();
+          maybeFirstFire();
+        }, onErr('ohenro子'));
+
+      _tripsUnsubscribe = () => { parentUnsub(); childrenUnsub(); };
+      return;
+    }
 
     const query = window.firebaseAuth?.currentUser
       ? window.firebaseDb.collection('trips')
@@ -6294,8 +6555,8 @@ function escapeHtml(s) {
  * スタイル（地球の歩き方風・少年ジャンプ風・旅行雑誌風・出来事生成）を優先する。
  * 旅行記ページの表紙選定ロジックと同じ基準。
  */
-// マップInk/スタンプInkは表紙として使う絵ではなく参照用の図なので、トリップの代表画像には選ばない
-const NON_COVER_ANIME_STYLES = new Set(['meisho-ukiyoe', 'map-ink', 'map-bw', 'stamp-ink']);
+// マップInk/スタンプInk/御朱印風QRは表紙として使う絵ではなく参照・記念用の図なので、トリップの代表画像には選ばない
+const NON_COVER_ANIME_STYLES = new Set(['meisho-ukiyoe', 'map-ink', 'map-bw', 'stamp-ink', 'stamp-goshuin']);
 
 function getAnimeCoverForTrip(trip) {
   const animes = trip?.generatedAnimes || trip?.animes || [];
@@ -10347,6 +10608,47 @@ async function generateEinkCoverImage(trip, preValidatedCfg = null) {
 }
 
 /**
+ * スタンプ投稿（御朱印）用の画像を生成する。
+ * 登録された写真をカラー対応E-Ink端末向けのシンプルでアーティスティックな
+ * イラストに描き起こし、中央に御朱印風QRコード（登録リンクURL、なければ
+ * そのポイントへのディープリンクURL）を合成した1枚の画像を返す。
+ */
+async function generateStampGoshuinImage(trip, idx) {
+  const p = trip?.photos?.[idx];
+  if (!p) throw new Error('写真が見つかりません');
+  if (!p.url) throw new Error('先に写真を登録してください');
+
+  const cfg = cachedAiConfig ?? (await loadUserAiConfig());
+  const provider = cfg?.provider || 'gemini';
+  const apiKey = cfg?.apiKey?.trim();
+  if (!apiKey) throw new Error('AI画像生成にはAPIキーが必要です。AI設定でAPIキーを入力してください。');
+  if (provider === 'anthropic') throw new Error('Anthropicは画像生成に対応していません。AI設定でGeminiまたはOpenAIを選択してください。');
+  const animeCfg = { provider, apiKey, model: cfg?.model || null };
+
+  const spotName = p.name || p.placeName || trip.name || 'スポット';
+  const promptParts = [
+    'この写真をもとに、カラー対応E-Ink端末（Kaleido/Spectra等の電子ペーパー）での表示に適した、シンプルでアーティスティックな1枚のイラストに描き起こしてください。',
+    '色数を絞ったフラットな配色、くっきりした輪郭線、大きくまとまった形で構成し、細かすぎるテクスチャや繊細なグラデーション・ぼかしは避けてください（E-Inkは色再現・階調表現が苦手なため）。',
+    '写真的なリアリズムではなく、旅の御朱印帳に貼るような、上品で温かみのある一枚絵にしてください。',
+    `【スポット名】${spotName}`,
+    p.description ? `【説明】${p.description}` : '',
+    '画像の中央付近は後でQRコードのスタンプを重ねるため、そこだけ極端に細かい模様や重要な被写体を集中させないでください。'
+  ].filter(Boolean);
+  const prompt = promptParts.join('\n');
+
+  setStatus('参照写真を準備中...');
+  const refDataUrl = await fetchImageAsResizedDataUrl(p.url);
+
+  setStatus('御朱印風QR画像を生成中...');
+  const rawDataUrl = await generateImageWithAI(prompt, refDataUrl, animeCfg);
+  if (!rawDataUrl) throw new Error('画像の生成に失敗しました。APIキーと入力内容を確認してください。');
+
+  const targetUrl = (p.linkUrl && p.linkUrl.trim()) || buildPhotoShareUrl(trip, idx);
+  const composedDataUrl = await overlayGoshuinQrCenter(rawDataUrl, targetUrl);
+  return { dataUrl: composedDataUrl, targetUrl };
+}
+
+/**
  * トリップの旅行記本文を取得する。
  * travelogueHtml はFirestore保存時に削除されるため通常は空で、
  * 実体はStorage上の travelogueUrl にある。両方を見て本文を返す。
@@ -13060,6 +13362,7 @@ function init() {
       const tripNameParam = urlParams.get('trip'); // 名前指定: ?trip=
       const tripOrderParam = urlParams.get('n'); // 順序指定: ?n=1
       const openTravelogue = urlParams.get('travelogue') === 'true';
+      const photoIndexParam = urlParams.get('p'); // ポイント指定: ?p=3（御朱印QR等のディープリンク用）
       const isHomeUrl = !tripParam && !tripIdParam && !tripNameParam && !tripOrderParam;
 
       console.log('🔍 URLパラメータ解析:', {
@@ -13232,6 +13535,16 @@ function init() {
             setTimeout(() => {
               showTravelogueModal(currentTrip);
             }, 500); // トリップの読み込みが完全に完了するまで少し待つ
+          }
+
+          // ポイント指定パラメータ（御朱印QR等のディープリンク）がある場合、そのポイントへ直接ジャンプ
+          if (photoIndexParam !== null && currentTrip) {
+            const photoIdx = parseInt(photoIndexParam, 10);
+            if (!isNaN(photoIdx)) {
+              setTimeout(() => {
+                showPhotoAtIndex(photoIdx, true);
+              }, 500); // トリップの読み込みが完全に完了するまで少し待つ
+            }
           }
         } catch (err) {
           console.error('❌ トリップ読み込みエラー:', err);
