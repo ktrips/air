@@ -337,11 +337,11 @@ async function overlayQrCodeOnDataUrl(dataUrl, url) {
 }
 
 /**
- * canvas左側に、実際の御朱印帳の角印（四角い朱印）のような朱色のQRコードを
- * 四角い枠に収めて描画する。中央には配置せず、サイズも控えめにして、
- * 絵の中の文字・朱印などの意匠と自然に馴染ませる。
- * 枠線は不透明度を少し落として、朱肉が少しかすれた印影のような
- * 柔らかい見え方にし、直下はぼかした下地でスキャン用コントラストを確保する。
+ * canvas左下に、御朱印のような柔らかな四角の枠を持つ朱色のQRコードを、
+ * 目立たせすぎず全体に自然と馴染むように描画する。
+ * 枠線などのくっきりした境界線は使わず、ぼかした四角い下地の
+ * フェードだけで「柔らかな四角の枠」を表現し、絵の中の文字・朱印などの
+ * 意匠にさりげなく溶け込ませる。QR直下はスキャン用コントラストを確保する。
  * 装飾で読み取り率が落ちないよう誤り訂正レベルは高め（Q）にしている。
  */
 function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
@@ -353,33 +353,24 @@ function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
     const count = qr.getModuleCount();
 
     // 目立たせすぎないよう控えめなサイズにする
-    const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.20);
-    const margin = opts.margin ?? Math.round(qrSize * 0.14);
+    const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.18);
+    const margin = opts.margin ?? Math.round(qrSize * 0.16);
     const plateSize = qrSize + margin * 2;
-    // 中央ではなく左側（御朱印帳の朱印がよく押される位置に近い、やや下寄り）
-    const cx = opts.cx ?? canvasW * 0.22;
-    const cy = opts.cy ?? canvasH * 0.60;
+    // 中央ではなく左下（御朱印帳の朱印がよく押される位置に近い）
+    const cx = opts.cx ?? canvasW * 0.20;
+    const cy = opts.cy ?? canvasH * 0.78;
     const plateX = cx - plateSize / 2;
     const plateY = cy - plateSize / 2;
-    const vermillion = '#b7211f';
     const vermillionDark = '#7a1220';
 
-    // QR下地: 角丸の四角形をぼかして縁を自然になじませる（下地自体に硬い境界は作らない）
+    // QR下地: 角丸の四角形をぼかしてフェードさせるだけで、くっきりした枠線は作らない。
+    // このフェードそのものが「柔らかな四角の枠」として機能する。
     ctx.save();
-    ctx.filter = `blur(${Math.max(2, Math.round(plateSize * 0.05))}px)`;
-    ctx.fillStyle = 'rgba(253, 248, 236, 0.88)';
-    const pad = plateSize * 0.06;
-    roundRectPath(ctx, plateX - pad, plateY - pad, plateSize + pad * 2, plateSize + pad * 2, Math.round(plateSize * 0.08));
+    ctx.filter = `blur(${Math.max(3, Math.round(plateSize * 0.09))}px)`;
+    ctx.fillStyle = 'rgba(253, 248, 236, 0.85)';
+    const pad = plateSize * 0.14;
+    roundRectPath(ctx, plateX - pad, plateY - pad, plateSize + pad * 2, plateSize + pad * 2, Math.round(plateSize * 0.12));
     ctx.fill();
-    ctx.restore();
-
-    // 御朱印の角印らしい四角い朱枠。かすれた朱肉のように不透明度を少し落として硬さを抑える
-    ctx.save();
-    ctx.globalAlpha = 0.8;
-    ctx.strokeStyle = vermillion;
-    ctx.lineWidth = Math.max(1.5, Math.round(plateSize * 0.03));
-    roundRectPath(ctx, plateX, plateY, plateSize, plateSize, Math.round(plateSize * 0.05));
-    ctx.stroke();
     ctx.restore();
 
     // QRモジュール（朱色。読み取り精度を保つため不透明で描画）
@@ -400,9 +391,9 @@ function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
 }
 
 /**
- * AI生成済みの画像（dataURL）左側に、御朱印の朱印のようなQRコードを合成する。
- * overlayQrCodeOnDataUrl と同じくdata:URLはCORSタイントの対象にならないため、
- * Canvasへの読み込み・再書き出しは安全に行える。
+ * AI生成済みの画像（dataURL）左下に、御朱印のような柔らかな四角の枠を持つ
+ * QRコードを合成する。overlayQrCodeOnDataUrl と同じくdata:URLはCORSタイント
+ * の対象にならないため、Canvasへの読み込み・再書き出しは安全に行える。
  */
 async function overlayGoshuinQrSeal(dataUrl, url) {
   if (!dataUrl) return dataUrl;
@@ -3958,12 +3949,12 @@ function showPhotoPopupEditMode(lat, lng) {
   landmarkRow.appendChild(stampWrap);
 
   // 画像生成（スタンプ投稿のみ）: 写真をカラーE-Ink風アートに変換し、
-  // 左側に控えめな御朱印風QRコードを合成した1枚の画像を生成する。スタンプの右横に小さく配置。
+  // 左下に控えめな御朱印風QRコードを合成した1枚の画像を生成する。スタンプの右横に小さく配置。
   const goshuinBtn = document.createElement('button');
   goshuinBtn.type = 'button';
   goshuinBtn.className = 'btn btn-stamp btn-xs';
   goshuinBtn.textContent = '🖼️ 画像生成';
-  goshuinBtn.title = '写真をカラーE-Ink風アートに変換し、左側に控えめな御朱印風QRコードを合成した画像を生成します';
+  goshuinBtn.title = '写真をカラーE-Ink風アートに変換し、左下に控えめな御朱印風QRコードを合成した画像を生成します';
   goshuinBtn.style.display = p.isStamp ? '' : 'none';
   landmarkRow.appendChild(goshuinBtn);
 
@@ -10584,7 +10575,7 @@ async function generateEinkCoverImage(trip, preValidatedCfg = null) {
 /**
  * スタンプ投稿（御朱印）用の画像を生成する。
  * 登録された写真をカラー対応E-Ink端末向けのシンプルでアーティスティックな
- * イラストに描き起こし、左側に控えめな御朱印風QRコード（登録されたURL、なければ
+ * イラストに描き起こし、左下に控えめな御朱印風QRコード（登録されたURL、なければ
  * そのポイントへのディープリンクURL）を合成した1枚の画像を返す。
  */
 async function generateStampGoshuinImage(trip, idx) {
@@ -10607,7 +10598,7 @@ async function generateStampGoshuinImage(trip, idx) {
     '実際の御朱印帳のページのように、達筆な毛筆風の文字（スポット名など）や小さな朱色の印を1〜2箇所、自然に配置してください。',
     `【スポット名】${spotName}`,
     p.description ? `【説明】${p.description}` : '',
-    '画像の左側には、後から四角い朱色のQR印章を重ねて配置します。その位置は他の朱印と並んで見える程度の余白を残し、極端に細かい模様や重要な被写体は避けてください。'
+    '画像の左下には、後から柔らかな四角の枠を持つ朱色のQR印章を重ねて配置します。その位置は他の朱印と並んで見える程度の余白を残し、極端に細かい模様や重要な被写体は避けてください。'
   ].filter(Boolean);
   const prompt = promptParts.join('\n');
 
