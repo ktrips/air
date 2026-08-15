@@ -2250,6 +2250,11 @@ body.app-playing .thumbnail-close-btn {
   max-width: 553px;
 }
 
+/* 編集時は写真を小さめにして、編集項目を見やすくする */
+.photo-popup-edit-mode .photo-popup-photo-wrap img {
+  max-height: 220px;
+}
+
 .photo-popup-edit-form {
   padding: 0.75rem;
   display: flex;
@@ -3959,6 +3964,10 @@ body:not(.editor) .viewer-only { display: block; }
 
   .photo-popup-edit-mode {
     max-width: 90vw;
+  }
+
+  .photo-popup-edit-mode .photo-popup-photo-wrap img {
+    max-height: 160px;
   }
 
   .photo-popup-edit-form {
