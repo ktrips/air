@@ -337,11 +337,11 @@ async function overlayQrCodeOnDataUrl(dataUrl, url) {
 }
 
 /**
- * canvas左側に、実際の御朱印帳の朱印のような四角い朱色のQRコードを、
- * 目立たせすぎず自然に埋め込むように描画する。中央には配置せず、
- * サイズも控えめにして、既存の文字・朱印などの意匠に馴染ませる。
- * QRの直下だけはぼかした柔らかい下地でスキャン用コントラストを確保しつつ、
- * 硬い額縁のような境界線は作らない。
+ * canvas左側に、実際の御朱印帳の角印（四角い朱印）のような朱色のQRコードを
+ * 四角い枠に収めて描画する。中央には配置せず、サイズも控えめにして、
+ * 絵の中の文字・朱印などの意匠と自然に馴染ませる。
+ * 枠線は不透明度を少し落として、朱肉が少しかすれた印影のような
+ * 柔らかい見え方にし、直下はぼかした下地でスキャン用コントラストを確保する。
  * 装飾で読み取り率が落ちないよう誤り訂正レベルは高め（Q）にしている。
  */
 function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
@@ -354,22 +354,32 @@ function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
 
     // 目立たせすぎないよう控えめなサイズにする
     const qrSize = opts.size || Math.round(Math.min(canvasW, canvasH) * 0.20);
-    const margin = opts.margin ?? Math.round(qrSize * 0.16);
+    const margin = opts.margin ?? Math.round(qrSize * 0.14);
     const plateSize = qrSize + margin * 2;
     // 中央ではなく左側（御朱印帳の朱印がよく押される位置に近い、やや下寄り）
     const cx = opts.cx ?? canvasW * 0.22;
     const cy = opts.cy ?? canvasH * 0.60;
     const plateX = cx - plateSize / 2;
     const plateY = cy - plateSize / 2;
+    const vermillion = '#b7211f';
     const vermillionDark = '#7a1220';
 
-    // QR下地: 角丸の四角形をぼかして縁を自然になじませる（硬い枠線は作らない）
+    // QR下地: 角丸の四角形をぼかして縁を自然になじませる（下地自体に硬い境界は作らない）
     ctx.save();
-    ctx.filter = `blur(${Math.max(2, Math.round(plateSize * 0.06))}px)`;
-    ctx.fillStyle = 'rgba(253, 248, 236, 0.85)';
-    const pad = plateSize * 0.10;
-    roundRectPath(ctx, plateX - pad, plateY - pad, plateSize + pad * 2, plateSize + pad * 2, Math.round(plateSize * 0.14));
+    ctx.filter = `blur(${Math.max(2, Math.round(plateSize * 0.05))}px)`;
+    ctx.fillStyle = 'rgba(253, 248, 236, 0.88)';
+    const pad = plateSize * 0.06;
+    roundRectPath(ctx, plateX - pad, plateY - pad, plateSize + pad * 2, plateSize + pad * 2, Math.round(plateSize * 0.08));
     ctx.fill();
+    ctx.restore();
+
+    // 御朱印の角印らしい四角い朱枠。かすれた朱肉のように不透明度を少し落として硬さを抑える
+    ctx.save();
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = vermillion;
+    ctx.lineWidth = Math.max(1.5, Math.round(plateSize * 0.03));
+    roundRectPath(ctx, plateX, plateY, plateSize, plateSize, Math.round(plateSize * 0.05));
+    ctx.stroke();
     ctx.restore();
 
     // QRモジュール（朱色。読み取り精度を保つため不透明で描画）
@@ -10594,9 +10604,10 @@ async function generateStampGoshuinImage(trip, idx) {
     'この写真をもとに、カラー対応E-Ink端末（Kaleido/Spectra等の電子ペーパー）での表示に適した、シンプルでアーティスティックな1枚のイラストに描き起こしてください。',
     '色数を絞ったフラットな配色、くっきりした輪郭線、大きくまとまった形で構成し、細かすぎるテクスチャや繊細なグラデーション・ぼかしは避けてください（E-Inkは色再現・階調表現が苦手なため）。',
     '写真的なリアリズムではなく、旅の御朱印帳に貼るような、上品で温かみのある一枚絵にしてください。',
+    '実際の御朱印帳のページのように、達筆な毛筆風の文字（スポット名など）や小さな朱色の印を1〜2箇所、自然に配置してください。',
     `【スポット名】${spotName}`,
     p.description ? `【説明】${p.description}` : '',
-    '画像の左側は後でQRコードの朱印を重ねるため、その部分には極端に細かい模様や重要な被写体を集中させないでください。'
+    '画像の左側には、後から四角い朱色のQR印章を重ねて配置します。その位置は他の朱印と並んで見える程度の余白を残し、極端に細かい模様や重要な被写体は避けてください。'
   ].filter(Boolean);
   const prompt = promptParts.join('\n');
 
