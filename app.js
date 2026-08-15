@@ -391,11 +391,45 @@ function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
 }
 
 /**
- * AI生成済みの画像（dataURL）左下に、御朱印のような柔らかな四角の枠を持つ
- * QRコードを合成する。overlayQrCodeOnDataUrl と同じくdata:URLはCORSタイント
- * の対象にならないため、Canvasへの読み込み・再書き出しは安全に行える。
+ * canvas下部中央寄りに、ポイント名を趣のある明朝体（毛筆に近い字面の
+ * 明朝系フォント）で描画する。AIにテキスト描画を任せると崩れ字になる
+ * ことがあるため、正確な文字を確実に読める形で重ねる。
+ * 背景を選ばず読めるよう、文字の縁取り（ハロー）で下地を柔らかくなじませ、
+ * 硬い帯や枠は使わない。QRコード（左下）と重ならないよう少し右寄りに置く。
  */
-async function overlayGoshuinQrSeal(dataUrl, url) {
+function drawGoshuinPointNameCaption(ctx, name, canvasW, canvasH, opts = {}) {
+  const text = (name || '').trim();
+  if (!text) return;
+  try {
+    const fontSize = opts.fontSize || Math.round(canvasH * 0.05);
+    ctx.save();
+    ctx.font = `${fontSize}px "Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Noto Serif JP", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    const cx = opts.cx ?? canvasW * 0.60;
+    const baselineY = opts.y ?? canvasH * 0.94;
+
+    // 読みやすさ確保のための柔らかい縁取り（硬い帯・枠は使わない）
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.18));
+    ctx.strokeStyle = 'rgba(253, 248, 236, 0.88)';
+    ctx.strokeText(text, cx, baselineY);
+
+    ctx.fillStyle = '#2a2118';
+    ctx.fillText(text, cx, baselineY);
+    ctx.restore();
+  } catch (err) {
+    console.warn('ポイント名キャプションの描画に失敗（スキップ）:', err);
+  }
+}
+
+/**
+ * AI生成済みの画像（dataURL）にポイント名のキャプションと、御朱印のような
+ * 柔らかな四角の枠を持つQRコード（左下）を合成する。overlayQrCodeOnDataUrl
+ * と同じくdata:URLはCORSタイントの対象にならないため、Canvasへの
+ * 読み込み・再書き出しは安全に行える。
+ */
+async function overlayGoshuinQrSeal(dataUrl, url, pointName) {
   if (!dataUrl) return dataUrl;
   try {
     const img = await new Promise((resolve, reject) => {
@@ -409,6 +443,7 @@ async function overlayGoshuinQrSeal(dataUrl, url) {
     canvas.height = img.naturalHeight;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0);
+    drawGoshuinPointNameCaption(ctx, pointName, canvas.width, canvas.height);
     drawGoshuinQrSeal(ctx, url, canvas.width, canvas.height);
     return canvas.toDataURL('image/png');
   } catch (err) {
@@ -10611,7 +10646,7 @@ async function generateStampGoshuinImage(trip, idx) {
   if (!rawDataUrl) throw new Error('画像の生成に失敗しました。APIキーと入力内容を確認してください。');
 
   const targetUrl = (p.videoUrl && p.videoUrl.trim()) || buildPhotoShareUrl(trip, idx);
-  const composedDataUrl = await overlayGoshuinQrSeal(rawDataUrl, targetUrl);
+  const composedDataUrl = await overlayGoshuinQrSeal(rawDataUrl, targetUrl, p.name);
   return { dataUrl: composedDataUrl, targetUrl };
 }
 
