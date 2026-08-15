@@ -9232,6 +9232,8 @@ function showStampRallyModal(trip) {
   const allPhotos = getStampListForTrip(trip);
   const tripName = trip?.name || '';
 
+  renderStampRallyEinkList(allPhotos);
+
   if (allPhotos.length === 0) {
     if (titleEl) titleEl.textContent = tripName ? `${tripName} - スタンプ一覧` : 'スタンプ一覧';
     if (countEl) countEl.textContent = '';
@@ -9245,16 +9247,12 @@ function showStampRallyModal(trip) {
       const stamped = !!(p.url && p.url.trim());
       const landmarkNo = escapeHtml(p.landmarkNo || '');
       const pointName = escapeHtml(p.name || '');
-      const generatedUrl = p.generatedGoshuinUrl || '';
-      const thumbSrc = generatedUrl || getPhotoThumbUrl(p);
       const imgHtml = stamped
-        ? `<img src="${escapeHtml(thumbSrc)}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
+        ? `<img src="${escapeHtml(getPhotoThumbUrl(p))}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
         : '<div class="stamp-card-empty">?</div>';
-      const generatedBadge = generatedUrl ? '<span class="stamp-card-generated-badge" title="御朱印画像あり（クリックでダウンロード）">🖼️</span>' : '';
-      return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-trip-id="${p._tripId}" data-photo-index="${p._photoIndex}" data-generated-url="${escapeHtml(generatedUrl)}" data-point-name="${pointName}">
+      return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-trip-id="${p._tripId}" data-photo-index="${p._photoIndex}">
         <div class="stamp-card-inner">
           ${imgHtml}
-          ${generatedBadge}
           <div class="stamp-card-info-overlay">
             ${landmarkNo ? `<span class="stamp-card-no">${landmarkNo}</span>` : ''}
             ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
@@ -9266,14 +9264,7 @@ function showStampRallyModal(trip) {
     content.querySelectorAll('.stamp-card').forEach((card) => {
       const tripId = card.dataset.tripId;
       const photoIdx = parseInt(card.dataset.photoIndex, 10);
-      const generatedUrl = card.dataset.generatedUrl;
-      const pointName = card.dataset.pointName || 'goshuin';
       card.onclick = async () => {
-        // 御朱印画像が生成済みなら、オリジナルをダウンロードできるライトボックスを表示
-        if (generatedUrl) {
-          showGoshuinLightbox(generatedUrl, `${sanitizeFileNamePart(pointName)}_goshuin.png`);
-          return;
-        }
         if (currentTrip?.id !== tripId) await loadTripById(tripId);
         showPhotoAtIndex(photoIdx);
         closeStampRallyModal();
@@ -9281,6 +9272,26 @@ function showStampRallyModal(trip) {
     });
   }
   modal.classList.add('open');
+}
+
+/** E-Inkボタンの右側に、生成済みの御朱印風画像を小さく一覧表示する。クリックでダウンロード */
+function renderStampRallyEinkList(allPhotos) {
+  const list = document.getElementById('stampRallyEinkList');
+  if (!list) return;
+  const generated = allPhotos.filter(p => p.generatedGoshuinUrl);
+  if (generated.length === 0) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = generated.map(p => {
+    const pointName = escapeHtml(p.name || '');
+    return `<img src="${escapeHtml(p.generatedGoshuinUrl)}" alt="${pointName}" class="stamp-rally-eink-thumb" data-url="${escapeHtml(p.generatedGoshuinUrl)}" data-point-name="${pointName}" title="クリックでダウンロード" loading="lazy" decoding="async">`;
+  }).join('');
+  list.querySelectorAll('.stamp-rally-eink-thumb').forEach((img) => {
+    img.onclick = () => {
+      showGoshuinLightbox(img.dataset.url, `${sanitizeFileNamePart(img.dataset.pointName || 'goshuin')}_goshuin.png`);
+    };
+  });
 }
 
 /** 生成済み御朱印画像をオリジナルサイズで表示し、ダウンロードできるライトボックスを開く */
