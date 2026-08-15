@@ -2298,8 +2298,8 @@ body.app-playing .thumbnail-close-btn {
 
 .photo-popup-input-inline {
   width: 100%;
-  min-width: 50px;
-  max-width: 70px;
+  min-width: 34px;
+  max-width: 44px;
 }
 
 .photo-popup-landmark-name-inline .photo-popup-input-inline {
