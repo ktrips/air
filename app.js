@@ -391,23 +391,23 @@ function drawGoshuinQrSeal(ctx, url, canvasW, canvasH, opts = {}) {
 }
 
 /**
- * canvas下部中央寄りに、ポイント名を趣のある明朝体（毛筆に近い字面の
+ * canvas上部中央に、ポイント名を趣のある明朝体（毛筆に近い字面の
  * 明朝系フォント）で描画する。AIにテキスト描画を任せると崩れ字になる
  * ことがあるため、正確な文字を確実に読める形で重ねる。
  * 背景を選ばず読めるよう、文字の縁取り（ハロー）で下地を柔らかくなじませ、
- * 硬い帯や枠は使わない。QRコード（左下）と重ならないよう少し右寄りに置く。
+ * 硬い帯や枠は使わない。
  */
 function drawGoshuinPointNameCaption(ctx, name, canvasW, canvasH, opts = {}) {
   const text = (name || '').trim();
   if (!text) return;
   try {
-    const fontSize = opts.fontSize || Math.round(canvasH * 0.05);
+    const fontSize = opts.fontSize || Math.round(canvasH * 0.06);
     ctx.save();
     ctx.font = `${fontSize}px "Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Noto Serif JP", serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
-    const cx = opts.cx ?? canvasW * 0.60;
-    const baselineY = opts.y ?? canvasH * 0.94;
+    const cx = opts.cx ?? canvasW * 0.5;
+    const baselineY = opts.y ?? canvasH * 0.11;
 
     // 読みやすさ確保のための柔らかい縁取り（硬い帯・枠は使わない）
     ctx.lineJoin = 'round';
@@ -424,12 +424,71 @@ function drawGoshuinPointNameCaption(ctx, name, canvasW, canvasH, opts = {}) {
 }
 
 /**
- * AI生成済みの画像（dataURL）にポイント名のキャプションと、御朱印のような
- * 柔らかな四角の枠を持つQRコード（左下）を合成する。overlayQrCodeOnDataUrl
- * と同じくdata:URLはCORSタイントの対象にならないため、Canvasへの
- * 読み込み・再書き出しは安全に行える。
+ * canvas下部（左下のQRコードと重ならない右寄り）に、ポイント説明を
+ * 趣のある明朝体で複数行に折り返して描画する。日本語には単語区切りが
+ * ないため1文字ずつ計測して折り返す。収まりきらない場合は末尾を省略する。
  */
-async function overlayGoshuinQrSeal(dataUrl, url, pointName) {
+function drawGoshuinDescriptionCaption(ctx, description, canvasW, canvasH, opts = {}) {
+  const text = (description || '').trim();
+  if (!text) return;
+  try {
+    const fontSize = opts.fontSize || Math.round(canvasH * 0.032);
+    const lineHeight = fontSize * 1.45;
+    const maxWidth = opts.maxWidth ?? canvasW * 0.42;
+    const cx = opts.cx ?? canvasW * 0.72;
+    const maxLines = opts.maxLines ?? 3;
+
+    ctx.save();
+    ctx.font = `${fontSize}px "Hiragino Mincho ProN", "Yu Mincho", "游明朝", "Noto Serif JP", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+
+    const lines = [];
+    let line = '';
+    for (const ch of text) {
+      const test = line + ch;
+      if (line && ctx.measureText(test).width > maxWidth) {
+        lines.push(line);
+        line = ch;
+        if (lines.length >= maxLines) break;
+      } else {
+        line = test;
+      }
+    }
+    if (line && lines.length < maxLines) lines.push(line);
+    if (lines.length === maxLines) {
+      const last = lines[maxLines - 1];
+      if (ctx.measureText(last).width > maxWidth || last.length < text.length - lines.slice(0, -1).join('').length) {
+        lines[maxLines - 1] = last.slice(0, Math.max(1, last.length - 1)) + '…';
+      }
+    }
+
+    const totalHeight = lineHeight * lines.length;
+    const baseY = opts.y ?? canvasH * 0.93;
+    const startY = baseY - totalHeight + lineHeight;
+
+    lines.forEach((ln, i) => {
+      const y = startY + i * lineHeight;
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(2.5, Math.round(fontSize * 0.18));
+      ctx.strokeStyle = 'rgba(253, 248, 236, 0.88)';
+      ctx.strokeText(ln, cx, y);
+      ctx.fillStyle = '#3a3128';
+      ctx.fillText(ln, cx, y);
+    });
+    ctx.restore();
+  } catch (err) {
+    console.warn('ポイント説明キャプションの描画に失敗（スキップ）:', err);
+  }
+}
+
+/**
+ * AI生成済みの画像（dataURL）にポイント名（上部）・ポイント説明（下部）の
+ * キャプションと、御朱印のような柔らかな四角の枠を持つQRコード（左下）を
+ * 合成する。overlayQrCodeOnDataUrl と同じくdata:URLはCORSタイントの
+ * 対象にならないため、Canvasへの読み込み・再書き出しは安全に行える。
+ */
+async function overlayGoshuinQrSeal(dataUrl, url, pointName, description) {
   if (!dataUrl) return dataUrl;
   try {
     const img = await new Promise((resolve, reject) => {
@@ -444,6 +503,7 @@ async function overlayGoshuinQrSeal(dataUrl, url, pointName) {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0);
     drawGoshuinPointNameCaption(ctx, pointName, canvas.width, canvas.height);
+    drawGoshuinDescriptionCaption(ctx, description, canvas.width, canvas.height);
     drawGoshuinQrSeal(ctx, url, canvas.width, canvas.height);
     return canvas.toDataURL('image/png');
   } catch (err) {
@@ -9185,12 +9245,16 @@ function showStampRallyModal(trip) {
       const stamped = !!(p.url && p.url.trim());
       const landmarkNo = escapeHtml(p.landmarkNo || '');
       const pointName = escapeHtml(p.name || '');
+      const generatedUrl = p.generatedGoshuinUrl || '';
+      const thumbSrc = generatedUrl || getPhotoThumbUrl(p);
       const imgHtml = stamped
-        ? `<img src="${escapeHtml(getPhotoThumbUrl(p))}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
+        ? `<img src="${escapeHtml(thumbSrc)}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
         : '<div class="stamp-card-empty">?</div>';
-      return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-trip-id="${p._tripId}" data-photo-index="${p._photoIndex}">
+      const generatedBadge = generatedUrl ? '<span class="stamp-card-generated-badge" title="御朱印画像あり（クリックでダウンロード）">🖼️</span>' : '';
+      return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-index="${i}" data-trip-id="${p._tripId}" data-photo-index="${p._photoIndex}" data-generated-url="${escapeHtml(generatedUrl)}" data-point-name="${pointName}">
         <div class="stamp-card-inner">
           ${imgHtml}
+          ${generatedBadge}
           <div class="stamp-card-info-overlay">
             ${landmarkNo ? `<span class="stamp-card-no">${landmarkNo}</span>` : ''}
             ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
@@ -9202,7 +9266,14 @@ function showStampRallyModal(trip) {
     content.querySelectorAll('.stamp-card').forEach((card) => {
       const tripId = card.dataset.tripId;
       const photoIdx = parseInt(card.dataset.photoIndex, 10);
+      const generatedUrl = card.dataset.generatedUrl;
+      const pointName = card.dataset.pointName || 'goshuin';
       card.onclick = async () => {
+        // 御朱印画像が生成済みなら、オリジナルをダウンロードできるライトボックスを表示
+        if (generatedUrl) {
+          showGoshuinLightbox(generatedUrl, `${sanitizeFileNamePart(pointName)}_goshuin.png`);
+          return;
+        }
         if (currentTrip?.id !== tripId) await loadTripById(tripId);
         showPhotoAtIndex(photoIdx);
         closeStampRallyModal();
@@ -9212,14 +9283,103 @@ function showStampRallyModal(trip) {
   modal.classList.add('open');
 }
 
+/** 生成済み御朱印画像をオリジナルサイズで表示し、ダウンロードできるライトボックスを開く */
+function showGoshuinLightbox(url, filename) {
+  if (!url) return;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.9);z-index:10001;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;cursor:pointer;';
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = filename || '御朱印画像';
+  img.style.cssText = 'max-width:92vw;max-height:78vh;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.5);cursor:default;';
+  img.onclick = (e) => e.stopPropagation();
+  const dlLink = document.createElement('a');
+  dlLink.href = url;
+  dlLink.download = filename || 'goshuin.png';
+  dlLink.target = '_blank';
+  dlLink.rel = 'noopener';
+  dlLink.className = 'btn btn-primary btn-sm';
+  dlLink.textContent = '⬇️ ダウンロード';
+  dlLink.onclick = (e) => e.stopPropagation();
+  overlay.appendChild(img);
+  overlay.appendChild(dlLink);
+  overlay.onclick = () => document.body.removeChild(overlay);
+  document.body.appendChild(overlay);
+}
+
 function closeStampRallyModal() {
   document.getElementById('stampRallyModal')?.classList.remove('open');
 }
 
 /**
+ * スタンプ一覧の全スタンプについて、1枚ずつ御朱印風画像（generateStampGoshuinImage
+ * と同じくカラー・写真に忠実・QR＋ポイント名/説明キャプション付き）を生成し、
+ * 各投稿の写真（photos[idx].generatedGoshuinUrl）とトリップの生成画像一覧の
+ * 両方に保存する。
+ * 親トリップの場合はスタンプが複数の子トリップにまたがるため、トリップIDごとに
+ * まとめて処理し、currentTripのDOMフォームに依存するsaveTrip()は使わず
+ * Firestoreへ直接部分更新する。
+ */
+async function generateAllStampGoshuinImages(trip, onProgress) {
+  const stamps = getStampListForTrip(trip).filter(p => p.url && p.url.trim());
+  if (stamps.length === 0) return { count: 0, results: [] };
+
+  const byTripId = new Map();
+  for (const p of stamps) {
+    const arr = byTripId.get(p._tripId) || [];
+    arr.push(p);
+    byTripId.set(p._tripId, arr);
+  }
+
+  const results = [];
+  let done = 0;
+  const total = stamps.length;
+
+  for (const [tripId, tripStamps] of byTripId) {
+    const targetTrip = myTripsMap.get(tripId);
+    if (!targetTrip) continue;
+    let changed = false;
+    for (const p of tripStamps) {
+      const idx = p._photoIndex;
+      const photo = targetTrip.photos?.[idx];
+      if (!photo || !photo.url) continue;
+      done++;
+      if (onProgress) onProgress(done, total, photo.name || '');
+      try {
+        const { dataUrl } = await generateStampGoshuinImage(targetTrip, idx);
+        const storageUrl = await uploadAnimeImageToStorage(targetTrip.id, dataUrl, `goshuin_${idx}`);
+        photo.generatedGoshuinUrl = storageUrl;
+        if (!targetTrip.generatedAnimes) targetTrip.generatedAnimes = [];
+        targetTrip.generatedAnimes.push({
+          url: storageUrl,
+          timestamp: Date.now(),
+          style: 'stamp-goshuin',
+          name: photo.name || ''
+        });
+        results.push({ tripId: targetTrip.id, photoIndex: idx, url: storageUrl });
+        changed = true;
+      } catch (err) {
+        console.error(`御朱印画像生成エラー（${photo.name || idx}）:`, err);
+        results.push({ tripId: targetTrip.id, photoIndex: idx, error: err.message || String(err) });
+      }
+    }
+    if (changed) {
+      await window.firebaseDb.collection('trips').doc(targetTrip.id).set(
+        sanitizeForFirestore({ photos: targetTrip.photos, generatedAnimes: targetTrip.generatedAnimes }),
+        { merge: true }
+      );
+      invalidateOrderedTripsCache();
+      if (targetTrip.id === currentTrip?.id) {
+        renderGeneratedAnimesList();
+      }
+    }
+  }
+  return { count: results.filter(r => r.url).length, results };
+}
+
+/**
  * スタンプ一覧モーダルの「🖼️ E-Ink画像」ボタン用ハンドラ。
- * そのページで表示中のスタンプ（generateEinkStampSheetDataUrlと同じくAIを使わない
- * canvas描画）をE-Ink画像として生成し、既存のInk系プレビュー・ダウンロードUIで表示する。
+ * 全スタンプ1枚ずつの御朱印風画像をまとめて生成し、完了後に一覧を再描画する。
  */
 async function handleStampRallyEinkGeneration() {
   const trip = stampRallyModalTrip || currentTrip;
@@ -9227,19 +9387,32 @@ async function handleStampRallyEinkGeneration() {
     alert('トリップを選択してください');
     return;
   }
-  closeStampRallyModal();
-  showCreateImageResult('スタンプ画像を生成中...', null, null);
-  openCreateImageModal();
+  const stamps = getStampListForTrip(trip).filter(p => p.url && p.url.trim());
+  if (stamps.length === 0) {
+    alert('スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。');
+    return;
+  }
+  const btn = document.getElementById('stampRallyEinkBtn');
+  const originalText = btn?.textContent;
+  if (btn) btn.disabled = true;
   try {
-    const dataUrl = await generateEinkStampSheetDataUrl(trip);
-    if (!dataUrl) {
-      showCreateImageResult('スタンプ（写真編集の「スタンプ」チェック）が設定された写真がありません。', null, null);
-      return;
+    const { count, results } = await generateAllStampGoshuinImages(trip, (done, total, name) => {
+      setStatus(`御朱印画像を生成中... (${done}/${total}) ${name}`);
+      if (btn) btn.textContent = `生成中 ${done}/${total}`;
+    });
+    const errorCount = results.filter(r => r.error).length;
+    setStatus(errorCount > 0
+      ? `御朱印画像を${count}枚生成しました（${errorCount}枚失敗）`
+      : `✓ 御朱印画像を${count}枚生成しました`);
+    if (errorCount > 0) {
+      console.warn('御朱印画像生成に失敗したスタンプ:', results.filter(r => r.error));
     }
-    showCreateImageResult('スタンプ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}_stamps.png`);
+    showStampRallyModal(trip); // 生成結果を反映して一覧を再描画
   } catch (err) {
-    console.error('スタンプ画像生成エラー:', err);
-    showCreateImageResult('スタンプ画像の生成に失敗しました: ' + (err.message || String(err)), null, null);
+    console.error('御朱印画像生成エラー:', err);
+    alert('御朱印画像の生成に失敗しました: ' + (err.message || String(err)));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
   }
 }
 
@@ -9251,12 +9424,6 @@ const ANIME_STYLES = {
     brand: '地球の歩き方',
     prompt: ANIME_COVER_PREFIX + 'Japanese travel guidebook cover style. Professional cover layout with bold trip title typography, scenic travel imagery, warm and inviting colors. IMPORTANT: Include a hand-drawn illustrated mini-map in the cover design showing the travel route with key waypoints marked — styled like a vintage travel guidebook map (soft watercolor or ink sketch style). No specific brand name or logo. Travelogue content: ',
     brandClass: 'anime-brand-chikyu'
-  },
-  'jump': {
-    label: '少年ジャンプの表紙風',
-    brand: '週刊少年ジャンプ',
-    prompt: ANIME_COVER_PREFIX + 'Weekly Shonen Jump manga magazine cover style. Bold Japanese manga magazine aesthetic, dynamic composition, vibrant colors, manga-style impact. Travelogue content: ',
-    brandClass: 'anime-brand-jump'
   },
   'travel-magazine': {
     label: '旅行雑誌の表紙風',
@@ -10644,7 +10811,7 @@ async function generateStampGoshuinImage(trip, idx) {
   if (!rawDataUrl) throw new Error('画像の生成に失敗しました。APIキーと入力内容を確認してください。');
 
   const targetUrl = (p.videoUrl && p.videoUrl.trim()) || buildPhotoShareUrl(trip, idx);
-  const composedDataUrl = await overlayGoshuinQrSeal(rawDataUrl, targetUrl, p.name);
+  const composedDataUrl = await overlayGoshuinQrSeal(rawDataUrl, targetUrl, p.name, p.description);
   return { dataUrl: composedDataUrl, targetUrl };
 }
 
@@ -11084,6 +11251,28 @@ async function persistInkImageToGallery(trip, dataUrl, style, filePrefix) {
   renderGeneratedAnimesList();
 }
 
+/**
+ * 「マップInk」選択時は、他のスタイルで使うモデル品質(L/M/H)の代わりに
+ * カラー/白黒(C/B)を選ぶ切替として同じセレクトを流用する。
+ * マップInkはAIを使わない決定論的なcanvas生成のため、品質レベルという
+ * 概念自体が存在せず、その代わりに色の出力形式を選べるようにしている。
+ */
+function updateModelLevelSelectForStyle(styleId) {
+  const sel = document.getElementById('modelLevelSelect');
+  if (!sel) return;
+  if (styleId === 'map-ink') {
+    if (sel.dataset.mode !== 'color') {
+      sel.innerHTML = '<option value="color" selected>C</option><option value="bw">B</option>';
+      sel.title = 'C: カラーでマップを生成 / B: 白黒でマップを生成';
+      sel.dataset.mode = 'color';
+    }
+  } else if (sel.dataset.mode === 'color') {
+    sel.innerHTML = '<option value="low" selected>L</option><option value="mid">M</option><option value="high">H</option>';
+    sel.title = '画像生成に使うモデルの品質レベル';
+    delete sel.dataset.mode;
+  }
+}
+
 async function showAnimeModal() {
   const trip = currentTrip;
   if (!trip) {
@@ -11096,8 +11285,10 @@ async function showAnimeModal() {
   const originalBtnText = btn?.textContent || '画像生成';
 
   // マップInk: AIを使わずcanvasで決定論的に生成するため、APIキー不要でここで完結させる
-  if (styleId === 'map-ink' || styleId === 'map-bw') {
-    const isMonochrome = styleId === 'map-bw';
+  // カラー/白黒はモデル品質(L/M/H)の代わりに流用しているC/Bセレクトで選ぶ
+  if (styleId === 'map-ink') {
+    const isMonochrome = document.getElementById('modelLevelSelect')?.value === 'bw';
+    const galleryStyle = isMonochrome ? 'map-bw' : 'map-ink';
     const filePrefix = isMonochrome ? 'mapbw' : 'mapink';
     const fileSuffix = isMonochrome ? '_map_bw.png' : '_map.png';
     try {
@@ -11118,7 +11309,7 @@ async function showAnimeModal() {
         showCreateImageResult('マップ画像を作成しました。', dataUrl, `${sanitizeFileNamePart(trip.name)}${fileSuffix}`);
         setStatus('マップ画像を作成しました');
         try {
-          await persistInkImageToGallery(trip, dataUrl, styleId, filePrefix);
+          await persistInkImageToGallery(trip, dataUrl, galleryStyle, filePrefix);
         } catch (saveErr) {
           console.error('マップ画像の保存エラー:', saveErr);
         }
@@ -13181,7 +13372,9 @@ function initEventListeners() {
       eventStoryInputWrap.style.display = value === 'event-story' ? '' : 'none';
       meishoUkiyoeInputWrap.style.display = value === 'meisho-ukiyoe' ? '' : 'none';
       infographicInputWrap.style.display = value === 'infographic' ? '' : 'none';
+      updateModelLevelSelectForStyle(value);
     };
+    updateModelLevelSelectForStyle(animeStyleSelect.value);
   }
 
   const animeImageViewerModal = document.getElementById('animeImageViewerModal');
