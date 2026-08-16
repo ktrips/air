@@ -8150,8 +8150,9 @@ function buildChildAccessSectionHtml(children) {
       links.push(`<a href="${escapeHtml(videoUrls[0])}" target="_blank" rel="noopener" style="display:inline-block;padding:4px 10px;background:#f0f0f0;border-radius:14px;font-size:0.8rem;text-decoration:none;color:#333;">🎬 動画</a>`);
     }
 
+    const thumbClickable = thumbUrl && hasTravelogue;
     return `<div class="travelogue-child-card" style="border:1px solid #e0e0e0;border-radius:10px;overflow:hidden;background:#fff;">
-      ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" loading="lazy" style="width:100%;height:130px;object-fit:cover;display:block;" />` : ''}
+      ${thumbUrl ? `<img src="${escapeHtml(thumbUrl)}" loading="lazy" ${thumbClickable ? `class="travelogue-child-thumb-link" data-trip-id="${c.id}" title="${safeName}の旅行記を見る"` : ''} style="width:100%;height:130px;object-fit:cover;display:block;${thumbClickable ? 'cursor:pointer;' : ''}" />` : ''}
       <div style="padding:10px 12px;">
         <div style="font-weight:700;font-size:0.95rem;margin-bottom:4px;">${safeName}</div>
         ${badges.length > 0 ? `<div style="font-size:0.78rem;color:#888;margin-bottom:8px;">${badges.join('　')}</div>` : ''}
@@ -8784,8 +8785,22 @@ async function showTravelogueModal(trip) {
       });
     });
 
+    // 親トリップの総合情報ページ内、子トリップアクセスカードのサムネイル画像（クリックで子トリップの旅行記へ）
+    content.querySelectorAll('.travelogue-child-thumb-link').forEach((thumb) => {
+      thumb.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const tripId = thumb.dataset.tripId;
+        if (tripId) {
+          await loadTripById(tripId);
+          showTravelogueModal(currentTrip);
+        }
+      });
+    });
+
     // 旅行記内の写真・アニメ画像をクリックで拡大表示
-    content.querySelectorAll('img').forEach((img) => {
+    // （子トリップアクセスカードのサムネイルは上記で個別ハンドラ済みのため除外）
+    content.querySelectorAll('img:not(.travelogue-child-thumb-link)').forEach((img) => {
       img.style.cursor = 'pointer';
       if (!img.dataset.isAnime) img.title = 'クリックで拡大表示';
       img.addEventListener('click', (e) => {
