@@ -1603,37 +1603,6 @@ function setMap3dView(lat, lng, zoom) {
   }
 }
 
-function flyMap3dTo(lat, lng, zoom, durationMs) {
-  return new Promise((resolve) => {
-    if (map3d && playTimer) {
-      // 現在のbearingを取得して少し回転させる
-      const currentBearing = map3d.getBearing();
-      const newBearing = currentBearing + (Math.random() * 20 - 10);
-
-      // moveend イベントでアニメーション完了を検知
-      const onMoveEnd = () => {
-        map3d.off('moveend', onMoveEnd);
-        resolve();
-      };
-      map3d.once('moveend', onMoveEnd);
-
-      map3d.flyTo({
-        center: [lng, lat],
-        zoom: zoom ?? 17,
-        pitch: 78,
-        bearing: newBearing,
-        duration: (durationMs || 2700) / 1000,
-        essential: true,
-        curve: 1.4,
-        speed: 0.7,
-        easing: (t) => t * (2 - t)
-      });
-    } else {
-      resolve();
-    }
-  });
-}
-
 function initMapSearch() {
   const input = document.getElementById('mapSearchInput');
   if (!input) return;
@@ -1813,16 +1782,31 @@ async function deleteAllTripFiles(trip) {
     })());
   }
 
-  // アニメ画像を削除
-  if (trip.animes && Array.isArray(trip.animes)) {
-    for (const anime of trip.animes) {
-      if (anime.url) {
+  // アニメ画像を削除（フィールド名は generatedAnimes が現行、animes は旧データの後方互換）
+  const animes = [...(trip.generatedAnimes || []), ...(trip.animes || [])];
+  for (const anime of animes) {
+    if (anime.url) {
+      deletePromises.push((async () => {
+        try {
+          const ref = window.firebaseStorage.refFromURL(anime.url);
+          await ref.delete();
+        } catch (e) {
+          console.warn('アニメ画像の削除に失敗:', anime.url, e);
+        }
+      })());
+    }
+  }
+
+  // 旅行記履歴（過去バージョン）のHTMLファイルも削除
+  if (trip.travelogueHistory && Array.isArray(trip.travelogueHistory)) {
+    for (const entry of trip.travelogueHistory) {
+      if (entry.url && entry.url !== trip.travelogueUrl) {
         deletePromises.push((async () => {
           try {
-            const ref = window.firebaseStorage.refFromURL(anime.url);
+            const ref = window.firebaseStorage.refFromURL(entry.url);
             await ref.delete();
           } catch (e) {
-            console.warn('アニメ画像の削除に失敗:', anime.url, e);
+            console.warn('旅行記履歴の削除に失敗:', entry.url, e);
           }
         })());
       }
@@ -4785,54 +4769,6 @@ async function getRouteSegmentBetweenPhotos(fromIdx, toIdx) {
   return segment;
 }
 
-function animateCameraAlongRoute(routePts, durationMs) {
-  return new Promise((resolve) => {
-    if (!routePts || routePts.length < 2 || durationMs <= 0) {
-      resolve();
-      return;
-    }
-    const start = performance.now();
-    const n = routePts.length - 1;
-    let lastFrameTime = start;
-    const frameInterval = 1000 / 30; // 30fps（パフォーマンス最適化）
-
-    const tick = (now) => {
-      if (!playTimer) {
-        resolve();
-        return;
-      }
-
-      // フレームレート制限でパフォーマンス向上
-      if (now - lastFrameTime < frameInterval) {
-        requestAnimationFrame(tick);
-        return;
-      }
-      lastFrameTime = now;
-
-      const elapsed = now - start;
-      if (elapsed >= durationMs) {
-        const [lat, lng] = routePts[routePts.length - 1];
-        setMap3dView(lat, lng, 17);
-        resolve(); // アニメーション完了
-        return;
-      }
-      const progress = Math.min(elapsed / durationMs, 1);
-      const eased = 1 - Math.pow(1 - progress, 1.2);
-      const pos = eased * n;
-      const idx = Math.min(Math.floor(pos), n - 1);
-      const t = pos - idx;
-      const [lat1, lng1] = routePts[idx];
-      const [lat2, lng2] = routePts[idx + 1];
-      const lat = lat1 + t * (lat2 - lat1);
-      const lng = lng1 + t * (lng2 - lng1);
-      // 自動再生中は3D地図のみ更新（パフォーマンス向上）
-      setMap3dView(lat, lng, 17);
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  });
-}
-
 async function startPlay() {
   if (playTimer) {
     handlePlaybackStop();
@@ -6611,33 +6547,6 @@ async function detectVideoOrientation(videoUrl) {
   return 'landscape';
 }
 
-function loadYouTubeIFrameAPI() {
-  return new Promise((resolve) => {
-    if (youtubeApiReady) {
-      resolve();
-      return;
-    }
-
-    if (window.YT && window.YT.Player) {
-      youtubeApiReady = true;
-      resolve();
-      return;
-    }
-
-    window.onYouTubeIframeAPIReady = () => {
-      youtubeApiReady = true;
-      resolve();
-    };
-
-    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
-      const tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      const firstScriptTag = document.getElementsByTagName('script')[0];
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    }
-  });
-}
-
 function getVideoThumbnailUrl(videoUrl) {
   if (!videoUrl) return null;
 
@@ -7015,10 +6924,6 @@ function playVideoSequence(urls) {
   playAt(0);
 }
 
-let animePlayTimer = null;
-let animeFrameIndex = 0;
-let animeFrames = [];
-let animeStyleConfig = null;
 let cachedAiConfig = null;
 
 async function loadUserAiConfig() {
@@ -8969,169 +8874,6 @@ async function switchMobileTab(tab, tripToShow) {
     }
   }
 
-  // 以下は旧実装（モバイル専用ビュー）のため無効化
-  /*
-  if (false) {
-      // タイトルを設定
-      if (mobileTravelogueTitle) {
-        mobileTravelogueTitle.textContent = tripToDisplay.name || '旅行記';
-      }
-
-      // スタンプ・アニメボタンの表示制御
-      const mobileStampBtn = document.getElementById('mobileStampBtn');
-      const mobileAnimeBtn = document.getElementById('mobileAnimeBtn');
-
-      if (mobileStampBtn) {
-        let hasStamps = false;
-        if (tripToDisplay.isParent) {
-          const childTrips = getChildTrips(tripToDisplay.id);
-          hasStamps = childTrips.some(child => (child.photos || []).some(p => p.isStamp));
-        } else {
-          hasStamps = (tripToDisplay.photos || []).some(p => p.isStamp);
-        }
-        mobileStampBtn.style.display = hasStamps ? '' : 'none';
-      }
-
-      if (mobileAnimeBtn) {
-        const hasAnimes = (tripToDisplay.generatedAnimes && tripToDisplay.generatedAnimes.length > 0) ||
-                          (tripToDisplay.animeList && tripToDisplay.animeList.length > 0);
-        mobileAnimeBtn.style.display = hasAnimes ? '' : 'none';
-      }
-
-      // 前後のナビゲーションボタンを設定
-      const tripsWithTravelogue = getOrderedTrips().filter(trip => {
-        const hasTravelogue = tripHasTravelogue(trip);
-        return hasTravelogue;
-      });
-
-      const currentIndex = tripsWithTravelogue.findIndex(trip => trip.id === tripToDisplay.id);
-      const prevBtn = document.getElementById('mobileTraveloguePrevBtn');
-      const nextBtn = document.getElementById('mobileTravelogueNextBtn');
-
-      if (prevBtn && nextBtn) {
-        const hasPrev = currentIndex > 0;
-        const hasNext = currentIndex >= 0 && currentIndex < tripsWithTravelogue.length - 1;
-
-        prevBtn.disabled = !hasPrev;
-        nextBtn.disabled = !hasNext;
-
-        prevBtn.onclick = async () => {
-          if (hasPrev) {
-            const prevTrip = tripsWithTravelogue[currentIndex - 1];
-            await loadTripById(prevTrip.id);
-            switchMobileTab('travelogue', prevTrip);
-          }
-        };
-
-        nextBtn.onclick = async () => {
-          if (hasNext) {
-            const nextTrip = tripsWithTravelogue[currentIndex + 1];
-            await loadTripById(nextTrip.id);
-            switchMobileTab('travelogue', nextTrip);
-          }
-        };
-      }
-
-      // 旅行記の内容を取得して表示
-      let html = tripToDisplay.travelogueHtml;
-      let travelogueUrl = tripToDisplay.travelogueUrl;
-
-      // 履歴があれば直近の旅行記を優先
-      if (tripToDisplay.travelogueHistory?.length > 0) {
-        const latest = getLatestTravelogueEntry(tripToDisplay);
-        if (latest?.url) {
-          travelogueUrl = latest.url;
-          html = null;
-        } else if (latest?.html) {
-          html = latest.html;
-          travelogueUrl = null;
-        }
-      }
-
-      // URLがある場合はStorageから取得
-      if (!html && travelogueUrl) {
-        try {
-          const response = await fetch(travelogueUrl);
-          html = await response.text();
-        } catch (err) {
-          console.error('旅行記の取得エラー:', err);
-          mobileTravelogueContent.innerHTML = '<p style="padding:2rem;text-align:center;color:#888;">旅行記の読み込みに失敗しました。</p>';
-          mobileTravelogueView.style.display = 'block';
-          return;
-        }
-      }
-
-      if (html) {
-        // HTMLを挿入
-        let processedHtml = html.replace(/詳しい情報/g, '知っ得情報');
-        mobileTravelogueContent.innerHTML = processedHtml;
-
-        // スタンプ一覧を追加
-        const existingStampSection = mobileTravelogueContent.querySelector('.travelogue-stamp-section');
-        if (existingStampSection) {
-          existingStampSection.remove();
-        }
-        const stampPhotos = getStampListForTrip(tripToDisplay);
-        if (stampPhotos.length > 0) {
-          const stampSection = document.createElement('div');
-          stampSection.className = 'travelogue-stamp-section';
-          stampSection.innerHTML = `
-            <div style="border-top:3px solid #d4c5a9;margin-top:4rem;padding-top:2rem;">
-              <h3 style="text-align:center;color:#c1272d;font-size:1.8rem;margin-bottom:0.5rem;font-weight:700;letter-spacing:0.1em;">🎫 スタンプ一覧</h3>
-              <p style="text-align:center;color:#8b7355;font-size:0.9rem;margin-bottom:2rem;">訪れたスタンプスポット</p>
-              <div class="stamp-rally-grid" style="background:linear-gradient(135deg,#f9f5e8 0%,#f5f0e0 50%,#f0ead8 100%);border-radius:12px;padding:2rem;box-shadow:inset 0 2px 8px rgba(193,39,45,0.08);">${stampPhotos.map((p, i) => {
-                const stamped = !!(p.url && p.url.trim());
-                const landmarkNo = escapeHtml(p.landmarkNo || '');
-                const pointName = escapeHtml(p.name || '');
-                const imgHtml = stamped
-                  ? `<img src="${escapeHtml(getPhotoThumbUrl(p))}" alt="${pointName}" class="stamp-card-img" loading="lazy" decoding="async">`
-                  : '<div class="stamp-card-empty">?</div>';
-                return `<div class="stamp-card ${stamped ? 'stamp-card-stamped' : ''}" data-trip-id="${escapeHtml(p._tripId)}" data-photo-index="${p._photoIndex}">
-                  <div class="stamp-card-inner">
-                    ${imgHtml}
-                    <div class="stamp-card-info-overlay">
-                      ${landmarkNo ? `<span class="stamp-card-no">${landmarkNo}</span>` : ''}
-                      ${pointName ? `<span class="stamp-card-name">${pointName}</span>` : ''}
-                    </div>
-                  </div>
-                  <span class="stamp-card-badge">${stamped ? `✓${p.description ? ' ' + escapeHtml(p.description) : ''}` : '未スタンプ'}</span>
-                </div>`;
-              }).join('')}</div>
-              <p style="text-align:center;color:#8b7355;font-size:0.85rem;margin-top:1.5rem;font-style:italic;">訪れた全てのスポットを記録しました ✨</p>
-            </div>`;
-          mobileTravelogueContent.appendChild(stampSection);
-
-          // スタンプカードのクリックイベント
-          stampSection.querySelectorAll('.stamp-card').forEach((card) => {
-            const tripId = card.dataset.tripId;
-            const photoIdx = parseInt(card.dataset.photoIndex, 10);
-            card.onclick = async () => {
-              if (currentTrip?.id !== tripId) await loadTripById(tripId);
-              switchMobileTab('map');
-              showPhotoAtIndex(photoIdx);
-            };
-          });
-        }
-
-        // 画像クリックで拡大表示
-        mobileTravelogueContent.querySelectorAll('img').forEach((img) => {
-          img.style.cursor = 'pointer';
-          img.title = 'クリックで拡大表示';
-          img.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (img.src) showImagePopup(img.src);
-          });
-        });
-
-        mobileTravelogueView.style.display = 'block';
-      } else {
-        mobileTravelogueContent.innerHTML = '<p style="padding:2rem;text-align:center;color:#888;">旅行記がありません。</p>';
-        mobileTravelogueView.style.display = 'block';
-      }
-    }
-  }
-  */ // コメントアウト終了
 }
 
 /** スタンプチェックがついた写真一覧を取得（スタンプボタン・旅行記で共通利用） */
@@ -9384,38 +9126,32 @@ const ANIME_STYLES = {
   'chikyu-cover': {
     label: '地球の歩き方表紙風',
     brand: '地球の歩き方',
-    prompt: ANIME_COVER_PREFIX + 'Japanese travel guidebook cover style. Professional cover layout with bold trip title typography, scenic travel imagery, warm and inviting colors. IMPORTANT: Include a hand-drawn illustrated mini-map in the cover design showing the travel route with key waypoints marked — styled like a vintage travel guidebook map (soft watercolor or ink sketch style). No specific brand name or logo. Travelogue content: ',
-    brandClass: 'anime-brand-chikyu'
+    prompt: ANIME_COVER_PREFIX + 'Japanese travel guidebook cover style. Professional cover layout with bold trip title typography, scenic travel imagery, warm and inviting colors. IMPORTANT: Include a hand-drawn illustrated mini-map in the cover design showing the travel route with key waypoints marked — styled like a vintage travel guidebook map (soft watercolor or ink sketch style). No specific brand name or logo. Travelogue content: '
   },
   'travel-magazine': {
     label: '旅行雑誌の表紙風',
     brand: '旅行雑誌',
-    prompt: ANIME_COVER_PREFIX + 'Professional travel magazine cover style. Elegant travel publication aesthetic, high-end magazine layout, aspirational travel imagery. Travelogue content: ',
-    brandClass: 'anime-brand-magazine'
+    prompt: ANIME_COVER_PREFIX + 'Professional travel magazine cover style. Elegant travel publication aesthetic, high-end magazine layout, aspirational travel imagery. Travelogue content: '
   },
   'detail4pages': {
     label: '詳細4ページ',
     brand: '地球の歩き方',
-    prompt: '',
-    brandClass: 'anime-brand-chikyu'
+    prompt: ''
   },
   'event-story': {
     label: '出来事生成',
     brand: '旅の思い出',
-    prompt: '',
-    brandClass: 'anime-brand-event'
+    prompt: ''
   },
   'meisho-ukiyoe': {
     label: '名所浮世絵風',
     brand: '名所絵',
-    prompt: '',
-    brandClass: 'anime-brand-ukiyoe'
+    prompt: ''
   },
   'infographic': {
     label: 'インフォグラフィック',
     brand: '',
-    prompt: '',
-    brandClass: 'anime-brand-event'
+    prompt: ''
   }
 };
 
@@ -10951,13 +10687,6 @@ async function getDetail4PagesQuarterContent(trip, pageIndex) {
   return result || (trip.name || '旅行の思い出');
 }
 
-function showAnimeLoading(visible, text = '生成中...') {
-  const el = document.getElementById('animeLoading');
-  const textEl = document.getElementById('animeLoadingText');
-  if (el) el.classList.toggle('visible', visible);
-  if (textEl) textEl.textContent = text;
-}
-
 async function generateImageWithNanoBananaPro2(prompt, cfg, characterImage = null) {
   const apiKey = cfg?.apiKey?.trim();
   if (!apiKey) {
@@ -12056,59 +11785,6 @@ function renderGeneratedAnimesList() {
   });
 }
 
-function renderAnimeFrame() {
-  const frame = animeFrames[animeFrameIndex];
-  if (!frame) return;
-  const photoEl = document.getElementById('animeCoverPhoto');
-  const titleEl = document.getElementById('animeCoverTitle');
-  const subtitleEl = document.getElementById('animeCoverSubtitle');
-  const metaEl = document.getElementById('animeCoverMeta');
-  const brandEl = document.getElementById('animeCoverBrand');
-  if (photoEl) {
-    photoEl.style.opacity = '0';
-    photoEl.style.backgroundImage = frame.url ? `url(${frame.url})` : 'none';
-    photoEl.classList.toggle('anime-cover-failed', !frame.url);
-    photoEl.title = frame.url ? '' : '画像生成に失敗しました';
-    requestAnimationFrame(() => { photoEl.style.opacity = '1'; });
-  }
-  if (titleEl) titleEl.textContent = frame.title;
-  if (subtitleEl) subtitleEl.textContent = frame.subtitle;
-  if (metaEl) metaEl.textContent = frame.meta;
-  if (brandEl) {
-    const brand = frame.brand || animeStyleConfig?.brand || '';
-    brandEl.textContent = brand || '地球の歩き方';
-    brandEl.style.display = brand ? '' : 'none';
-    brandEl.className = 'anime-cover-brand ' + (frame.brandClass || 'anime-brand-chikyu');
-  }
-}
-
-function advanceAnimeFrame() {
-  if (animeFrames.length === 0) return;
-  animeFrameIndex = (animeFrameIndex + 1) % animeFrames.length;
-  renderAnimeFrame();
-}
-
-function toggleAnimePlay() {
-  const btn = document.getElementById('animePlayBtn');
-  if (animePlayTimer) {
-    clearInterval(animePlayTimer);
-    animePlayTimer = null;
-    if (btn) btn.textContent = '再生';
-  } else {
-    animePlayTimer = setInterval(advanceAnimeFrame, 4000);
-    if (btn) btn.textContent = '停止';
-  }
-}
-
-function closeAnimeModal() {
-  if (animePlayTimer) {
-    clearInterval(animePlayTimer);
-    animePlayTimer = null;
-  }
-  document.getElementById('animeModal').classList.remove('open');
-  const btn = document.getElementById('animePlayBtn');
-  if (btn) btn.textContent = '再生';
-}
 
 let animeImageViewerList = [];
 let animeImageViewerIndex = 0;
@@ -12184,25 +11860,6 @@ function closeVideoOverlay() {
   if (wrap) {
     wrap.innerHTML = '';
   }
-}
-
-function showBlogPopup(tripName, url) {
-  const modal = document.getElementById('blogModal');
-  const titleEl = document.getElementById('blogModalTitle');
-  const iframe = document.getElementById('blogModalIframe');
-  const externalLink = document.getElementById('blogModalExternal');
-  if (!modal || !titleEl || !iframe || !externalLink) return;
-  titleEl.textContent = tripName || 'ブログ';
-  iframe.src = url;
-  externalLink.href = url;
-  modal.classList.add('open');
-}
-
-function closeBlogPopup() {
-  const modal = document.getElementById('blogModal');
-  const iframe = document.getElementById('blogModalIframe');
-  if (modal) modal.classList.remove('open');
-  if (iframe) iframe.src = 'about:blank';
 }
 
 function setStatus(msg, isError = false) {
@@ -12762,25 +12419,6 @@ async function showTravelogueFromHistory(entry) {
   }
 }
 
-function updateAnimePreview() {
-  const previewContainer = document.getElementById('generatedImagesPreview');
-  if (!previewContainer || !animeFrames || animeFrames.length === 0) return;
-
-  // 既に表紙プレビューがあるかチェック
-  const existingImages = previewContainer.querySelectorAll('img');
-
-  // 生成されたアニメ画像（最初のフレーム）を追加
-  if (animeFrames[0] && animeFrames[0].url) {
-    const animeImg = document.createElement('img');
-    animeImg.src = animeFrames[0].url;
-    animeImg.alt = '生成されたアニメ';
-    animeImg.style.cssText = 'height:60px;width:auto;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.2);cursor:pointer;';
-    animeImg.title = 'クリックでアニメを表示';
-    animeImg.onclick = () => showAnimeModal();
-    previewContainer.appendChild(animeImg);
-  }
-}
-
 function initEventListeners() {
   let resizeTimer;
   window.addEventListener('resize', () => {
@@ -13322,21 +12960,11 @@ function initEventListeners() {
 
   document.getElementById('helpModalClose').onclick = () => document.getElementById('helpModal').classList.remove('open');
 
-  const blogModal = document.getElementById('blogModal');
-  const blogModalClose = document.getElementById('blogModalClose');
-  if (blogModalClose) blogModalClose.onclick = closeBlogPopup;
-  if (blogModal) blogModal.onclick = (e) => { if (e.target === blogModal) closeBlogPopup(); };
   const helpBtn = document.getElementById('helpBtn');
   if (helpBtn) helpBtn.onclick = () => document.getElementById('helpModal').classList.add('open');
 
   const generateAnimeBtn = document.getElementById('generateAnimeBtnViewer');
-  const animeModal = document.getElementById('animeModal');
-  const animeModalClose = document.getElementById('animeModalClose');
-  const animePlayBtn = document.getElementById('animePlayBtn');
   if (generateAnimeBtn) generateAnimeBtn.onclick = () => showAnimeModal();
-  if (animeModalClose) animeModalClose.onclick = () => closeAnimeModal();
-  if (animePlayBtn) animePlayBtn.onclick = () => toggleAnimePlay();
-  if (animeModal) animeModal.onclick = (e) => { if (e.target === animeModal) closeAnimeModal(); };
 
   // アニメスタイル選択時に出来事入力欄・名所浮世絵入力欄・インフォグラフィック入力欄の表示を切り替え
   const animeStyleSelect = document.getElementById('animeStyleSelect');

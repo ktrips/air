@@ -1,7 +1,26 @@
 {
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "service-account.json",
+      "backup/**",
+      "docs/**",
+      "scripts/**",
+      "*.md",
+      "package.json",
+      "package-lock.json",
+      "deploy.sh",
+      "setup-cors.sh",
+      "cors.json",
+      "firestore.rules",
+      "storage.rules",
+      "config.example.js",
+      "config.template.js",
+      "firebase-config.example.js"
+    ],
     "headers": [
       {
         "source": "/sw.js",
