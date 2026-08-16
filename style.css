@@ -4484,7 +4484,7 @@ body.app-playing .map-photo-nav-btn {
   /* モバイルでは丸い再生ボタンと前後ボタンを表示 */
   .map-playback-controls {
     position: fixed;
-    bottom: calc(75px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
     z-index: 1200;
   }
 
@@ -4581,6 +4581,23 @@ body.app-playing .map-photo-nav-btn {
     opacity: 0.3;
     cursor: not-allowed;
   }
+  .trip-sheet-travelogue-btn {
+    flex-shrink: 0;
+    width: 50px;
+    background: var(--bg-card);
+    border: none;
+    border-left: 1px solid var(--border);
+    font-size: 1.4rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .trip-sheet-travelogue-btn:active {
+    background: var(--bg);
+  }
   .trip-sheet-trigger {
     display: flex;
     flex: 1;
@@ -4614,6 +4631,10 @@ body.app-playing .map-photo-nav-btn {
     color: var(--text-secondary);
     font-weight: 500;
     min-height: 1.2em;
+  }
+  .trip-sheet-trigger-label-prefix {
+    color: var(--text);
+    font-weight: 600;
   }
   .trip-sheet-overlay {
     display: block;

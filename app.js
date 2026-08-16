@@ -12554,17 +12554,18 @@ async function updateHeaderInfo() {
 }
 
 function updateTripSheetTriggerLabel() {
-  const tripSheetTriggerLabel = document.querySelector('.trip-sheet-trigger-label');
+  const tripSheetTriggerLabelName = document.querySelector('.trip-sheet-trigger-label-name');
   const prevBtn = document.getElementById('tripNavPrev');
   const nextBtn = document.getElementById('tripNavNext');
-  if (!tripSheetTriggerLabel) return;
+  const travelogueBtn = document.getElementById('tripSheetTravelogueBtn');
+  if (!tripSheetTriggerLabelName) return;
 
   if (currentTrip && currentTrip.name) {
-    tripSheetTriggerLabel.textContent = currentTrip.name;
+    tripSheetTriggerLabelName.textContent = currentTrip.name;
     // トリップカラーを適用
     if (currentTrip.color) {
-      tripSheetTriggerLabel.style.color = currentTrip.color;
-      tripSheetTriggerLabel.style.fontWeight = '600';
+      tripSheetTriggerLabelName.style.color = currentTrip.color;
+      tripSheetTriggerLabelName.style.fontWeight = '600';
     }
 
     // 前後のボタンの有効/無効を設定（getOrderedTrips はメモ化済みなので再取得は低コスト）
@@ -12576,12 +12577,16 @@ function updateTripSheetTriggerLabel() {
     if (nextBtn) {
       nextBtn.disabled = currentIndex < 0 || currentIndex >= trips.length - 1;
     }
+    if (travelogueBtn) {
+      travelogueBtn.style.display = tripHasTravelogue(currentTrip) ? '' : 'none';
+    }
   } else {
-    tripSheetTriggerLabel.textContent = 'トリップ一覧';
-    tripSheetTriggerLabel.style.color = '';
-    tripSheetTriggerLabel.style.fontWeight = '';
+    tripSheetTriggerLabelName.textContent = 'トリップ一覧';
+    tripSheetTriggerLabelName.style.color = '';
+    tripSheetTriggerLabelName.style.fontWeight = '';
     if (prevBtn) prevBtn.disabled = true;
     if (nextBtn) nextBtn.disabled = true;
+    if (travelogueBtn) travelogueBtn.style.display = 'none';
   }
 
   // 地図上のトリップ名オーバーレイも更新
@@ -13035,6 +13040,15 @@ function initEventListeners() {
     tripSheetOverlay.onclick = () => {
       tripPanel.classList.remove('open');
       tripSheetOverlay.classList.remove('open');
+    };
+  }
+
+  // 旅選択バーの旅行記アイコン
+  const tripSheetTravelogueBtn = document.getElementById('tripSheetTravelogueBtn');
+  if (tripSheetTravelogueBtn) {
+    tripSheetTravelogueBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (currentTrip) showTravelogueModal(currentTrip);
     };
   }
 
@@ -13546,9 +13560,9 @@ function init() {
   updateHeaderInfo();
 
   // モバイル用トリップシートトリガーの初期化
-  const tripSheetTriggerLabel = document.querySelector('.trip-sheet-trigger-label');
-  if (tripSheetTriggerLabel) {
-    tripSheetTriggerLabel.textContent = 'トリップ一覧';
+  const tripSheetTriggerLabelName = document.querySelector('.trip-sheet-trigger-label-name');
+  if (tripSheetTriggerLabelName) {
+    tripSheetTriggerLabelName.textContent = 'トリップ一覧';
   }
 
   const loadTripsAndRender = async () => {
