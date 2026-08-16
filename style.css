@@ -302,6 +302,12 @@ body {
     display: flex !important;
   }
 
+  /* モバイルヘッダーではアニメ・スタンプボタンは表示しない（旅選択バーの旅行記アイコン等で代替） */
+  #mobileAnimeBtn,
+  #mobileStampBtn {
+    display: none !important;
+  }
+
   .header-mobile-content {
     display: flex !important;
   }
