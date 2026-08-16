@@ -202,6 +202,10 @@ const tripsCache = {
 };
 const CACHE_DURATION = 5 * 60 * 1000; // 5分間キャッシュ（onSnapshot が無効な環境向けのフォールバック）
 
+// onAuthStateChanged 内でのURLパラメータ由来トリップ読み込みを初回発火時のみに限定するフラグ。
+// 無いと、ユーザーがアプリ内で別トリップに移動した後にトークンリフレッシュ等で
+// onAuthStateChanged が再発火した際、URLロード時点のトリップへ強制的に戻ってしまう。
+let _urlTripLoadHandled = false;
 // Firestore onSnapshot リスナーの解除関数（null = 未設定）
 let _tripsUnsubscribe = null;
 // 同じユーザーに対する loadMyTrips() のセットアップが進行中の場合、二重リスナーを防ぐために共有する Promise
@@ -861,13 +865,15 @@ function initRegionFilterFromUrl() {
       // 名前ベースの指定：正規化して保存（後で検索）
       window.appUrlTripName = decodeURIComponent(tripNameParam).trim();
       console.log('🔗 URLパラメータ: trip =', window.appUrlTripName);
-    } else {
-      // ドメイン名による自動選択
-      if (/^ohenro\.ktrips\.net$|^henro\.ktrips\.net$/.test(host)) {
-        window.appUrlTripId = OHENRO_DEFAULT_TRIP_ID;
-        console.log('🏠 ドメイン自動選択: ohenro.ktrips.net');
-      }
     }
+    // trip_id/trip のいずれも無い場合はここでは何もしない。
+    // ドメインごとのデフォルトトリップ選択・?t=/?id=/?tripId=/?n= 等の他形式パラメータの解決は
+    // init() 側の loadTripsAndRender が一手に担う（そちらの方が対応形式が多く正確）。
+    // 以前はここで ohenro/henro ドメインに OHENRO_DEFAULT_TRIP_ID（親トリップ）を無条件セット
+    // していたため、?t=/?id=/?n= 等で子トリップを指定した URL では trip_id/trip が
+    // 見つからずこの分岐に入り、window.appUrlTripId に親トリップIDが入った状態のまま
+    // onAuthStateChanged 側の処理が発火して、init() 側が正しく読み込んだ子トリップを
+    // 親トリップで上書きしてしまう不具合の原因になっていた。
 
     let region = params.get('region');
     if (region === 'japan' || region === 'global') {
@@ -12473,67 +12479,71 @@ function initEventListeners() {
     renderTripList();
     refreshTripSelect();
 
-    // URLパラメータで指定されたトリップを読み込む
-    let tripToLoad = null;
+    // URLパラメータで指定されたトリップを読み込む（初回発火時のみ。以降の再発火で
+    // ユーザーが操作後のトリップを上書きしないようにする）
+    if (!_urlTripLoadHandled) {
+      _urlTripLoadHandled = true;
+      let tripToLoad = null;
 
-    if (window.appUrlTripId) {
-      // ID ベースの検索
-      tripToLoad = myTrips.find(t => t.id === window.appUrlTripId);
-      if (tripToLoad) {
-        console.log('✅ ID で トリップを見つけました:', tripToLoad.name);
-      } else {
-        console.warn('❌ ID でトリップが見つかりません:', window.appUrlTripId);
-        console.log('利用可能なトリップID:', myTrips.map(t => ({ id: t.id, name: t.name })));
-      }
-    } else if (window.appUrlTripName) {
-      // 名前ベースの検索（複数の戦略を試す）
-      const searchName = window.appUrlTripName.toLowerCase().trim();
-
-      // 1. 完全一致（大文字小文字を区別しない）
-      tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().trim() === searchName);
-      if (tripToLoad) {
-        console.log('✅ 完全一致でトリップを見つけました:', tripToLoad.name);
-      }
-
-      // 2. 完全一致失敗時は部分一致
-      if (!tripToLoad) {
-        tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().includes(searchName));
+      if (window.appUrlTripId) {
+        // ID ベースの検索
+        tripToLoad = myTrips.find(t => t.id === window.appUrlTripId);
         if (tripToLoad) {
-          console.log('✅ 部分一致でトリップを見つけました:', tripToLoad.name);
+          console.log('✅ ID で トリップを見つけました:', tripToLoad.name);
+        } else {
+          console.warn('❌ ID でトリップが見つかりません:', window.appUrlTripId);
+          console.log('利用可能なトリップID:', myTrips.map(t => ({ id: t.id, name: t.name })));
         }
-      }
+      } else if (window.appUrlTripName) {
+        // 名前ベースの検索（複数の戦略を試す）
+        const searchName = window.appUrlTripName.toLowerCase().trim();
 
-      // 3. 名前に検索語が含まれている（逆向き）
-      if (!tripToLoad) {
-        tripToLoad = myTrips.find(t => searchName.includes((t.name || '').toLowerCase().trim()));
+        // 1. 完全一致（大文字小文字を区別しない）
+        tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().trim() === searchName);
         if (tripToLoad) {
-          console.log('✅ 逆向き一致でトリップを見つけました:', tripToLoad.name);
+          console.log('✅ 完全一致でトリップを見つけました:', tripToLoad.name);
+        }
+
+        // 2. 完全一致失敗時は部分一致
+        if (!tripToLoad) {
+          tripToLoad = myTrips.find(t => (t.name || '').toLowerCase().includes(searchName));
+          if (tripToLoad) {
+            console.log('✅ 部分一致でトリップを見つけました:', tripToLoad.name);
+          }
+        }
+
+        // 3. 名前に検索語が含まれている（逆向き）
+        if (!tripToLoad) {
+          tripToLoad = myTrips.find(t => searchName.includes((t.name || '').toLowerCase().trim()));
+          if (tripToLoad) {
+            console.log('✅ 逆向き一致でトリップを見つけました:', tripToLoad.name);
+          }
+        }
+
+        if (!tripToLoad) {
+          console.warn('❌ トリップが見つかりません:', window.appUrlTripName);
+          console.log('利用可能なトリップ:', myTrips.slice(0, 10).map(t => ({ id: t.id, name: t.name, isParent: t.isParent })));
         }
       }
 
-      if (!tripToLoad) {
-        console.warn('❌ トリップが見つかりません:', window.appUrlTripName);
-        console.log('利用可能なトリップ:', myTrips.slice(0, 10).map(t => ({ id: t.id, name: t.name, isParent: t.isParent })));
-      }
-    }
-
-    if (tripToLoad) {
-      console.log('🚀 URLパラメータで指定されたトリップを読み込みます:', tripToLoad.name);
-      await loadTripById(tripToLoad.id);
-      // トリップ名をフィルタに設定（子トリップの場合は親を見つける）
-      const prevFilterName = tripFilterParentName;
-      if (tripToLoad.isParent) {
-        tripFilterParentName = tripToLoad.name;
-      } else if (tripToLoad.parentId) {
-        const parent = myTrips.find(t => t.id === tripToLoad.parentId);
-        if (parent) {
-          tripFilterParentName = parent.name;
+      if (tripToLoad) {
+        console.log('🚀 URLパラメータで指定されたトリップを読み込みます:', tripToLoad.name);
+        await loadTripById(tripToLoad.id);
+        // トリップ名をフィルタに設定（子トリップの場合は親を見つける）
+        const prevFilterName = tripFilterParentName;
+        if (tripToLoad.isParent) {
+          tripFilterParentName = tripToLoad.name;
+        } else if (tripToLoad.parentId) {
+          const parent = myTrips.find(t => t.id === tripToLoad.parentId);
+          if (parent) {
+            tripFilterParentName = parent.name;
+          }
         }
-      }
-      // フィルタが変わった場合、既に描画済みの一覧を絞り込み後の内容で描き直す
-      if (tripFilterParentName !== prevFilterName) {
-        renderTripList();
-        refreshTripSelect();
+        // フィルタが変わった場合、既に描画済みの一覧を絞り込み後の内容で描き直す
+        if (tripFilterParentName !== prevFilterName) {
+          renderTripList();
+          refreshTripSelect();
+        }
       }
     }
 
