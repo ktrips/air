@@ -2966,37 +2966,17 @@ body:not(.editor) .viewer-only { display: block; }
   border-color: var(--accent);
 }
 
-.viewer-child-list,
 .trip-parent-detail-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.viewer-child-list-item,
-.trip-parent-detail-list-item {
-  padding: 0.4rem 0.6rem;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font-size: 0.85rem;
-  transition: background-color 0.2s;
-}
-
-.viewer-child-list-item:hover,
-.trip-parent-detail-list-item:hover {
-  background: var(--bg-hover);
-}
-
-.viewer-child-travelogue-btn,
-.viewer-child-video-btn,
 .trip-parent-detail-travelogue-btn,
 .trip-parent-detail-video-btn {
   flex-shrink: 0;
 }
 
-.viewer-child-animes,
 .trip-parent-detail-animes {
   display: flex;
   flex-direction: column;
@@ -3004,7 +2984,6 @@ body:not(.editor) .viewer-only { display: block; }
   margin-top: 0.5rem;
 }
 
-.viewer-child-anime-row,
 .trip-parent-detail-anime-row {
   display: flex;
   flex-direction: column;
@@ -3016,7 +2995,6 @@ body:not(.editor) .viewer-only { display: block; }
 }
 
 
-.viewer-child-anime-label,
 .trip-parent-detail-anime-label {
   cursor: pointer;
   font-size: 0.85rem;
@@ -3024,19 +3002,16 @@ body:not(.editor) .viewer-only { display: block; }
   color: var(--accent);
 }
 
-.viewer-child-anime-label:hover,
 .trip-parent-detail-anime-label:hover {
   text-decoration: underline;
 }
 
-.viewer-child-anime-thumbs,
 .trip-parent-detail-anime-thumbs {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.viewer-child-anime-thumbs img,
 .trip-parent-detail-anime-thumbs img {
   width: 48px;
   height: 48px;
@@ -3047,7 +3022,6 @@ body:not(.editor) .viewer-only { display: block; }
   transition: border-color 0.2s;
 }
 
-.viewer-child-anime-thumbs img:hover,
 .trip-parent-detail-anime-thumbs img:hover {
   border-color: var(--accent);
 }
