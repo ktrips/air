@@ -2107,7 +2107,7 @@ async function fetchWikipediaForPlace(lat, lng, placeName) {
       }
     } catch (_) {}
     try {
-      const extUrl = `https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&exchars=400&format=json&origin=*&titles=${encodeURIComponent(title)}`;
+      const extUrl = `https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&exchars=800&format=json&origin=*&titles=${encodeURIComponent(title)}`;
       const extRes = await fetch(extUrl);
       const extData = await extRes.json();
       const pages = extData?.query?.pages || {};
@@ -7663,7 +7663,7 @@ async function generateTravelogueWithAI() {
         const wiki = await fetchWikipediaForPlace(p?.lat, p?.lng, pi.placeName || pi.pointName);
         if (wiki?.extract) {
           pi.wikiTitle = wiki.title || '';
-          pi.wikiExtract = wiki.extract.slice(0, 300);
+          pi.wikiExtract = wiki.extract.slice(0, 600);
         }
       } catch (_) {
         // 取得失敗時はそのランドマークの情報なしで続行（旅行記生成自体は止めない）
@@ -7816,7 +7816,7 @@ async function generateTravelogueWithAI() {
 2. サマリー: ${summaryStructure}
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
 3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
-<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" loading="lazy" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>100字の情景描写</p></div></div></div>
+<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" loading="lazy" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>150字の情景描写（ランドマークの場合は歴史的背景・豆知識も自然に含めて厚みを持たせる）</p></div></div></div>
 
 【名所浮世絵の配置】写真情報に[浮世絵:URL]が含まれる場合、その写真セクションの情景描写の後に浮世絵を配置（同じURLの浮世絵は旅行記全体で1回のみ表示すること。キャプション文は付けないこと）:
 <div style="margin:1.5rem 0 0 0;text-align:center;"><img src="浮世絵URL" alt="名所浮世絵" loading="lazy" style="width:100%;max-width:600px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:inline-block;"/></div>
