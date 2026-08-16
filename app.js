@@ -5854,7 +5854,7 @@ function renderTripList() {
       // ブログボタンは表示しない（説明にリンクをつけるため）
       if (hasVideos || hasTravelogue || hasStamps) {
         html += '<div class="trip-detail-btns">';
-        if (hasTravelogue) html += `<button type="button" class="btn btn-travelogue btn-sm trip-detail-btn trip-detail-travelogue-btn">📖 旅行記</button>`;
+        if (hasTravelogue) html += `<button type="button" class="btn btn-travelogue btn-sm trip-detail-btn trip-detail-travelogue-btn">📖 ${t.isParent ? 'トリップまとめ' : '旅行記'}</button>`;
         if (hasVideos) html += `<button type="button" class="btn btn-primary btn-xs trip-detail-btn trip-detail-video-btn">🎬 動画</button>`;
         if (hasStamps) html += `<button type="button" class="btn btn-stamp btn-xs trip-detail-btn trip-detail-stamp-rally-btn">🎫 スタンプ</button>`;
         html += '</div>';
@@ -8091,6 +8091,39 @@ function getAllAnimesForTrip(trip) {
 }
 
 /**
+ * 親トリップ自身のために生成されたアニメ画像（マップInk・カバー画像等）をグリッド表示するHTMLを組み立てる。
+ * 子トリップのアニメではなく、親トリップの generatedAnimes のみを対象にする。
+ */
+function buildParentAnimeSectionHtml(trip) {
+  const animes = (trip.generatedAnimes || trip.animes || []).filter(a => a?.url);
+  if (animes.length === 0) return '';
+  const imgs = animes.map(a =>
+    `<img src="${escapeHtml(a.url)}" alt="生成画像" loading="lazy" style="width:calc(33.333% - 0.7rem);min-width:150px;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;object-fit:cover;"/>`
+  ).join('\n');
+  return `<div class="travelogue-parent-anime-section" style="margin:2rem 0;display:flex;flex-wrap:wrap;gap:1rem;">${imgs}</div>`;
+}
+
+/**
+ * 親トリップおよび各子トリップに設定されたブログURLを一覧表示するHTMLを組み立てる。
+ * URLが1件も設定されていない場合は何も出力しない。
+ */
+function buildBlogSectionHtml(trip, children) {
+  const entries = [];
+  if (trip.url) entries.push({ name: trip.name || '（無題）', url: trip.url });
+  (children || []).forEach(c => {
+    if (c.url) entries.push({ name: c.name || '（無題）', url: c.url });
+  });
+  if (entries.length === 0) return '';
+  const links = entries.map(e =>
+    `<a href="${escapeHtml(e.url)}" target="_blank" rel="noopener" style="display:block;padding:8px 0;color:#405de6;text-decoration:none;border-bottom:1px solid #eee;">📝 ${escapeHtml(e.name)}</a>`
+  ).join('');
+  return `<div class="travelogue-blog-section" style="margin:2rem 0;">
+    <h3 style="margin-bottom:0.75rem;font-size:1.2rem;">ブログ</h3>
+    ${links}
+  </div>`;
+}
+
+/**
  * 子トリップへのアクセスカード一覧のHTMLを組み立てる。
  * 各カードには写真サムネイル・件数バッジ・旅行記/動画への直接リンクを付け、
  * 総合情報ページから傘下の各トリップの情報にすぐアクセスできるようにする。
@@ -8220,6 +8253,11 @@ ${totalKm > 0 ? `総移動距離: 約${Math.round(totalKm)}km` : ''}
 
     setStatus('旅行記を生成中...');
     let finalHtml = await callTravelogueTextAI(systemPrompt, userPrompt, cfg, 90000);
+
+    // 地図表示の直後、子トリップ一覧の前に、親トリップのアニメ画像とブログリンクを追加
+    // （AIの自然文生成では位置・データの正確な反映が不安定なため、コード側で機械的に組み立てる）
+    finalHtml += buildParentAnimeSectionHtml(trip);
+    finalHtml += buildBlogSectionHtml(trip, children);
 
     // 子トリップへのアクセスカードを末尾に追加（傘下の各情報へすぐアクセスできるように）
     finalHtml += buildChildAccessSectionHtml(children);
@@ -12579,6 +12617,7 @@ function updateTripSheetTriggerLabel() {
     }
     if (travelogueBtn) {
       travelogueBtn.style.display = tripHasTravelogue(currentTrip) ? '' : 'none';
+      travelogueBtn.title = currentTrip.isParent ? 'トリップまとめ' : '旅行記';
     }
   } else {
     tripSheetTriggerLabelName.textContent = 'トリップ一覧';
