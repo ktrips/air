@@ -7625,17 +7625,17 @@ async function generateTravelogueWithAI() {
 2. サマリー: ${summaryStructure}
 <div id="travelogue-map-container" style="min-height:400px;margin:2rem 0;"></div>
 3. 各写真セクション（ランドマークは<div class="travelogue-landmark-section"><h3 style="border-left:4px solid ${tripColor};padding-left:12px;color:${tripColor};">📍番号:名前</h3>...）:
-<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" loading="lazy" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真に記載された説明文をそのまま表示</div></div><div style="flex:1;min-width:250px;"><p>150字の情景描写（ランドマークの場合は歴史的背景・豆知識も自然に含めて厚みを持たせる）</p></div></div></div>
+<div style="margin:1.5rem 0;"><div style="display:flex;gap:1.5rem;align-items:flex-start;flex-wrap:wrap;"><div style="position:relative;width:500px;max-width:100%;"><img src="URL" loading="lazy" style="width:100%;height:auto;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);display:block;"><div style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.75);color:#fff;padding:8px 12px;border-radius:6px;font-weight:700;">名前</div><div style="position:absolute;bottom:0;left:0;right:0;background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,rgba(0,0,0,0.6) 60%,transparent 100%);color:#fff;padding:40px 12px 12px 12px;border-radius:0 0 8px 8px;font-size:0.9rem;">写真の説明文を20字程度に簡潔に要約</div></div><div style="flex:1;min-width:250px;"><p>150字の情景描写。ランドマークでWikipedia概要がある場合は、その中から一番印象的な歴史的背景・豆知識を1つだけ選び、地の文に溶け込ませてさりげなく触れる（説明口調にならないよう自然な情景描写として書く）</p></div></div></div>
 
 【名所浮世絵の配置】写真情報に[浮世絵:URL]が含まれる場合、その写真セクションの情景描写の後に浮世絵を配置（同じURLの浮世絵は旅行記全体で1回のみ表示すること。キャプション文は付けないこと）:
 <div style="margin:1.5rem 0 0 0;text-align:center;"><img src="浮世絵URL" alt="名所浮世絵" loading="lazy" style="width:100%;max-width:600px;height:auto;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:inline-block;"/></div>
 
-重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイには各写真の説明文を必ず含めてください。
+重要: HTMLのみ出力、トリップカラー=${tripColor}、写真500px幅、各写真固有の描写。写真下部オーバーレイの説明文は元の説明が長くても20字程度に要約し、簡潔にしてください。
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください${customInstructions ? `
 【ユーザー指示】以下の指示を必ず守って旅行記を生成してください:
 ${customInstructions}` : ''}${reuseCount > 0 ? `
 【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}${hasWikiInfo ? `
-【Wikipedia概要の扱い】写真情報に[Wikipedia概要:...]がある場合、それはそのランドマークに関するWikipediaからの参考情報です。このテキストをそのままコピーせず、必ず旅行記の文体に合わせて自分の言葉で要約・言い換えたうえで、その写真の情景描写に歴史的背景や豆知識として自然に盛り込んでください。` : ''}`;
+【Wikipedia概要の扱い】写真情報に[Wikipedia概要:...]がある場合、それはそのランドマークに関するWikipediaからの参考情報です。このテキストをそのままコピーせず、要点を1つだけ選んで自分の言葉で言い換え、旅行記の文体・情景描写の流れに自然に溶け込ませてください（「Wikipediaによると」のような前置きは使わず、豆知識だと気づかれない程度にさりげなく触れる）。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
   const provider = cfg.provider || 'gemini';
