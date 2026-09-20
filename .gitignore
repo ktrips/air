@@ -4,5 +4,6 @@ node_modules/
 .DS_Store
 *.log
 firebase-config.js
-config.js.firebase/
+config.js
+.firebase/
 .claude/launch.json
