@@ -8762,6 +8762,46 @@ async function showTravelogueModal(trip) {
   modal.classList.add('open');
 }
 
+const SHORT_CODE_CHARS = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 紛らわしい文字(0/O/1/l/I)を除外
+function generateShortCode(len = 6) {
+  const bytes = crypto.getRandomValues(new Uint8Array(len));
+  return Array.from(bytes, b => SHORT_CODE_CHARS[b % SHORT_CODE_CHARS.length]).join('');
+}
+
+/** 短縮コードからトリップIDを解決する（自分のトリップ → 公開トリップの順） */
+async function resolveTripIdByShortCode(code) {
+  const local = myTrips.find(t => t.shortCode === code);
+  if (local) return local.id;
+  if (!window.firebaseDb) return null;
+  const snap = await window.firebaseDb.collection('trips')
+    .where('shortCode', '==', code).where('public', '==', true).limit(1).get();
+  return snap.empty ? null : snap.docs[0].id;
+}
+
+/** トリップの短縮コードを（未発行なら）発行して保存する。オーナー以外は発行せずnullを返す */
+async function ensureTripShortCode(trip) {
+  if (trip.shortCode) return trip.shortCode;
+  const uid = window.firebaseAuth?.currentUser?.uid;
+  if (!uid || !window.firebaseDb || (trip.userId && trip.userId !== uid)) return null;
+  try {
+    let code = null;
+    for (let i = 0; i < 5 && !code; i++) {
+      const candidate = generateShortCode();
+      if (!(await resolveTripIdByShortCode(candidate))) code = candidate;
+    }
+    if (!code) return null;
+    await window.firebaseDb.collection('trips').doc(trip.id).set({ shortCode: code }, { merge: true });
+    trip.shortCode = code;
+    const cached = myTripsMap.get(trip.id);
+    if (cached) cached.shortCode = code;
+    if (currentTrip?.id === trip.id) currentTrip.shortCode = code;
+    return code;
+  } catch (err) {
+    console.warn('短縮コードの発行に失敗:', err);
+    return null;
+  }
+}
+
 /** 旅行記の共有ボタンを生成 */
 function renderTravelogueShareButtons(trip) {
   const shareButtonsWrap = document.getElementById('travelogueShareButtons');
@@ -8773,10 +8813,11 @@ function renderTravelogueShareButtons(trip) {
     return;
   }
 
-  // 共有用のURL（現在のページURL + トリップ名 + 旅行記フラグ）
+  // 共有用のURL: 短縮コードがあれば ?s=xxxxxx（短い・外部からアクセス可）、無ければ従来のトリップ名指定
   const baseUrl = window.location.origin + window.location.pathname;
   const tripName = trip.name || '';
-  const shareUrl = `${baseUrl}?trip=${encodeURIComponent(tripName)}&travelogue=true`;
+  const longUrl = `${baseUrl}?trip=${encodeURIComponent(tripName)}&travelogue=true`;
+  let shareUrl = trip.shortCode ? `${baseUrl}?s=${trip.shortCode}` : longUrl;
   const shareText = `${tripName}の旅行記`;
 
   shareButtonsWrap.innerHTML = '';
@@ -8784,7 +8825,6 @@ function renderTravelogueShareButtons(trip) {
 
   // X (Twitter) ボタン
   const twitterBtn = document.createElement('a');
-  twitterBtn.href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
   twitterBtn.target = '_blank';
   twitterBtn.rel = 'noopener noreferrer';
   twitterBtn.className = 'travelogue-share-btn twitter';
@@ -8807,13 +8847,27 @@ function renderTravelogueShareButtons(trip) {
 
   // Facebook ボタン
   const facebookBtn = document.createElement('a');
-  facebookBtn.href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
   facebookBtn.target = '_blank';
   facebookBtn.rel = 'noopener noreferrer';
   facebookBtn.className = 'travelogue-share-btn facebook';
   facebookBtn.innerHTML = 'f';
   facebookBtn.title = 'Facebookでシェア';
   shareButtonsWrap.appendChild(facebookBtn);
+
+  const applyShareUrl = () => {
+    twitterBtn.href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`;
+    facebookBtn.href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`;
+  };
+  applyShareUrl();
+
+  // 短縮コード未発行なら（オーナーのみ）発行して共有URLを短縮形に差し替える
+  if (!trip.shortCode) {
+    ensureTripShortCode(trip).then(code => {
+      if (!code) return;
+      shareUrl = `${baseUrl}?s=${code}`;
+      applyShareUrl();
+    });
+  }
 
   // URLコピー ボタン
   const copyBtn = document.createElement('button');
@@ -13169,9 +13223,10 @@ function init() {
       const tripIdParam = urlParams.get('tripId'); // 旧形式: ?tripId=
       const tripNameParam = urlParams.get('trip'); // 名前指定: ?trip=
       const tripOrderParam = urlParams.get('n'); // 順序指定: ?n=1
-      const openTravelogue = urlParams.get('travelogue') === 'true';
+      const shortParam = urlParams.get('s'); // 短縮リンク: ?s=abc123（旅行記を直接開く）
+      const openTravelogue = urlParams.get('travelogue') === 'true' || !!shortParam;
       const photoIndexParam = urlParams.get('p'); // ポイント指定: ?p=3（御朱印QR等のディープリンク用）
-      const isHomeUrl = !tripParam && !tripIdParam && !tripNameParam && !tripOrderParam;
+      const isHomeUrl = !tripParam && !tripIdParam && !tripNameParam && !tripOrderParam && !shortParam;
 
       console.log('🔍 URLパラメータ解析:', {
         url: window.location.href,
@@ -13185,8 +13240,12 @@ function init() {
 
       let tripToLoad = null;
 
-      // 優先順位: t/id > tripId > n > trip
-      if (tripParam) {
+      // 優先順位: s > t/id > tripId > n > trip
+      if (shortParam) {
+        const resolvedId = await resolveTripIdByShortCode(shortParam);
+        if (resolvedId) tripToLoad = resolvedId;
+        else console.error(`❌ 短縮コード "${shortParam}" が見つかりませんでした`);
+      } else if (tripParam) {
         // ?t= または ?id= (短縮形でトリップIDを指定)
         console.log(`🆔 URLパラメータ: t/id=${tripParam}`);
         console.log(`🆔 検索対象トリップ数: ${myTrips.length}件`);
