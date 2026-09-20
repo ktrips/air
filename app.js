@@ -2014,10 +2014,27 @@ function ensureLatLng(lat, lng) {
   return { lat: la, lng: lo };
 }
 
+// exifrは写真アップロード時にしか使わないため、初回利用時に遅延読み込みして初期ロードを軽くする
+let exifrLoadPromise = null;
+function ensureExifr() {
+  if (window.exifr) return Promise.resolve();
+  if (!exifrLoadPromise) {
+    exifrLoadPromise = new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = 'https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js';
+      el.onload = resolve;
+      el.onerror = () => { exifrLoadPromise = null; reject(new Error('exifr load failed')); };
+      document.head.appendChild(el);
+    });
+  }
+  return exifrLoadPromise;
+}
+
 async function loadPhotoWithExif(file) {
   const data = await file.arrayBuffer();
   let lat = null, lng = null, date = null;
   try {
+    await ensureExifr();
     const exif = await exifr.parse(data, { pick: ['latitude', 'longitude', 'GPSLatitude', 'GPSLongitude', 'GPSLatitudeRef', 'GPSLongitudeRef', 'DateTimeOriginal'] });
     if (exif?.latitude != null && exif?.longitude != null) {
       const r = ensureLatLng(exif.latitude, exif.longitude);
