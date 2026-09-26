@@ -167,6 +167,12 @@
 - **オーバーレイ**: 写真、GPXデータ、説明、URL、地名を表示
 - **地図**: 写真の座標に地図を自動移動
 
+### 4.4b ポイントURL（動画／詳細ページ）
+
+- ポイント編集のURL欄は1つ。`isVideoUrl()` で判別し、YouTube/Vimeo/`.mp4` 等の動画ファイル/生成動画のStorage URL → `photos[].videoUrl`、それ以外 → `photos[].linkUrl`（ブログ等の詳細ページ）に保存
+- 旧データ（非動画URLも `videoUrl` に保存）は読み込み時に `normalizeTripPointLinks()` でメモリ上のみ `linkUrl` に振り分け（次回保存時に反映）
+- 旅行記生成: `trip.url` と各ポイントの `linkUrl` の本文を `fetchWebPageText()`（r.jina.ai経由、10秒タイムアウト、最大6件・各2000〜3000字）で取得し、プロンプトの `[詳細ページ本文:...]` として渡す。取得失敗は無視して続行
+
 ### 4.5 公開・共有
 
 - **公開フラグ**: `tripPublicInput` で「公開する」にチェック

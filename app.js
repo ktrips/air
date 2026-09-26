@@ -3802,6 +3802,20 @@ function showPhotoViewMode(p, lat, lng) {
     div.appendChild(videoBtn);
   }
 
+  // 詳細ページボタン（ブログ等のリンクがある場合）
+  if (p.linkUrl) {
+    const linkBtn = document.createElement('button');
+    linkBtn.type = 'button';
+    linkBtn.className = 'photo-popup-video-btn';
+    linkBtn.title = '詳細ページを開く';
+    linkBtn.innerHTML = '🔗';
+    linkBtn.onclick = (e) => {
+      e.stopPropagation();
+      window.open(p.linkUrl, '_blank', 'noopener');
+    };
+    div.appendChild(linkBtn);
+  }
+
   if (isEditor()) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -4018,8 +4032,8 @@ function showPhotoPopupEditMode(lat, lng) {
   const videoUrlInput = document.createElement('input');
   videoUrlInput.type = 'url';
   videoUrlInput.className = 'photo-popup-input';
-  videoUrlInput.placeholder = 'YouTube/Vimeo等の動画URL、またはリンク先URL';
-  videoUrlInput.value = p.videoUrl || '';
+  videoUrlInput.placeholder = 'YouTube/Vimeo=動画、それ以外=ブログ等の詳細ページ';
+  videoUrlInput.value = p.videoUrl || p.linkUrl || '';
   videoUrlWrap.appendChild(videoUrlLabel);
   videoUrlWrap.appendChild(videoUrlInput);
   form.appendChild(videoUrlWrap);
@@ -4032,7 +4046,7 @@ function showPhotoPopupEditMode(lat, lng) {
     setStatus('御朱印風QR画像を生成中...');
     try {
       // フォームの最新のURLを反映してから生成する（QRコードの飛び先に使う）
-      photos[idx].videoUrl = videoUrlInput.value.trim();
+      applyPointUrl(photos[idx], videoUrlInput.value);
       const { dataUrl } = await generateStampGoshuinImage(currentTrip, idx);
       const storageUrl = await uploadAnimeImageToStorage(currentTrip.id, dataUrl, `goshuin_${idx}`);
       photos[idx].generatedGoshuinUrl = storageUrl;
@@ -4203,7 +4217,7 @@ function showPhotoPopupEditMode(lat, lng) {
       photos[idx].description = descInput.value.trim();
       photos[idx].landmarkNo = landmarkCheck.checked ? landmarkNoInput.value.trim() : '';
       photos[idx].isStamp = stampCheck.checked;
-      photos[idx].videoUrl = videoUrlInput.value.trim();
+      applyPointUrl(photos[idx], videoUrlInput.value);
     }
     // フォームが空の場合（メニュー未表示時など）は currentTrip をフォームに反映してから保存
     const nameEl = document.getElementById('tripNameInput');
@@ -5354,7 +5368,7 @@ async function loadMyTrips() {
 
       const parentUnsub = window.firebaseDb.collection('trips').doc(OHENRO_DEFAULT_TRIP_ID)
         .onSnapshot((doc) => {
-          parentDoc = doc.exists ? { ...doc.data(), id: doc.id } : null;
+          parentDoc = doc.exists ? normalizeTripPointLinks({ ...doc.data(), id: doc.id }) : null;
           parentReady = true;
           mergeAndCache();
           maybeFirstFire();
@@ -5369,7 +5383,7 @@ async function loadMyTrips() {
       const childrenUnsub = childrenQueryBase
         .where('parentId', '==', OHENRO_DEFAULT_TRIP_ID)
         .onSnapshot((snapshot) => {
-          childDocs = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+          childDocs = snapshot.docs.map((doc) => normalizeTripPointLinks({ ...doc.data(), id: doc.id }));
           childrenReady = true;
           mergeAndCache();
           maybeFirstFire();
@@ -5387,7 +5401,7 @@ async function loadMyTrips() {
 
     _tripsUnsubscribe = query.onSnapshot(
       (snapshot) => {
-        myTrips = snapshot.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+        myTrips = snapshot.docs.map((doc) => normalizeTripPointLinks({ ...doc.data(), id: doc.id }));
         invalidateOrderedTripsCache(); // myTrips 更新時にキャッシュ無効化
         tripsCache.data     = myTrips;
         tripsCache.timestamp = Date.now();
@@ -6306,7 +6320,7 @@ async function loadTripById(id) {
         throw new Error('トリップが見つかりません（削除された可能性があります）');
       }
 
-      const data = doc.data();
+      const data = normalizeTripPointLinks(doc.data());
       console.log('トリップデータ取得成功:', {
         id,
         name: data.name,
@@ -6513,6 +6527,58 @@ function getTripVideoUrlsForTrip(trip) {
 /** 現在のトリップ＋ポイントの動画URLを表示順で取得 */
 function getTripVideoUrls() {
   return getTripVideoUrlsForTrip(currentTrip);
+}
+
+/** 動画URLか判定: YouTube/Vimeo/動画ファイル（生成動画のStorage URL含む）。それ以外はブログ等の詳細Webページとして扱う */
+function isVideoUrl(url) {
+  if (!url) return false;
+  const u = String(url).trim();
+  if (/(?:youtube\.com\/|youtu\.be\/|vimeo\.com\/)/i.test(u)) return true;
+  if (/\.(?:mp4|webm|mov|m4v|m3u8)(?:[?#]|$)/i.test(u)) return true;
+  return /firebasestorage\.googleapis\.com\/.*\/videos%2F/i.test(u);
+}
+
+/** ポイントのURL入力値を videoUrl（動画）/ linkUrl（詳細Webページ）に振り分けて設定する */
+function applyPointUrl(photo, value) {
+  const v = (value || '').trim();
+  if (isVideoUrl(v)) { photo.videoUrl = v; photo.linkUrl = ''; }
+  else { photo.videoUrl = ''; photo.linkUrl = v; }
+}
+
+/** 旧データ（動画以外のURLもvideoUrlに保存されていた）をメモリ上で videoUrl / linkUrl に分離する */
+function normalizeTripPointLinks(trip) {
+  if (!trip || !Array.isArray(trip.photos)) return trip;
+  for (const p of trip.photos) {
+    if (p && p.videoUrl && p.videoUrl.trim() && !isVideoUrl(p.videoUrl)) {
+      if (!p.linkUrl) p.linkUrl = p.videoUrl.trim();
+      p.videoUrl = '';
+    }
+  }
+  return trip;
+}
+
+const webPageTextCache = new Map();
+/**
+ * ブログ等のWebページ本文をテキストで取得する（旅行記生成の参照用）。
+ * ブラウザから他サイトを直接fetchするとCORSで失敗するため、CORS対応のリーダーサービス
+ * （r.jina.ai）経由で取得する。失敗時はnullを返し、旅行記生成自体は止めない。
+ */
+async function fetchWebPageText(url, maxChars = 3000) {
+  if (!url) return null;
+  if (webPageTextCache.has(url)) return webPageTextCache.get(url);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10000);
+  let text = null;
+  try {
+    const res = await fetch(`https://r.jina.ai/${url}`, { signal: ctrl.signal, headers: { Accept: 'text/plain' } });
+    if (res.ok) text = (await res.text()).replace(/\s+/g, ' ').trim().slice(0, maxChars) || null;
+  } catch (e) {
+    console.warn('Webページの取得に失敗（スキップ）:', url, e?.message || e);
+  } finally {
+    clearTimeout(timer);
+  }
+  webPageTextCache.set(url, text);
+  return text;
 }
 
 function getVideoEmbedUrl(url) {
@@ -7465,6 +7531,7 @@ async function generateTravelogueWithAI() {
         url: p.url,
         videoUrl: piVideoUrl,
         videoThumbnailUrl: piVideoUrl ? (getVideoThumbnailUrl(piVideoUrl) || '') : '',
+        linkUrl: p.linkUrl && p.linkUrl.trim() ? p.linkUrl.trim() : '',
         placeName: loc,
         description: desc,
         landmarkNo: p.landmarkNo || '',
@@ -7496,6 +7563,24 @@ async function generateTravelogueWithAI() {
       }
     }));
   }
+
+  // ── ブログ等のリンク先（トリップのブログURL・各ポイントの詳細ページ）の本文を取得し参照情報にする ──
+  // 取得はCORS対応のリーダー経由・並列・失敗しても続行。プロンプト肥大化を避けるため件数と文字数を制限する
+  const linkedPages = [];
+  const linkTargets = [];
+  if (trip.url && !isVideoUrl(trip.url)) linkTargets.push({ url: trip.url.trim(), pi: null });
+  photoInfos.forEach(pi => { if (pi.linkUrl) linkTargets.push({ url: pi.linkUrl, pi }); });
+  const MAX_LINKED_PAGES = 6;
+  if (linkTargets.length > 0) {
+    setStatus(`リンク先のブログ等を参照中...(${Math.min(linkTargets.length, MAX_LINKED_PAGES)}件)`);
+    await Promise.all(linkTargets.slice(0, MAX_LINKED_PAGES).map(async (t) => {
+      const text = await fetchWebPageText(t.url, t.pi ? 2000 : 3000);
+      if (!text) return;
+      if (t.pi) t.pi.linkText = text;
+      else linkedPages.push({ url: t.url, text });
+    }));
+  }
+  const hasLinkInfo = linkedPages.length > 0 || photoInfos.some(pi => pi.linkText);
 
   // ── 過去の旅行記から既存の写真説明を取得して流用 ──────────────────────────
   let prevPhotoDescriptions = new Map();
@@ -7607,6 +7692,8 @@ async function generateTravelogueWithAI() {
       if (pi.wikiExtract) {
         info.push(`[Wikipedia概要:${pi.wikiExtract}]`);
       }
+      if (pi.linkUrl) info.push(`[詳細ページ:${pi.linkUrl}]`);
+      if (pi.linkText) info.push(`[詳細ページ本文:${pi.linkText}]`);
       // 過去の旅行記に既存の説明がある場合はタグとして渡す
       if (pi.prevContent) {
         if (pi.prevContent.overlay) info.push(`[既存オーバーレイ:${pi.prevContent.overlay}]`);
@@ -7614,6 +7701,11 @@ async function generateTravelogueWithAI() {
       }
       parts.push(info.join(' '));
     });
+  }
+
+  if (linkedPages.length > 0) {
+    parts.push('\nブログ等の参考ページ:');
+    linkedPages.forEach(lp => parts.push(`- ${lp.url} : ${lp.text}`));
   }
 
   const context = parts.join('\n');
@@ -7651,7 +7743,8 @@ async function generateTravelogueWithAI() {
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください${customInstructions ? `
 【ユーザー指示】以下の指示を必ず守って旅行記を生成してください:
 ${customInstructions}` : ''}${reuseCount > 0 ? `
-【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}${hasWikiInfo ? `
+【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}${hasLinkInfo ? `
+【ブログ等の参考ページの扱い】「ブログ等の参考ページ」や写真情報の[詳細ページ本文:...]は、筆者自身のブログなど旅の詳細が書かれたページの本文です。その内容（体験・出来事・感想・訪問先の情報）を事実として踏まえ、そのままコピーせず自分の言葉で旅行記（ブログ）の文章に再構成してください。該当ポイントの情景描写に反映し、詳細ページがあるポイントには<a href="詳細ページURL" target="_blank" rel="noopener">詳しくはこちら</a>のリンクを情景描写の末尾に添えてください。ページに書かれていない内容を創作しないでください。` : ''}${hasWikiInfo ? `
 【Wikipedia概要の扱い】写真情報に[Wikipedia概要:...]がある場合、それはそのランドマークに関するWikipediaからの参考情報です。このテキストをそのままコピーせず、要点を1つだけ選んで自分の言葉で言い換え、旅行記の文体・情景描写の流れに自然に溶け込ませてください（「Wikipediaによると」のような前置きは使わず、豆知識だと気づかれない程度にさりげなく触れる）。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
@@ -10585,7 +10678,7 @@ async function generateStampGoshuinImage(trip, idx) {
   const rawDataUrl = await generateImageWithAI(prompt, refDataUrl, animeCfg);
   if (!rawDataUrl) throw new Error('画像の生成に失敗しました。APIキーと入力内容を確認してください。');
 
-  const targetUrl = (p.videoUrl && p.videoUrl.trim()) || buildPhotoShareUrl(trip, idx);
+  const targetUrl = (p.videoUrl && p.videoUrl.trim()) || (p.linkUrl && p.linkUrl.trim()) || buildPhotoShareUrl(trip, idx);
   const composedDataUrl = await overlayGoshuinQrSeal(rawDataUrl, targetUrl, p.name, p.description);
   return { dataUrl: composedDataUrl, targetUrl };
 }
