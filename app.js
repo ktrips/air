@@ -7581,6 +7581,7 @@ async function generateTravelogueWithAI() {
     }));
   }
   const hasLinkInfo = linkedPages.length > 0 || photoInfos.some(pi => pi.linkText);
+  const hasPointLinks = photoInfos.some(pi => pi.linkUrl);
 
   // ── 過去の旅行記から既存の写真説明を取得して流用 ──────────────────────────
   let prevPhotoDescriptions = new Map();
@@ -7743,8 +7744,10 @@ async function generateTravelogueWithAI() {
 注意: スタンプ写真はランドマークセクションとして扱わず、通常の写真として表示してください${customInstructions ? `
 【ユーザー指示】以下の指示を必ず守って旅行記を生成してください:
 ${customInstructions}` : ''}${reuseCount > 0 ? `
-【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}${hasLinkInfo ? `
-【ブログ等の参考ページの扱い】「ブログ等の参考ページ」や写真情報の[詳細ページ本文:...]は、筆者自身のブログなど旅の詳細が書かれたページの本文です。その内容（体験・出来事・感想・訪問先の情報）を事実として踏まえ、そのままコピーせず自分の言葉で旅行記（ブログ）の文章に再構成してください。該当ポイントの情景描写に反映し、詳細ページがあるポイントには<a href="詳細ページURL" target="_blank" rel="noopener">詳しくはこちら</a>のリンクを情景描写の末尾に添えてください。ページに書かれていない内容を創作しないでください。` : ''}${hasWikiInfo ? `
+【既存説明の流用ルール】写真情報に[既存オーバーレイ:...]と[既存情景描写:...]がある写真は、過去の旅行記で既に説明済みです。これらの写真については、提供された既存テキストをそのまま使用してください（Wikiや場所の説明を再生成しない）。[既存オーバーレイ:...]の内容をオーバーレイに、[既存情景描写:...]の内容を情景描写に使用してください。新規写真（[既存...]タグがない写真）のみ新たな情景描写を生成してください。` : ''}${hasPointLinks ? `
+【詳細ページのリンクカード】写真情報に[詳細ページ:URL]があるポイントは、情景描写の直後に次のリンクカードを必ず1つ置いてください（URLは[詳細ページ:...]のものをそのまま使う）:
+<div class="travelogue-link-card" style="margin:0.75rem 0 0 0;padding:10px 14px;border:1px solid #e0e0e0;border-left:4px solid ${tripColor};border-radius:8px;background:#fafafa;font-size:0.9rem;"><a href="URL" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;">🔗 そのページの内容を伝える40字程度の短い説明（[詳細ページ本文:...]があればその要点、無ければポイントの説明から） →</a></div>` : ''}${hasLinkInfo ? `
+【ブログ等の参考ページの扱い】「ブログ等の参考ページ」や写真情報の[詳細ページ本文:...]は、筆者自身のブログなど旅の詳細が書かれたページの本文です。その内容（体験・出来事・感想・訪問先の情報）を事実として踏まえ、そのままコピーせず自分の言葉で旅行記（ブログ）の文章に再構成してください。該当ポイントの情景描写に反映し、ページに書かれていない内容を創作しないでください。` : ''}${hasWikiInfo ? `
 【Wikipedia概要の扱い】写真情報に[Wikipedia概要:...]がある場合、それはそのランドマークに関するWikipediaからの参考情報です。このテキストをそのままコピーせず、要点を1つだけ選んで自分の言葉で言い換え、旅行記の文体・情景描写の流れに自然に溶け込ませてください（「Wikipediaによると」のような前置きは使わず、豆知識だと気づかれない程度にさりげなく触れる）。` : ''}`;
   const userPrompt = `以下のトリップ情報をもとに、上記の構造に従って旅行記を生成してください。\n\n${context}`;
 
@@ -7791,15 +7794,27 @@ ${customInstructions}` : ''}${reuseCount > 0 ? `
     // 動画URLがあるポイントの写真をサムネイルに差し替え（AIが従わなかった場合のフォールバック）
     photos.filter(p => p.url && p.videoUrl && p.videoUrl.trim()).forEach(p => {
       const vUrl = p.videoUrl.trim();
-      const thumbUrl = getVideoThumbnailUrl(vUrl);
-      if (!thumbUrl || !finalHtml.includes(`src="${p.url}"`)) return;
+      const thumbUrl = getVideoThumbnailUrl(vUrl) || p.url; // YouTube/Vimeo以外の動画ファイルは写真をサムネイルに使う
+      if (!finalHtml.includes(`src="${p.url}"`)) return;
       const playOverlay = `<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:56px;height:56px;background:rgba(0,0,0,0.72);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#fff;pointer-events:none;">▶</div>`;
       // <img src="写真URL" ...> を <a href="動画URL"><img src="サムネイルURL" ...></a> + 再生ボタンに差し替え
       finalHtml = finalHtml.replace(
         new RegExp(`<img src="${p.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"([^>]*)>`, 'g'),
-        `<a href="${escapeHtml(vUrl)}" target="_blank" rel="noopener" style="display:block;"><img src="${escapeHtml(thumbUrl)}"$1>${playOverlay}</a>`
+        `<a class="travelogue-video-link" data-video-url="${escapeHtml(vUrl)}" href="${escapeHtml(vUrl)}" target="_blank" rel="noopener" title="クリックでその場で再生" style="display:block;"><img src="${escapeHtml(thumbUrl)}"$1>${playOverlay}</a>`
       );
     });
+
+    // 詳細ページ（動画以外のURL）のリンクカードがAIの出力に含まれていないポイントは、末尾の「関連リンク」にまとめる
+    const missingLinks = photos.filter(p => p.linkUrl && p.linkUrl.trim() && !finalHtml.includes(escapeHtml(p.linkUrl.trim())) && !finalHtml.includes(p.linkUrl.trim()));
+    if (missingLinks.length > 0) {
+      const items = missingLinks.map(p => {
+        const u = p.linkUrl.trim();
+        let label = (p.description || p.name || '').trim().slice(0, 40);
+        if (!label) { try { label = new URL(u).hostname; } catch (_) { label = u; } }
+        return `<li style="margin:0.4rem 0;"><a href="${escapeHtml(u)}" target="_blank" rel="noopener">🔗 ${escapeHtml(label)}</a></li>`;
+      }).join('');
+      finalHtml += `<div class="travelogue-related-links" style="margin:2rem 0;"><h3>🔗 関連リンク</h3><ul style="padding-left:1.2rem;">${items}</ul></div>`;
+    }
 
     // 旅行記の最後にナビゲーターを追加
     if (!trip || !trip.id) {
@@ -8719,7 +8734,15 @@ async function showTravelogueModal(trip) {
 
     // 旅行記内の写真・アニメ画像をクリックで拡大表示
     // （子トリップアクセスカードのサムネイルは上記で個別ハンドラ済みのため除外）
+    content.querySelectorAll('a.travelogue-video-link').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        playTravelogueVideoInline(a);
+      });
+    });
     content.querySelectorAll('img:not(.travelogue-child-thumb-link)').forEach((img) => {
+      if (img.closest('a.travelogue-video-link')) return; // 動画サムネイルは拡大ではなくその場で再生
       img.style.cursor = 'pointer';
       if (!img.dataset.isAnime) img.title = 'クリックで拡大表示';
       img.addEventListener('click', (e) => {
@@ -8910,6 +8933,35 @@ async function ensureTripShortCode(trip) {
     console.warn('短縮コードの発行に失敗:', err);
     return null;
   }
+}
+
+/** 旅行記内の動画サムネイルを、その場で再生するプレーヤー（YouTube/Vimeo=iframe、動画ファイル=video）に置き換える */
+function playTravelogueVideoInline(anchor) {
+  const url = anchor.dataset.videoUrl;
+  if (!url) return;
+  const isShorts = /youtube\.com\/shorts\//.test(url);
+  const wrap = document.createElement('div');
+  wrap.className = 'travelogue-video-player';
+  wrap.style.cssText = `position:relative;width:100%;${isShorts ? 'aspect-ratio:9/16;max-height:70vh;' : 'aspect-ratio:16/9;'}background:#000;border-radius:8px;overflow:hidden;`;
+  const embed = getVideoEmbedUrl(url);
+  if (embed) {
+    const iframe = document.createElement('iframe');
+    iframe.src = embed + (embed.includes('?') ? '&' : '?') + 'autoplay=1&mute=1&playsinline=1';
+    iframe.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+    iframe.allowFullscreen = true;
+    iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;';
+    wrap.appendChild(iframe);
+  } else {
+    const video = document.createElement('video');
+    video.src = url;
+    video.controls = true;
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.style.cssText = 'width:100%;height:100%;object-fit:contain;';
+    wrap.appendChild(video);
+  }
+  anchor.replaceWith(wrap);
 }
 
 /** 旅行記の共有ボタンを生成 */
