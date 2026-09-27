@@ -51,7 +51,10 @@
     const db = firebase.firestore(app);
     db.settings({
       ignoreUndefinedProperties: true,
-      experimentalForceLongPolling: true
+      // プロキシ環境などWebSocket/gRPCが使えない場合のみ自動でロングポーリングにフォールバック。
+      // 常時強制すると通常のブラウザでもストリーミング接続の恩恵を受けられず、
+      // onSnapshot の初回到達や更新伝播に無駄なレイテンシが乗っていた。
+      experimentalAutoDetectLongPolling: true
     });
     window.firebaseDb = db;
     window.firebaseStorage = firebase.storage(app);
@@ -62,21 +65,6 @@
     }).catch(err => {
       console.warn('Firebase: Firestore ネットワーク有効化エラー:', err);
     });
-
-    // 接続テスト（公開トリップで試行）
-    db.collection('trips').where('public', '==', true).limit(1).get()
-      .then((snapshot) => {
-        console.log('Firebase: Firestore 接続テスト成功 (' + snapshot.size + '件の公開トリップ)');
-      })
-      .catch(err => {
-        console.warn('Firebase: Firestore 接続テスト失敗（初期接続エラーは無視されます）:', err);
-        if (err.code === 'permission-denied') {
-          console.warn('→ Firestore のセキュリティルールを確認してください');
-          console.warn('→ 詳細は FIREBASE_SETUP.md を参照');
-        } else if (err.message?.includes('Failed to fetch') || err.code === 'unavailable') {
-          console.warn('→ インターネット接続が不安定な可能性があります');
-        }
-      });
 
     console.log('Firebase: 初期化完了');
     window.dispatchEvent(new CustomEvent('firebase-ready'));
