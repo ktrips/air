@@ -193,7 +193,8 @@ body {
   .header {
     gap: 0.5rem;
     /* 左は右より狭くし、ロゴアイコンを左端に寄せる（アプリ名テキストは非表示のため） */
-    padding: 0.75rem 1rem 0.75rem 0.5rem;
+    /* 上はステータスバー/ノッチ(safe-area)の分だけ下げ、アプリ名・メニューが画面の外に隠れないようにする */
+    padding: calc(0.75rem + env(safe-area-inset-top, 0px)) 1rem 0.75rem 0.5rem;
     position: absolute;
     top: 0;
     left: 0;
@@ -206,7 +207,7 @@ body {
   }
 
   .map-container {
-    padding-top: 60px;
+    padding-top: calc(60px + env(safe-area-inset-top, 0px));
     transition: padding-top 0.3s ease;
   }
 
@@ -226,7 +227,7 @@ body {
       top: 0;
       left: 0;
       right: 0;
-      height: 32px;
+      height: calc(32px + env(safe-area-inset-top, 0px));
       z-index: 999;
       opacity: 0;
       transition: opacity 0.3s;
@@ -238,7 +239,7 @@ body {
     .mobile-header-pulldown-bar::before {
       content: '';
       position: absolute;
-      top: 8px;
+      top: calc(8px + env(safe-area-inset-top, 0px));
       left: 50%;
       transform: translateX(-50%);
       width: 80px;
@@ -252,7 +253,7 @@ body {
     .mobile-header-pulldown-bar::after {
       content: '↓';
       position: absolute;
-      top: 16px;
+      top: calc(16px + env(safe-area-inset-top, 0px));
       left: 50%;
       transform: translateX(-50%);
       font-size: 0.7rem;
