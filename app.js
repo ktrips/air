@@ -3629,6 +3629,11 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
       overlay.classList.toggle('playback-photo-portrait', !isLandscape);
     };
     img.src = p.url || '';
+    if (p.linkUrl && p.linkUrl.trim()) {
+      img.style.cursor = 'pointer';
+      img.title = 'クリックで詳細ページを開く';
+      img.onclick = () => window.open(p.linkUrl.trim(), '_blank', 'noopener');
+    }
     photoWrap.appendChild(img);
   }
 
@@ -3657,7 +3662,10 @@ async function showPlaybackPhotoOverlay(p, onVideoEnd = null) {
     card.appendChild(info);
   }
   if (p.description) {
-    info.innerHTML = `<div class="playback-photo-desc">${escapeHtml(p.description)}</div>`;
+    const linkUrl = p.linkUrl && p.linkUrl.trim();
+    info.innerHTML = linkUrl
+      ? `<a class="playback-photo-desc playback-photo-desc-link" href="${escapeHtml(linkUrl)}" target="_blank" rel="noopener" title="詳細ページを開く">${escapeHtml(p.description)} 🔗</a>`
+      : `<div class="playback-photo-desc">${escapeHtml(p.description)}</div>`;
     info.style.display = '';
   } else {
     info.innerHTML = '';
@@ -3716,10 +3724,11 @@ function showPhotoViewMode(p, lat, lng) {
   if (p.url) {
     img.src = p.url;
     img.alt = p.name || '';
-    img.title = 'クリックでオリジナルを表示';
+    const popupLink = p.linkUrl && p.linkUrl.trim();
+    img.title = popupLink ? 'クリックで詳細ページを開く' : 'クリックでオリジナルを表示';
     img.loading = 'eager';
     img.decoding = 'async';
-    img.onclick = () => window.open(p.url, '_blank', 'noopener');
+    img.onclick = () => window.open(popupLink || p.url, '_blank', 'noopener');
   } else if (p.videoUrl) {
     const videoThumbnailUrl = getVideoThumbnailUrl(p.videoUrl);
     if (videoThumbnailUrl) {
@@ -3774,7 +3783,19 @@ function showPhotoViewMode(p, lat, lng) {
   if (p.description) {
     const descDiv = document.createElement('div');
     descDiv.className = 'photo-popup-description';
-    descDiv.textContent = p.description;
+    const descLink = p.linkUrl && p.linkUrl.trim();
+    if (descLink) {
+      const a = document.createElement('a');
+      a.href = descLink;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'photo-popup-description-link';
+      a.title = '詳細ページを開く';
+      a.textContent = `${p.description} 🔗`;
+      descDiv.appendChild(a);
+    } else {
+      descDiv.textContent = p.description;
+    }
     infoEl.appendChild(descDiv);
   } else {
     infoEl.textContent = '（説明なし）';

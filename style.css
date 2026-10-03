@@ -4658,3 +4658,13 @@ body.app-playing .map-photo-nav-btn {
   from { opacity: 1; }
   to   { opacity: 0; transform: translate(-50%, -56%); }
 }
+
+/* ポイントに詳細ページ(linkUrl)がある場合、説明文全体をリンクとして表示 */
+.photo-popup-description-link,
+.playback-photo-desc-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  display: block;
+}
