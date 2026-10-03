@@ -2294,6 +2294,7 @@ function createNewTrip(parentId = null) {
     videoUrl: null,
     public: false,
     color,
+    playSeconds: 5,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     parentId: parentId || null,
@@ -2324,6 +2325,8 @@ function syncFormToCurrentTrip() {
   if (parentInput) currentTrip.isParent = parentInput.checked;
   if (parentSelect) currentTrip.parentId = currentTrip.isParent ? null : (parentSelect.value?.trim() || null);
   if (colorEl) currentTrip.color = colorEl.value || TRIP_COLORS[0];
+  const playSecondsSel = document.getElementById('tripPlaySecondsSelect');
+  if (playSecondsSel) currentTrip.playSeconds = parseInt(playSecondsSel.value, 10) || 5;
 }
 
 function updateTripMenuThumbnail() {
@@ -2433,6 +2436,8 @@ async function updateTripInputs() {
   document.getElementById('tripPublicInput').checked = !!currentTrip.public;
   document.getElementById('tripParentInput').checked = !!currentTrip.isParent;
   document.getElementById('tripColorInput').value = currentTrip.color || TRIP_COLORS[0];
+  const playSecondsSelect = document.getElementById('tripPlaySecondsSelect');
+  if (playSecondsSelect) playSecondsSelect.value = String([3, 5, 8, 10, 20].includes(currentTrip.playSeconds) ? currentTrip.playSeconds : 5);
   const parentWrap = document.getElementById('tripParentSelectWrap');
   const childrenWrap = document.getElementById('tripParentChildrenWrap');
   if (parentWrap) parentWrap.style.display = currentTrip.isParent ? 'none' : '';
@@ -4864,7 +4869,7 @@ async function startPlay() {
     // 前回の再生状態をリセット
     lastPlaybackPhotoUrl = null;
 
-    const intervalSec = 5;
+    const intervalSec = [3, 5, 8, 10, 20].includes(currentTrip?.playSeconds) ? currentTrip.playSeconds : 5; // トリップ設定の「自動再生表示時間」（既定5秒）
     playIntervalMs = intervalSec * 1000;
     const playBtn = document.getElementById('playBtn');
     if (playBtn) playBtn.textContent = '■ 停止';
@@ -5109,6 +5114,8 @@ async function saveTrip(opts = {}) {
   currentTrip.isParent = isParent;
   currentTrip.parentId = isParent ? null : parentId;
   currentTrip.color = color;
+  const playSecondsEl = document.getElementById('tripPlaySecondsSelect');
+  currentTrip.playSeconds = parseInt(playSecondsEl?.value, 10) || currentTrip.playSeconds || 5;
   if (!currentTrip.createdAt) currentTrip.createdAt = currentTrip.updatedAt;
   const hasNoPhotosOrGpx = !(currentTrip.photos?.length) && !currentTrip.gpxData && !currentTrip.gpxDataUrl;
   const useMinimal = isParent || hasNoPhotosOrGpx;
@@ -5126,6 +5133,7 @@ async function saveTrip(opts = {}) {
       videoUrl: currentTrip.videoUrl || null,
       public: currentTrip.public,
       color: currentTrip.color,
+      playSeconds: currentTrip.playSeconds || 5,
       createdAt: currentTrip.createdAt,
       updatedAt: currentTrip.updatedAt,
       parentId: null,
@@ -5151,6 +5159,7 @@ async function saveTrip(opts = {}) {
       videoUrl: currentTrip.videoUrl || null,
       public: currentTrip.public,
       color: currentTrip.color,
+      playSeconds: currentTrip.playSeconds || 5,
       createdAt: currentTrip.createdAt,
       updatedAt: currentTrip.updatedAt,
       parentId: currentTrip.parentId,

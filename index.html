@@ -232,10 +232,22 @@
           <div class="trip-children-list" id="tripParentChildrenList"></div>
           <button type="button" class="btn btn-secondary btn-sm" id="addChildTripBtn">＋ 子トリップを追加</button>
         </div>
+        <div class="menu-field menu-field-inline">
+          <label for="tripPlaySecondsSelect">自動再生表示時間</label>
+          <select id="tripPlaySecondsSelect" class="menu-select menu-select-inline">
+            <option value="3">3秒</option>
+            <option value="5" selected>5秒</option>
+            <option value="8">8秒</option>
+            <option value="10">10秒</option>
+            <option value="20">20秒</option>
+          </select>
+        </div>
         <div class="menu-field">
-          <label>ルート・マーカーの色</label>
+          <div class="trip-color-label-row">
+            <label for="tripColorInput">ルート・マーカーの色</label>
+            <input type="color" id="tripColorInput" value="#e1306c" title="選択中の色（クリックで任意の色を選択）">
+          </div>
           <div class="trip-color-picker">
-            <input type="color" id="tripColorInput" value="#e1306c" title="色を選択">
             <div class="trip-color-swatches" id="tripColorSwatches"></div>
           </div>
         </div>
@@ -247,16 +259,6 @@
         </div>
         <div class="menu-row">
           <button type="button" class="btn btn-primary" id="saveTripBtn">保存</button>
-        </div>
-        <div class="menu-field menu-field-row">
-          <label for="tripSelect">トリップを選択</label>
-          <div class="menu-select-load-row">
-            <select id="tripSelect" class="menu-select"></select>
-            <button type="button" class="btn btn-secondary btn-sm" id="loadTripBtn">読み込み</button>
-          </div>
-        </div>
-        <div class="menu-row">
-          <button type="button" class="btn btn-delete-muted btn-sm" id="deleteTripBtn">削除</button>
         </div>
       </section>
       <section class="menu-section editor-only" id="aiMenuSection">
@@ -329,6 +331,18 @@
           <span class="upload-icon">📍</span>
           <span>GPXファイル</span>
           <input type="file" id="gpxInput" accept=".gpx,application/gpx+xml" hidden>
+        </div>
+      </section>
+      <section class="menu-section editor-only" id="tripSelectSection">
+        <div class="menu-field menu-field-row">
+          <label for="tripSelect">トリップを選択</label>
+          <div class="menu-select-load-row">
+            <select id="tripSelect" class="menu-select"></select>
+            <button type="button" class="btn btn-secondary btn-sm" id="loadTripBtn">読み込み</button>
+          </div>
+        </div>
+        <div class="menu-row">
+          <button type="button" class="btn btn-delete-muted btn-sm" id="deleteTripBtn">削除</button>
         </div>
       </section>
       <section class="menu-section menu-section-bottom">
