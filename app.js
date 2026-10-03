@@ -1060,7 +1060,8 @@ function isMobileView() {
 }
 
 function initMap() {
-  map = L.map('map', { zoomControl: false }).setView([35.6812, 139.7671], 5);
+  // preferCanvas: 長いGPXルート(数千点)のポリラインをSVGでなくcanvasで描画して軽くする（マーカーはDOMのまま）
+  map = L.map('map', { zoomControl: false, preferCanvas: true }).setView([35.6812, 139.7671], 5);
 
   // ズームコントロールを右上に配置
   L.control.zoom({ position: 'topright' }).addTo(map);
@@ -2959,12 +2960,50 @@ async function updateMapMarkers() {
   const routePolylines = []; // 親トリップ時: 他トリップのルート（かぶり回避用）
   let globalIdx = 0;
 
+  // GPXのネットワーク取得を待つ前に、写真座標から先に表示範囲を確定する。
+  // （従来はGPX取得完了まで旧い表示位置のままで、新しい範囲のタイル読み込み開始が遅れていた）
+  // 最終的な範囲は後段のfitBoundsで確定するため、ここは概算でよい（アニメなしで即移動）。
+  if (!document.body.classList.contains('app-playing')) {
+    const earlyPts = [];
+    for (const trip of tripsToShow) {
+      for (const p of (trip.photos || [])) {
+        const c = ensureLatLng(p.lat, p.lng);
+        if (c) earlyPts.push([c.lat, c.lng]);
+      }
+    }
+    if (earlyPts.length > 0) {
+      try {
+        map.invalidateSize();
+        if (earlyPts.length === 1) map.setView(earlyPts[0], 15, { animate: false });
+        else map.fitBounds(earlyPts, { padding: [60, 60], animate: false });
+      } catch (_) {}
+    }
+  }
+
   // GPXを全トリップ分まとめて並列取得（直列待ちを解消）
+  // GPXのダウンロードが遅い・止まっている場合でも写真マーカーの表示を待たせないよう、
+  // 未キャッシュのGPXは一定時間で待ちを打ち切り、ルートなしで先に描画する。
+  // 打ち切ったGPXは取得完了時にキャッシュされるので、完了後に再描画してルートを追加する。
+  const GPX_WAIT_MS = 2500;
+  let gpxArrivedLate = false;
   const gpxTexts = await Promise.all(
-    tripsToShow.map(trip => getGpxContent(trip).catch(err => {
-      console.warn('GPX取得失敗:', trip.name || trip.id, err);
-      return null;
-    }))
+    tripsToShow.map(trip => {
+      const fetchPromise = getGpxContent(trip).catch(err => {
+        console.warn('GPX取得失敗:', trip.name || trip.id, err);
+        return null;
+      });
+      const isInstant = !!trip.gpxData || !trip.gpxDataUrl || !!gpxCache[trip.gpxDataUrl];
+      if (isInstant) return fetchPromise;
+      let timedOut = false;
+      const timeout = new Promise(resolve => setTimeout(() => { timedOut = true; resolve(null); }, GPX_WAIT_MS));
+      fetchPromise.then(text => {
+        if (timedOut && text && !gpxArrivedLate) {
+          gpxArrivedLate = true;
+          scheduleMapMarkersUpdate();
+        }
+      });
+      return Promise.race([fetchPromise, timeout]);
+    })
   );
 
   for (let tripIdx = 0; tripIdx < tripsToShow.length; tripIdx++) {
@@ -2982,6 +3021,8 @@ async function updateMapMarkers() {
         .map(c => [c.lat, c.lng]);
       if (photoPts.length > 1) pts = photoPts;
     }
+    // 数千点の長いルートは描画コストが高いため、表示用に間引く（見た目はほぼ変わらない）
+    if (pts.length > 1500) pts = decimateCoords(pts, 1500);
     // GPXルートを地図に表示（表示範囲の計算には含めない）
     if (pts.length > 1) {
       const isPlayback = document.body.classList.contains('app-playing');
@@ -3307,10 +3348,10 @@ async function updateMapMarkers() {
   }
   if (allLatLngs.length > 0 && !document.body.classList.contains('app-playing')) {
     if (allLatLngs.length === 1) {
-      map.setView(allLatLngs[0], 15);
+      map.setView(allLatLngs[0], 15, { animate: false });
     } else {
       // 全てのポイントが見えるように余裕を持って表示
-      map.fitBounds(allLatLngs, { padding: [60, 60] });
+      map.fitBounds(allLatLngs, { padding: [60, 60], animate: false });
     }
   }
 
@@ -6295,8 +6336,13 @@ async function loadTripById(id) {
           console.log(`🗺️ 地図に表示する座標数: ${bounds.length}`);
           if (bounds.length > 0) {
             try {
-              fitMapBoundsWhenReady(bounds, { padding: [50, 50], maxZoom: 17 });
-              console.log(`✅ 地図の表示範囲を調整しました`);
+              // updateMapMarkers内で既に範囲を合わせ済みなら、再度の移動（二重fit）は行わない
+              if (map.getSize().x > 0 && map.getBounds().contains(L.latLngBounds(bounds))) {
+                console.log('✅ 地図の表示範囲は調整済みです');
+              } else {
+                fitMapBoundsWhenReady(bounds, { padding: [50, 50], maxZoom: 17, animate: false });
+                console.log(`✅ 地図の表示範囲を調整しました`);
+              }
             } catch (err) {
               console.error('❌ fitBoundsエラー:', err);
             }
@@ -6400,8 +6446,13 @@ async function loadTripById(id) {
           console.log(`🗺️ 地図に表示する座標数: ${bounds.length}`);
           if (bounds.length > 0) {
             try {
-              fitMapBoundsWhenReady(bounds, { padding: [50, 50], maxZoom: 17 });
-              console.log(`✅ 地図の表示範囲を調整しました`);
+              // updateMapMarkers内で既に範囲を合わせ済みなら、再度の移動（二重fit）は行わない
+              if (map.getSize().x > 0 && map.getBounds().contains(L.latLngBounds(bounds))) {
+                console.log('✅ 地図の表示範囲は調整済みです');
+              } else {
+                fitMapBoundsWhenReady(bounds, { padding: [50, 50], maxZoom: 17, animate: false });
+                console.log(`✅ 地図の表示範囲を調整しました`);
+              }
             } catch (err) {
               console.error('❌ fitBoundsエラー:', err);
             }
